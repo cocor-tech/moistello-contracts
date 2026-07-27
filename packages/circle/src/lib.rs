@@ -27,4 +27,7 @@ use soroban_sdk::{contract,contractimpl,Address,BytesN,Env};
     pub fn get_member_streak(env:Env,member:Address)->types::Streak{contract::get_member_streak(&env,&member)}
     pub fn set_reputation_registry(env:Env,admin:Address,registry:Address)->Result<(),types::CircleError>{contract::set_reputation_registry(&env,&admin,&registry)}
     pub fn get_reputation_registry(env:Env)->Option<Address>{contract::get_reputation_registry(&env)}
+    pub fn set_treasury(env:Env,admin:Address,treasury:Address)->Result<(),types::CircleError>{contract::set_treasury(&env,&admin,&treasury)}
+    pub fn set_token(env:Env,admin:Address,token:Address)->Result<(),types::CircleError>{contract::set_token(&env,&admin,&token)}
+    pub fn set_fee_bps(env:Env,admin:Address,fee_bps:u32)->Result<(),types::CircleError>{contract::set_fee_bps(&env,&admin,fee_bps)}
 }
