@@ -1,0 +1,140 @@
+#![cfg_attr(not(test), no_std)]
+
+use soroban_sdk::{contracterror, contractevent, symbol_short, Address, Env};
+
+/// Staking period options with corresponding voting power multipliers
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum StakingPeriod {
+    OneMonth = 1,   // 1 month = 1x multiplier
+    ThreeMonths = 3, // 3 months = 2x multiplier
+    SixMonths = 6,   // 6 months = 3x multiplier
+    TwelveMonths = 12, // 12 months = 5x multiplier
+}
+
+impl StakingPeriod {
+    /// Returns the voting power multiplier for this staking period
+    pub fn multiplier(&self) -> u32 {
+        match self {
+            StakingPeriod::OneMonth => 1,
+            StakingPeriod::ThreeMonths => 2,
+            StakingPeriod::SixMonths => 3,
+            StakingPeriod::TwelveMonths => 5,
+        }
+    }
+
+    /// Returns the staking period in seconds
+    pub fn as_seconds(&self) -> u64 {
+        // 30 days per month approximation
+        match self {
+            StakingPeriod::OneMonth => 30 * 24 * 60 * 60,
+            StakingPeriod::ThreeMonths => 90 * 24 * 60 * 60,
+            StakingPeriod::SixMonths => 180 * 24 * 60 * 60,
+            StakingPeriod::TwelveMonths => 360 * 24 * 60 * 60,
+        }
+    }
+
+    /// Validates the period value and returns the corresponding StakingPeriod
+    pub fn from_u32(value: u32) -> Option<Self> {
+        match value {
+            1 => Some(StakingPeriod::OneMonth),
+            3 => Some(StakingPeriod::ThreeMonths),
+            6 => Some(StakingPeriod::SixMonths),
+            12 => Some(StakingPeriod::TwelveMonths),
+            _ => None,
+        }
+    }
+}
+
+/// Unbonding period in seconds (14 days)
+pub const UNBONDING_PERIOD_SECONDS: u64 = 14 * 24 * 60 * 60;
+
+/// Storage keys for the staking contract
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Admin,
+    Token,
+    Paused,
+    /// Map<Address, StakePosition> - user's active stake
+    Stake(Address),
+    /// Map<Address, UnbondingPosition> - user's unstaking position
+    Unbonding(Address),
+    /// Total staked amount across all users
+    TotalStaked,
+}
+
+/// User's active staking position
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct StakePosition {
+    pub amount: i128,
+    pub period: StakingPeriod,
+    pub start_time: u64,
+    pub unlock_time: u64,
+    pub voting_power: i128,
+}
+
+/// User's unbonding position (after unstake initiated)
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct UnbondingPosition {
+    pub amount: i128,
+    pub unbonding_start_time: u64,
+    pub claimable_time: u64,
+}
+
+/// Contract-specific errors
+#[contracterror]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StakingError {
+    NotInitialized = 100,
+    Unauthorized = 101,
+    ContractPaused = 102,
+    InvalidAmount = 103,
+    InvalidPeriod = 104,
+    TokenError = 105,
+    InsufficientBalance = 106,
+    NoActiveStake = 107,
+    StakeNotUnlocked = 108,
+    UnbondingNotComplete = 109,
+    NoUnbondingPosition = 110,
+    AlreadyStaked = 111,
+    Overflow = 112,
+}
+
+/// Event emitted when tokens are staked
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct Staked {
+    pub user: Address,
+    pub amount: i128,
+    pub period: u32,
+    pub multiplier: u32,
+    pub voting_power: i128,
+}
+
+/// Event emitted when unstake is initiated
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct UnstakeInitiated {
+    pub user: Address,
+    pub amount: i128,
+    pub claimable_time: u64,
+}
+
+/// Event emitted when tokens are claimed after unbonding
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct Claimed {
+    pub user: Address,
+    pub amount: i128,
+}
+
+/// Event emitted when voting power is queried (for governance integration)
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct VotingPowerQueried {
+    pub user: Address,
+    pub voting_power: i128,
+}
