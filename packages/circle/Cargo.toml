@@ -10,7 +10,6 @@ crate-type = ["cdylib", "rlib"]
 soroban-sdk = { workspace = true }
 soroban-token-sdk = { workspace = true }
 common = { path = "../common" }
-reputation-registry = { path = "../reputation-registry" }
 
 [features]
 testutils = ["soroban-sdk/testutils"]

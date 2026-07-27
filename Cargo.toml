@@ -5,6 +5,8 @@ members = [
     "packages/circle-factory",
     "packages/circle",
     "packages/reputation-registry",
+    "packages/treasury",
+    "packages/escrow-swap",
 ]
 
 [workspace.package]
