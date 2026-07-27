@@ -25,4 +25,6 @@ use soroban_sdk::{contract,contractimpl,Address,BytesN,Env};
     pub fn get_referrals(env:Env)->soroban_sdk::Vec<types::Referral>{contract::get_referrals(&env)}
     pub fn get_streaks(env:Env)->soroban_sdk::Vec<types::Streak>{contract::get_streaks(&env)}
     pub fn get_member_streak(env:Env,member:Address)->types::Streak{contract::get_member_streak(&env,&member)}
+    pub fn set_reputation_registry(env:Env,admin:Address,registry:Address)->Result<(),types::CircleError>{contract::set_reputation_registry(&env,&admin,&registry)}
+    pub fn get_reputation_registry(env:Env)->Option<Address>{contract::get_reputation_registry(&env)}
 }
