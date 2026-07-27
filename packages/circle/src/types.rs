@@ -24,8 +24,8 @@ pub struct Circle{pub id:Address,pub name:String,pub organizer:Address,pub facto
 #[contractevent]#[derive(Clone,Debug)]pub struct MemberDefaulted{pub member:Address,pub strikes:u32}
 #[contractevent]#[derive(Clone,Debug)]#[derive(Default)]
 pub struct CircleCompleted{pub total_payouts:i128}
-#[contractevent]#[derive(Clone,Debug)]#[derive(Default)]
-pub struct CircleCancelled{pub dummy:u32}
+#[contractevent]#[derive(Clone,Debug)]
+pub struct CircleCancelled{pub circle_id:Address,pub cancelled_by:Address,pub cancelled_at:u64}
 #[contractevent]#[derive(Clone,Debug)]pub struct DisputeRaised{pub member:Address,pub evidence_hash:BytesN<32>}
 #[contractevent]#[derive(Clone,Debug)]pub struct AuctionBidPlaced{pub bidder:Address,pub discount_bips:u32,pub round:u32}
 #[contractevent]#[derive(Clone,Debug)]pub struct VoteCast{pub voter:Address,pub vote_for:Address,pub round:u32}
