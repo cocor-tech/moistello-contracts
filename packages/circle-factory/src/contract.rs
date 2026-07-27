@@ -14,8 +14,8 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
     config.organizer.require_auth();
     if config.max_members < 2 || config.contribution_amount <= 0 || config.total_rounds == 0 || config.payout_type > 3 { return Err(FactoryError::InvalidConfig); }
     let wh: BytesN<32> = env.storage().instance().get(&DataKey::WasmHash).ok_or(FactoryError::WasmHashNotSet)?;
-    let salt = [0u8; 32];
-    let cid = env.deployer().with_current_contract(BytesN::from_array(env, &salt)).deploy_v2(wh, ());
+    let salt: BytesN<32> = env.prng().gen();
+    let cid = env.deployer().with_current_contract(salt).deploy_v2(wh, ());
     let now = env.ledger().timestamp();
     let mut circles: Vec<CircleEntry> = env.storage().persistent().get(&DataKey::CircleList).unwrap_or_else(|| Vec::new(env));
     circles.push_back(CircleEntry { circle_id: cid.clone(), name: config.name.clone(), organizer: config.organizer.clone(), deployed_at: now, status: 0 });
