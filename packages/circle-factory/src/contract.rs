@@ -21,7 +21,8 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
     circles.push_back(CircleEntry { circle_id: cid.clone(), name: config.name.clone(), organizer: config.organizer.clone(), deployed_at: now, status: 0 });
     env.storage().persistent().set(&DataKey::CircleList, &circles);
     let c: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
-    env.storage().instance().set(&DataKey::CircleCount, &c.wrapping_add(1));
+    let next_c = c.checked_add(1).ok_or(FactoryError::InvalidConfig)?;
+    env.storage().instance().set(&DataKey::CircleCount, &next_c);
     CircleDeployed { creator: config.organizer.clone(), circle_id: cid.clone(), name: config.name.clone() }.publish(env);
     Ok(cid)
 }
@@ -41,3 +42,9 @@ pub fn set_fee_config(env: &Env, admin: &Address, fee_bps: i128) -> Result<(), F
 }
 pub fn pause(env: &Env, admin: &Address) -> Result<(), FactoryError> { let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?; if admin != &s { return Err(FactoryError::Unauthorized); } pause::pause(env, admin).map_err(|_| FactoryError::ContractPaused) }
 pub fn unpause(env: &Env, admin: &Address) -> Result<(), FactoryError> { let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?; if admin != &s { return Err(FactoryError::Unauthorized); } pause::unpause(env, admin).map_err(|_| FactoryError::ContractPaused) }
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) -> Result<(), FactoryError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?;
+    if admin != &s { return Err(FactoryError::Unauthorized); }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| FactoryError::Unauthorized)
+}
+

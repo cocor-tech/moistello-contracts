@@ -45,9 +45,9 @@ clean:
 
 check:
 	@echo "=== Checking compilation ==="
-	cargo check --target wasm32-unknown-unknown
+	cargo check --target $(TARGET)
 	@echo "=== Running clippy ==="
-	cargo clippy --target wasm32-unknown-unknown -- -D warnings 2>/dev/null || echo "clippy not available, skipping"
+	cargo clippy --target $(TARGET) -- -D warnings 2>/dev/null || echo "clippy not available, skipping"
 
 fmt:
 	cargo fmt -- --check
