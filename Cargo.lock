@@ -291,7 +291,6 @@ version = "0.1.0"
 dependencies = [
  "common",
  "rand",
- "reputation-registry",
  "serde_json",
  "soroban-sdk",
  "soroban-token-sdk",
@@ -662,6 +661,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bfcf67fea2815c2fc3b90873fae90957be12ff417335dfadc7f52927feb03b2"
 
 [[package]]
+name = "escrow-swap"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "ethnum"
 version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -741,23 +748,6 @@ dependencies = [
  "libc",
  "wasi",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "governance"
-version = "0.1.0"
-dependencies = [
- "common",
- "soroban-sdk",
-]
-
-[[package]]
-name = "governance-token"
-version = "0.1.0"
-dependencies = [
- "common",
- "soroban-sdk",
- "soroban-token-sdk",
 ]
 
 [[package]]

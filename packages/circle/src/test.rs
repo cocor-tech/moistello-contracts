@@ -5,6 +5,7 @@ mod tests {
     use soroban_sdk::{Address, Env, String};
     use soroban_sdk::testutils::Address as _;
     use crate as circle;
+    use circle::{Circle, CircleArgs};
 
     const MEMBER_ACTIVE: u32 = 0u32;
 
@@ -32,7 +33,7 @@ mod tests {
         let config = create_config(&env);
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let status = client.get_status();
         assert_eq!(status.status, 0u32);
@@ -44,7 +45,7 @@ mod tests {
         let config = create_config(&env);
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
 
@@ -60,7 +61,7 @@ mod tests {
         config.max_members = 2u32;
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
 
         env.mock_all_auths();
@@ -75,7 +76,7 @@ mod tests {
         let config = create_config(&env);
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
 
@@ -87,59 +88,73 @@ mod tests {
     #[test]
     fn test_contribute() {
         let env = Env::default();
-        let config = create_config(&env);
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
+        client.try_join(&other).unwrap();
         assert!(client.try_contribute(&member, &config.contribution_amount, &0u32).is_ok());
     }
 
     #[test]
     fn test_contribute_wrong_amount() {
         let env = Env::default();
-        let config = create_config(&env);
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
+        client.try_join(&other).unwrap();
         assert!(client.try_contribute(&member, &50_0000000i128, &0u32).is_err());
     }
 
     #[test]
     fn test_contribute_not_member() {
         let env = Env::default();
-        let config = create_config(&env);
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
+        let member = Address::generate(&env);
         let outsider = Address::generate(&env);
 
         env.mock_all_auths();
-        assert!(client.try_contribute(&outsider, &config.contribution_amount, &0u32).is_err());
+        client.try_join(&member).unwrap();
+        client.try_join(&outsider).unwrap();
+        let non_member = Address::generate(&env);
+        assert!(client.try_contribute(&non_member, &config.contribution_amount, &0u32).is_err());
     }
 
     #[test]
     fn test_exit() {
         let env = Env::default();
-        let config = create_config(&env);
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
+        client.try_join(&other).unwrap();
         client.try_contribute(&member, &config.contribution_amount, &0u32).unwrap();
         assert!(client.try_exit_circle(&member).is_ok());
     }
@@ -150,14 +165,14 @@ mod tests {
         let config = create_config(&env);
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
 
         env.mock_all_auths();
-        assert!(client.try_pause(&admin).is_ok());
+        assert!(client.try_pause_circle(&admin).is_ok());
         let member = Address::generate(&env);
         assert!(client.try_join(&member).is_err());
-        assert!(client.try_unpause(&admin).is_ok());
+        assert!(client.try_unpause_circle(&admin).is_ok());
         assert!(client.try_join(&member).is_ok());
     }
 
@@ -167,7 +182,7 @@ mod tests {
         let config = create_config(&env);
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
 
@@ -183,7 +198,7 @@ mod tests {
         config.total_rounds = 3u32;
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
-        let contract_id = env.register(circle::Circle, (&admin, &factory, &config));
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
 
         env.mock_all_auths();
