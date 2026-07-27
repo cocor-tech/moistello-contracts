@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, BytesN, Env, contracterror, symbol_short};
+use soroban_sdk::{contractevent, contracterror, symbol_short, Address, BytesN, Env};
 
 #[contracterror]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,14 +8,27 @@ pub enum UpgradeError {
     InvalidWasmHash = 3,
 }
 
+/// Emitted when the contract implementation address is updated.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct Upgraded {
+    pub by: Address,
+    pub new_impl: Address,
+}
+
 pub fn get_implementation(env: &Env) -> Option<Address> {
     env.storage().instance().get(&symbol_short!("impl"))
 }
 
+/// Updates the contract implementation address.
+///
+/// This function deliberately does NOT check `when_not_paused` — a contract
+/// upgrade may be the only way to fix a bug that caused the pause state,
+/// so the admin must be able to upgrade even while paused.
 pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), UpgradeError> {
     admin.require_auth();
-    let k = symbol_short!("impl");
-    env.storage().instance().set(&k, new_impl);
+    env.storage().instance().set(&symbol_short!("impl"), new_impl);
+    Upgraded { by: admin.clone(), new_impl: new_impl.clone() }.publish(env);
     Ok(())
 }
 
