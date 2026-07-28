@@ -32,22 +32,21 @@ soroban config identity address "$IDENTITY" 2>/dev/null
 WASM_DIR="target/wasm32v1-none/release"
 
 # Deploy contracts in dependency order
-echo ""
-echo "1/5 Deploying Circle Factory..."
+echo "1/4 Deploying Circle Factory..."
 FACTORY_ID=$(soroban contract deploy \
     --wasm "$WASM_DIR/circle_factory.optimized.wasm" \
     --source "$IDENTITY" \
     --network "$NETWORK")
 echo "   Factory: $FACTORY_ID"
 
-echo "2/5 Deploying Circle (base template)..."
+echo "2/4 Deploying Circle (base template)..."
 CIRCLE_WASM_HASH=$(soroban contract install \
     --wasm "$WASM_DIR/circle.optimized.wasm" \
     --source "$IDENTITY" \
     --network "$NETWORK")
 echo "   Circle WASM Hash: $CIRCLE_WASM_HASH"
 
-echo "3/5 Deploying Reputation Registry..."
+echo "3/4 Deploying Reputation Registry..."
 REP_ID=$(soroban contract deploy \
     --wasm "$WASM_DIR/reputation_registry.optimized.wasm" \
     --source "$IDENTITY" \

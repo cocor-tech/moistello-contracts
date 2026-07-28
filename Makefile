@@ -14,7 +14,6 @@ optimize: build
 	soroban contract optimize --wasm target/$(TARGET)/release/circle_factory.wasm
 	soroban contract optimize --wasm target/$(TARGET)/release/circle.wasm
 	soroban contract optimize --wasm target/$(TARGET)/release/reputation_registry.wasm
-	soroban contract optimize --wasm target/$(TARGET)/release/governance_token.wasm
 	soroban contract optimize --wasm target/$(TARGET)/release/treasury.wasm
 	@echo "✓ Optimization complete"
 
