@@ -3,7 +3,7 @@ mod types;mod contract;#[cfg(test)]mod test;
 use soroban_sdk::{contract,contractimpl,Address,Env};
 #[contract]pub struct Treasury;
 #[contractimpl]impl Treasury{
-    pub fn init(env:Env,admin:Address){contract::init(&env,&admin);}
+    pub fn init(env:Env,admin:Address)->Result<(),types::TreasuryError>{contract::init(&env,&admin)}
     pub fn deposit_fee(env:Env,from:Address,amount:i128,circle_id:Address)->Result<(),types::TreasuryError>{contract::deposit(&env,&from,amount,&circle_id)}
     pub fn withdraw(env:Env,admin:Address,to:Address,amount:i128)->Result<(),types::TreasuryError>{contract::withdraw(&env,&admin,&to,amount)}
     pub fn get_balance(env:Env)->i128{contract::get_balance(&env)}
