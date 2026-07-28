@@ -8,8 +8,7 @@ mod tests {
     #[test]
     fn test_smoke_compile_ok() {
         let env = Env::default();
-        let addr = Address::from_str(&env, "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H");
-        assert!(addr.is_ok());
+        let _addr = Address::from_str(&env, "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H");
     }
 
     #[test]

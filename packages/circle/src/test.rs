@@ -5,9 +5,7 @@ mod tests {
     use soroban_sdk::{Address, Env, String};
     use soroban_sdk::testutils::Address as _;
     use crate as circle;
-    use circle::{Circle, CircleArgs};
-
-    const MEMBER_ACTIVE: u32 = 0u32;
+    use circle::{Circle, CircleArgs, CircleStatus};
 
     fn create_config(env: &Env) -> circle::types::CircleConfig {
         circle::types::CircleConfig {
@@ -36,7 +34,7 @@ mod tests {
         let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let status = client.get_status();
-        assert_eq!(status.status, 0u32);
+        assert_eq!(status.status, CircleStatus::Pending);
     }
 
     #[test]
@@ -233,6 +231,6 @@ mod tests {
         client.try_trigger_payout(&admin, &2u32).unwrap();
 
         // Should be completed
-        assert_eq!(client.get_status().status, 2u32);
+        assert_eq!(client.get_status().status, CircleStatus::Completed);
     }
 }
