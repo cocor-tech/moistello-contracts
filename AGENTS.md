@@ -141,8 +141,7 @@ pub enum DataKey {
 5. `reputation-registry/` — MoiScore calculation. Depends on circle events via callback.
 
 ### Phase 3: Supporting Contracts  
-6. `governance-token/` — SEP-41 token standard.
-7. `treasury/` — Fee collection. Depends on factory fee config.
+6. `treasury/` — Fee collection. Depends on factory fee config.
 
 ### Phase 4: Deployment + Bindings
 8. Build → optimize → deploy to testnet
@@ -250,7 +249,6 @@ stellar:
     circle_factory_contract_id: "CDEF..."
     circle_wasm_hash: "abc123..."
     reputation_contract_id: "GHIJ..."
-    governance_contract_id: "KLMN..."
     treasury_contract_id: "OPQR..."
 ```
 

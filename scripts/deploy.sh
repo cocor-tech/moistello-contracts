@@ -32,36 +32,28 @@ soroban config identity address "$IDENTITY" 2>/dev/null
 WASM_DIR="target/wasm32v1-none/release"
 
 # Deploy contracts in dependency order
-echo ""
-echo "1/5 Deploying Circle Factory..."
+echo "1/4 Deploying Circle Factory..."
 FACTORY_ID=$(soroban contract deploy \
     --wasm "$WASM_DIR/circle_factory.optimized.wasm" \
     --source "$IDENTITY" \
     --network "$NETWORK")
 echo "   Factory: $FACTORY_ID"
 
-echo "2/5 Deploying Circle (base template)..."
+echo "2/4 Deploying Circle (base template)..."
 CIRCLE_WASM_HASH=$(soroban contract install \
     --wasm "$WASM_DIR/circle.optimized.wasm" \
     --source "$IDENTITY" \
     --network "$NETWORK")
 echo "   Circle WASM Hash: $CIRCLE_WASM_HASH"
 
-echo "3/5 Deploying Reputation Registry..."
+echo "3/4 Deploying Reputation Registry..."
 REP_ID=$(soroban contract deploy \
     --wasm "$WASM_DIR/reputation_registry.optimized.wasm" \
     --source "$IDENTITY" \
     --network "$NETWORK")
 echo "   Reputation: $REP_ID"
 
-echo "4/5 Deploying Governance Token..."
-TOKEN_ID=$(soroban contract deploy \
-    --wasm "$WASM_DIR/governance_token.optimized.wasm" \
-    --source "$IDENTITY" \
-    --network "$NETWORK")
-echo "   Token: $TOKEN_ID"
-
-echo "5/5 Deploying Treasury..."
+echo "4/4 Deploying Treasury..."
 TREASURY_ID=$(soroban contract deploy \
     --wasm "$WASM_DIR/treasury.optimized.wasm" \
     --source "$IDENTITY" \
@@ -77,7 +69,6 @@ echo "Contract IDs:"
 echo "  Circle Factory:     $FACTORY_ID"
 echo "  Circle WASM Hash:   $CIRCLE_WASM_HASH"
 echo "  Reputation Registry:$REP_ID"
-echo "  Governance Token:   $TOKEN_ID"
 echo "  Treasury:           $TREASURY_ID"
 echo ""
 echo "Admin Public Key: $ADMIN_PUBLIC"
