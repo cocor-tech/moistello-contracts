@@ -33,4 +33,6 @@ pub use types::{PayoutType, CircleStatus, MemberStatus, DisputeResolution, Circl
     pub fn set_treasury(env:Env,admin:Address,treasury:Address)->Result<(),types::CircleError>{contract::set_treasury(&env,&admin,&treasury)}
     pub fn set_token(env:Env,admin:Address,token:Address)->Result<(),types::CircleError>{contract::set_token(&env,&admin,&token)}
     pub fn set_fee_bps(env:Env,admin:Address,fee_bps:u32)->Result<(),types::CircleError>{contract::set_fee_bps(&env,&admin,fee_bps)}
+    pub fn set_allowlist(env:Env,admin:Address,allowlist:soroban_sdk::Vec<Address>)->Result<(),types::CircleError>{contract::set_allowlist(&env,&admin,allowlist)}
+    pub fn get_allowlist(env:Env)->soroban_sdk::Vec<Address>{contract::get_allowlist(&env)}
 }
