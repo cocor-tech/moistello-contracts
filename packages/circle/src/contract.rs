@@ -332,14 +332,31 @@ pub fn report_late(env: &Env, reporter: &Address, late_member: &Address, round: 
     }
     let contributions: Map<(Address, u32), Contribution> = env.storage().persistent().get(&DataKey::Contributions).unwrap_or_else(|| Map::new(env));
     let key = (late_member.clone(), round);
-    let found = match contributions.get(key) {
-        Some(c) => !c.on_time,
-        None => false,
-    };
-    if !found {
+    // A member is late if they either submitted a contribution marked on_time == false,
+    // OR if they have no contribution entry at all (they never contributed for this round).
+    // First verify the late_member is actually a circle member; then check contributions.
+    let members: Vec<Member> = env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
+    let mut is_member = false;
+    for i in 0..members.len() {
+        if let Some(m) = members.get(i) {
+            if m.address == *late_member {
+                is_member = true;
+                break;
+            }
+        }
+    }
+    if !is_member {
         return Err(CircleError::NotMember);
     }
-    let mut members: Vec<Member> = env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
+    let is_late = match contributions.get(key) {
+        Some(c) => !c.on_time,
+        // No contribution entry means the member never submitted — treat as late.
+        None => true,
+    };
+    if !is_late {
+        return Err(CircleError::NotMember);
+    }
+    let mut members: Vec<Member> = members;
     for i in 0..members.len() {
         let mut m = members.get(i).ok_or(CircleError::VecAccessError)?;
         if m.address == *late_member {
