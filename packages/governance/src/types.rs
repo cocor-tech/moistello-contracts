@@ -60,6 +60,20 @@ pub struct GovernanceConfig{
     pub min_proposal_deposit:i128,
 }
 
+/// A `GovernanceConfig` update queued via `queue_config_update`, executable
+/// only after `executable_at` — a fixed 48h from `queued_at` (see
+/// `CONFIG_TIMELOCK_SECONDS` in contract.rs). Unlike `Proposal.timelock_ends_at`
+/// (derived from the admin-adjustable `GovernanceConfig.timelock_seconds`),
+/// this delay is a hardcoded constant so the admin cannot shorten or remove
+/// it by first queuing a config change that lowers it.
+#[contracttype]
+#[derive(Clone,Debug)]
+pub struct PendingConfigUpdate{
+    pub new_config:GovernanceConfig,
+    pub queued_at:u64,
+    pub executable_at:u64,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey{
@@ -69,6 +83,7 @@ pub enum DataKey{
     Proposal(u64),
     Vote(u64,Address),
     Deposit(u64),
+    PendingConfig,
 }
 
 #[contracterror]
@@ -90,6 +105,8 @@ pub enum GovernanceError{
     ProposalNotDraftOrActive=14,
     NotProposer=15,
     VotingAlreadyStarted=16,
+    ConfigUpdateAlreadyQueued=17,
+    NoPendingConfigUpdate=18,
 }
 
 #[contractevent(topics=["proposal"])]
@@ -115,3 +132,11 @@ pub struct ProposalCancelled{#[topic]pub id:u64,#[topic]pub cancelled_by:Address
 #[contractevent(topics=["cfg_upd"])]
 #[derive(Clone,Debug)]
 pub struct ConfigUpdated{#[topic]pub updated_by:Address}
+
+#[contractevent(topics=["cfg_queue"])]
+#[derive(Clone,Debug)]
+pub struct ConfigUpdateQueued{#[topic]pub queued_by:Address,pub executable_at:u64}
+
+#[contractevent(topics=["cfg_cncl"])]
+#[derive(Clone,Debug)]
+pub struct ConfigUpdateCancelled{#[topic]pub cancelled_by:Address}
