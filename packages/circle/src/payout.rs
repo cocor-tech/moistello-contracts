@@ -25,6 +25,9 @@ pub fn resolve_random(env:&Env,circle:&Circle,_round:u32)->Result<Address,Circle
 
 pub fn resolve_fixed(env:&Env,circle:&Circle,round:u32)->Result<Address,CircleError>{
     let pos=(round%circle.max_members)as u32;
+    if(circle.payout_bitmap&(1u128<<pos))!=0{
+        return Err(CircleError::PayoutAlreadyExecuted);
+    }
     let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
     let mut pos_to_addr:Map<u32,Address>=Map::new(env);
     for i in 0..members.len(){
@@ -36,19 +39,31 @@ pub fn resolve_fixed(env:&Env,circle:&Circle,round:u32)->Result<Address,CircleEr
     pos_to_addr.get(pos).ok_or(CircleError::NotMember)
 }
 
-pub fn resolve_auction(env:&Env,_circle:&Circle,round:u32)->Result<(Address,u32),CircleError>{
+pub fn resolve_auction(env:&Env,circle:&Circle,round:u32)->Result<(Address,u32),CircleError>{
     let bids:Vec<AuctionBid>=env.storage().persistent().get(&DataKey::Bids).unwrap_or_else(||Vec::new(env));
+    let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
     let mut min_bps:u32=10000;
     let mut winner:Option<AuctionBid>=None;
     for i in 0..bids.len(){
         let b=bids.get(i).ok_or(CircleError::NotInitialized)?;
         if b.round==round&&b.discount_bips<=min_bps{min_bps=b.discount_bips;winner=Some(b);}
     }
-    winner.map(|b|(b.bidder,b.discount_bips)).ok_or(CircleError::VoteQuorumNotMet)
+    let winner_bid=winner.ok_or(CircleError::VoteQuorumNotMet)?;
+    for i in 0..members.len(){
+        let m=members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.address==winner_bid.bidder{
+            if(circle.payout_bitmap&(1u128<<m.position))!=0{
+                return Err(CircleError::PayoutAlreadyExecuted);
+            }
+            return Ok((winner_bid.bidder,winner_bid.discount_bips));
+        }
+    }
+    Err(CircleError::NotMember)
 }
 
-pub fn resolve_vote(env:&Env,_circle:&Circle,round:u32)->Result<Address,CircleError>{
+pub fn resolve_vote(env:&Env,circle:&Circle,round:u32)->Result<Address,CircleError>{
     let votes:Vec<VoteEntry>=env.storage().persistent().get(&DataKey::Votes).unwrap_or_else(||Vec::new(env));
+    let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
     let active=count_active(env)?;
     let quorum=(active/2)+1;
     let mut tally:Map<Address,u32>=Map::new(env);
@@ -67,7 +82,17 @@ pub fn resolve_vote(env:&Env,_circle:&Circle,round:u32)->Result<Address,CircleEr
     for(addr,count)in tally.iter(){
         if count>best_count{best_count=count;best_addr=Some(addr);}
     }
-    best_addr.ok_or(CircleError::VoteQuorumNotMet)
+    let winner=best_addr.ok_or(CircleError::VoteQuorumNotMet)?;
+    for i in 0..members.len(){
+        let m=members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.address==winner{
+            if(circle.payout_bitmap&(1u128<<m.position))!=0{
+                return Err(CircleError::PayoutAlreadyExecuted);
+            }
+            return Ok(winner);
+        }
+    }
+    Err(CircleError::NotMember)
 }
 
 fn count_active(env:&Env)->Result<u32,CircleError>{
