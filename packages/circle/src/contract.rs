@@ -44,20 +44,6 @@ pub fn init(env: &Env, admin: &Address, factory: &Address, config: &CircleConfig
     Ok(())
 }
 
-// ── #54/#55: reputation-registry wiring ──────────────────────────────────
-
-/// Admin-only: wire this circle to a deployed ReputationRegistry contract.
-/// Until this is called, join()/contribute() skip all reputation-based
-/// gating entirely (min_moi_score, tier size/contribution ceilings) so
-/// circles deployed without reputation integration keep working unchanged.
-pub fn set_reputation_registry(env:&Env,admin:&Address,registry:&Address)->Result<(),CircleError>{
-    let stored_admin:Address=env.storage().instance().get(&DataKey::Admin).ok_or(CircleError::NotInitialized)?;
-    if admin!=&stored_admin{return Err(CircleError::Unauthorized);}
-    admin.require_auth();
-    env.storage().instance().set(&DataKey::ReputationRegistry,registry);
-    Ok(())
-}
-
 pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
@@ -202,9 +188,23 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().persistent().set(&DataKey::Payouts, &payouts);
     env.storage().persistent().set(&DataKey::Members, &members);
+    if fee > 0 {
+        if let Some(treasury) = env.storage().instance().get::<_, Address>(&DataKey::Treasury) {
+            let _: () = env.invoke_contract(
+                &treasury,
+                &soroban_sdk::Symbol::new(env, "deposit_fee"),
+                soroban_sdk::vec![
+                    env,
+                    env.current_contract_address().into_val(env),
+                    fee.into_val(env),
+                    circle.id.clone().into_val(env)
+                ],
+            );
+        }
+    }
     PayoutExecuted { recipient, round, amount: net, fee, payout_type }.publish(env);
     if circle.status == CircleStatus::Completed {
-        CircleCompleted { total_payouts: circle.total_payouts }.publish(env);
+        CircleCompleted { total_payouts: circle.total_payouts, circle_id: circle.id.clone() }.publish(env);
     }
     Ok(())
 }
@@ -516,7 +516,7 @@ pub fn register_referral(env: &Env, referrer: &Address, referred: &Address, bonu
     Ok(())
 }
 
-pub fn claim_referral_bonus(env: &Env, referrer: &Address, treasury: &Address) -> Result<(), CircleError> {
+pub fn claim_referral_bonus(env: &Env, referrer: &Address, _treasury: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     referrer.require_auth();
@@ -578,7 +578,7 @@ pub fn update_streak(env: &Env, member: &Address, round: u32) -> Result<(), Circ
     Ok(())
 }
 
-pub fn claim_streak_bonus(env: &Env, member: &Address, treasury: &Address) -> Result<(), CircleError> {
+pub fn claim_streak_bonus(env: &Env, member: &Address, _treasury: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     member.require_auth();
