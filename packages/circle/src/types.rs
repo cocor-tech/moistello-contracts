@@ -17,12 +17,12 @@ pub struct Circle{pub id:Address,pub name:String,pub organizer:Address,pub facto
 #[contracttype]#[derive(Clone,Debug)]pub struct Streak{pub member:Address,pub current_streak:u32,pub longest_streak:u32,pub last_round:u32}
 #[contracttype]#[derive(Clone)]pub enum DataKey{Circle,Admin,Factory,Members,Contributions,Payouts,Bids,Votes,Dispute,Referrals,Streaks,StreakThreshold,BonusBps,ReputationRegistry,Treasury,Token,FeeBps}
 #[contracterror]#[derive(Debug,Clone,PartialEq,Eq)]pub enum CircleError{NotInitialized=1,NotActive=2,CircleFull=3,AlreadyMember=4,NotMember=5,InsufficientMoiScore=6,RoundNotCurrent=7,InvalidAmount=8,PaymentDeadlinePassed=9,MaxStrikesReached=10,NotOrganizer=11,ContractPaused=12,InvalidInviteCode=13,AuctionAlreadyResolved=14,VoteQuorumNotMet=15,AlreadyContributed=16,AlreadyVoted=17,AlreadyBidded=18,PayoutAlreadyExecuted=19,InvalidPayoutType=20,InvalidRound=21,ContributionMismatch=22,CircleNotFull=23,NotEnoughVotes=24,DisputeAlreadyRaised=25,NoActiveDispute=26,Unauthorized=27,InvalidBid=28,InvalidMemberStatus=29,EmptyPayoutOrder=30,CircleSizeExceedsTier=31,ContributionExceedsTier=32,VecAccessError=33,AlreadyReferred=34,SelfReferral=35,StreakBonusUnlocked=36,InvalidStreakThreshold=37}
-#[contractevent]#[derive(Clone,Debug)]pub struct MemberJoined{pub member:Address,pub position:u32}
-#[contractevent]#[derive(Clone,Debug)]pub struct ContributionRecorded{pub member:Address,pub round:u32,pub amount:i128,pub on_time:bool}
-#[contractevent]#[derive(Clone,Debug)]pub struct PayoutExecuted{pub recipient:Address,pub round:u32,pub amount:i128,pub fee:i128,pub payout_type:u32}
-#[contractevent]#[derive(Clone,Debug)]pub struct MemberExited{pub member:Address,pub penalty:i128}
-#[contractevent]#[derive(Clone,Debug)]pub struct MemberDefaulted{pub member:Address,pub strikes:u32}
-#[contractevent]#[derive(Clone,Debug)]#[derive(Default)]
+#[contractevent(topics=["joined"])]#[derive(Clone,Debug)]pub struct MemberJoined{#[topic]pub member:Address,pub position:u32}
+#[contractevent(topics=["contrib"])]#[derive(Clone,Debug)]pub struct ContributionRecorded{#[topic]pub member:Address,pub round:u32,pub amount:i128,pub on_time:bool}
+#[contractevent(topics=["payout"])]#[derive(Clone,Debug)]pub struct PayoutExecuted{#[topic]pub recipient:Address,pub round:u32,pub amount:i128,pub fee:i128,pub payout_type:u32}
+#[contractevent(topics=["exited"])]#[derive(Clone,Debug)]pub struct MemberExited{#[topic]pub member:Address,pub penalty:i128}
+#[contractevent(topics=["defaulted"])]#[derive(Clone,Debug)]pub struct MemberDefaulted{#[topic]pub member:Address,pub strikes:u32}
+#[contractevent(topics=["completed"])]#[derive(Clone,Debug)]#[derive(Default)]
 pub struct CircleCompleted{pub total_payouts:i128}
 #[contractevent]#[derive(Clone,Debug)]
 pub struct CircleCancelled{pub circle_id:Address,pub cancelled_by:Address,pub cancelled_at:u64}
@@ -374,3 +374,12 @@ pub struct StreakBonusPaid {
     pub amount: i128,
     pub streak: u32,
 }
+#[contractevent(topics=["cancelled"])]#[derive(Clone,Debug)]
+pub struct CircleCancelled{#[topic]pub circle_id:Address,pub cancelled_by:Address,pub cancelled_at:u64}
+#[contractevent(topics=["dispute"])]#[derive(Clone,Debug)]pub struct DisputeRaised{#[topic]pub member:Address,pub evidence_hash:BytesN<32>}
+#[contractevent(topics=["bid"])]#[derive(Clone,Debug)]pub struct AuctionBidPlaced{#[topic]pub bidder:Address,pub discount_bips:u32,pub round:u32}
+#[contractevent(topics=["vote"])]#[derive(Clone,Debug)]pub struct VoteCast{#[topic]pub voter:Address,#[topic]pub vote_for:Address,pub round:u32}
+#[contractevent(topics=["referral"])]#[derive(Clone,Debug)]pub struct ReferralRegistered{#[topic]pub referrer:Address,#[topic]pub referred:Address,pub bonus_pct:u32}
+#[contractevent(topics=["ref_bonus"])]#[derive(Clone,Debug)]pub struct ReferralBonusPaid{#[topic]pub referrer:Address,pub amount:i128}
+#[contractevent(topics=["streak"])]#[derive(Clone,Debug)]pub struct StreakUpdated{#[topic]pub member:Address,pub current_streak:u32,pub longest_streak:u32}
+#[contractevent(topics=["strk_paid"])]#[derive(Clone,Debug)]pub struct StreakBonusPaid{#[topic]pub member:Address,pub amount:i128,pub streak:u32}

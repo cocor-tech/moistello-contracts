@@ -5,5 +5,5 @@ use soroban_sdk::{contracttype, contracterror, contractevent, Address, String, V
 #[contracttype]#[derive(Clone,Debug)]pub struct CircleRegistry{pub circles:Vec<CircleEntry>}
 #[contracttype]#[derive(Clone)]pub enum DataKey{Admin,FeeConfig,CircleList,CircleCount,WasmHash}
 #[contracterror]#[derive(Debug,Clone,PartialEq,Eq)]pub enum FactoryError{NotInitialized=1,Unauthorized=2,ContractPaused=3,WasmHashNotSet=4,InvalidFeeBps=5,CircleDeployFailed=6,InvalidConfig=7}
-#[contractevent]#[derive(Clone,Debug)]pub struct CircleDeployed{pub creator:Address,pub circle_id:Address,pub name:String}
-#[contractevent]#[derive(Clone,Debug)]pub struct FeeConfigUpdated{pub old_fee_bps:i128,pub new_fee_bps:i128,pub updated_by:Address}
+#[contractevent(topics=["deployed"])]#[derive(Clone,Debug)]pub struct CircleDeployed{#[topic]pub creator:Address,#[topic]pub circle_id:Address,pub name:String}
+#[contractevent(topics=["fee_cfg"])]#[derive(Clone,Debug)]pub struct FeeConfigUpdated{#[topic]pub updated_by:Address,pub old_fee_bps:i128,pub new_fee_bps:i128}

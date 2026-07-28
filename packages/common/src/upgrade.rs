@@ -9,9 +9,10 @@ pub enum UpgradeError {
 }
 
 /// Emitted when the contract implementation address is updated.
-#[contractevent]
+#[contractevent(topics = ["upgraded"])]
 #[derive(Clone, Debug)]
 pub struct Upgraded {
+    #[topic]
     pub by: Address,
     pub new_impl: Address,
 }

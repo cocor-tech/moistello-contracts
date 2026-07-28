@@ -92,26 +92,26 @@ pub enum GovernanceError{
     VotingAlreadyStarted=16,
 }
 
-#[contractevent]
+#[contractevent(topics=["proposal"])]
 #[derive(Clone,Debug)]
-pub struct ProposalCreated{pub id:u64,pub proposer:Address,pub deposit_amount:i128,pub voting_ends_at:u64}
+pub struct ProposalCreated{#[topic]pub id:u64,#[topic]pub proposer:Address,pub deposit_amount:i128,pub voting_ends_at:u64}
 
-#[contractevent]
+#[contractevent(topics=["vote"])]
 #[derive(Clone,Debug)]
-pub struct VoteCast{pub id:u64,pub voter:Address,pub vote:VoteType,pub vote_power:i128}
+pub struct VoteCast{#[topic]pub id:u64,#[topic]pub voter:Address,pub vote:VoteType,pub vote_power:i128}
 
-#[contractevent]
+#[contractevent(topics=["status"])]
 #[derive(Clone,Debug)]
-pub struct ProposalStatusChanged{pub id:u64,pub status:ProposalStatus}
+pub struct ProposalStatusChanged{#[topic]pub id:u64,pub status:ProposalStatus}
 
-#[contractevent]
+#[contractevent(topics=["executed"])]
 #[derive(Clone,Debug)]
-pub struct ProposalExecuted{pub id:u64,pub executed_by:Address}
+pub struct ProposalExecuted{#[topic]pub id:u64,#[topic]pub executed_by:Address}
 
-#[contractevent]
+#[contractevent(topics=["cancelled"])]
 #[derive(Clone,Debug)]
-pub struct ProposalCancelled{pub id:u64,pub cancelled_by:Address}
+pub struct ProposalCancelled{#[topic]pub id:u64,#[topic]pub cancelled_by:Address}
 
-#[contractevent]
+#[contractevent(topics=["cfg_upd"])]
 #[derive(Clone,Debug)]
-pub struct ConfigUpdated{pub updated_by:Address}
+pub struct ConfigUpdated{#[topic]pub updated_by:Address}
