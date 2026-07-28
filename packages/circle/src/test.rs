@@ -24,6 +24,7 @@ mod tests {
             grace_period_seconds: 86400u64,
             max_strikes: 3u32,
             slug: String::from_str(env, "test-circle"),
+            fee_bps: 0u32,
         }
     }
 
@@ -188,6 +189,57 @@ mod tests {
 
         // No env.mock_all_auths() — should fail authorization
         assert!(client.try_join(&member).is_err());
+    }
+
+    #[test]
+    fn test_fee_bps_applied_on_payout() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.fee_bps = 500u32; // 5%
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&m1).unwrap();
+        client.try_join(&m2).unwrap();
+        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap();
+        client.try_contribute(&m2, &config.contribution_amount, &0u32).unwrap();
+        client.try_trigger_payout(&admin, &0u32).unwrap();
+
+        let pool = config.contribution_amount * 2;
+        let expected_fee = pool * 500 / 10_000;
+        assert_eq!(client.get_status().total_fees, expected_fee);
+        assert_eq!(client.get_status().total_payouts, pool - expected_fee);
+    }
+
+    #[test]
+    fn test_set_fee_bps_updates_payout_fee() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_set_fee_bps(&admin, &1000u32).unwrap();
+        client.try_join(&m1).unwrap();
+        client.try_join(&m2).unwrap();
+        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap();
+        client.try_contribute(&m2, &config.contribution_amount, &0u32).unwrap();
+        client.try_trigger_payout(&admin, &0u32).unwrap();
+
+        let pool = config.contribution_amount * 2;
+        let expected_fee = pool * 1000 / 10_000;
+        assert_eq!(client.get_status().total_fees, expected_fee);
     }
 
     #[test]
