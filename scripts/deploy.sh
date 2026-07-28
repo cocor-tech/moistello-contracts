@@ -54,19 +54,18 @@ REP_ID=$(soroban contract deploy \
     --network "$NETWORK")
 echo "   Reputation: $REP_ID"
 
-echo "4/5 Deploying Governance Token..."
-TOKEN_ID=$(soroban contract deploy \
-    --wasm "$WASM_DIR/governance_token.optimized.wasm" \
-    --source "$IDENTITY" \
-    --network "$NETWORK")
-echo "   Token: $TOKEN_ID"
-
-echo "5/5 Deploying Treasury..."
+echo "4/4 Deploying Treasury..."
 TREASURY_ID=$(soroban contract deploy \
     --wasm "$WASM_DIR/treasury.optimized.wasm" \
     --source "$IDENTITY" \
     --network "$NETWORK")
 echo "   Treasury: $TREASURY_ID"
+
+echo ""
+echo "Initializing deployed contracts..."
+soroban contract invoke --id "$TREASURY_ID" --source "$IDENTITY" --network "$NETWORK" -- init --admin "$ADMIN_PUBLIC" 2>/dev/null || echo "   Treasury already initialized or skipped"
+soroban contract invoke --id "$REP_ID" --source "$IDENTITY" --network "$NETWORK" -- init --admin "$ADMIN_PUBLIC" 2>/dev/null || echo "   Reputation Registry already initialized or skipped"
+soroban contract invoke --id "$FACTORY_ID" --source "$IDENTITY" --network "$NETWORK" -- init --admin "$ADMIN_PUBLIC" --circle_wasm_hash "$CIRCLE_WASM_HASH" 2>/dev/null || echo "   Circle Factory already initialized or skipped"
 
 echo ""
 echo "=== Deployment Complete ==="
@@ -77,7 +76,6 @@ echo "Contract IDs:"
 echo "  Circle Factory:     $FACTORY_ID"
 echo "  Circle WASM Hash:   $CIRCLE_WASM_HASH"
 echo "  Reputation Registry:$REP_ID"
-echo "  Governance Token:   $TOKEN_ID"
 echo "  Treasury:           $TREASURY_ID"
 echo ""
 echo "Admin Public Key: $ADMIN_PUBLIC"

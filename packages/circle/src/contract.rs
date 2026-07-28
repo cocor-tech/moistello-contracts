@@ -72,3 +72,27 @@ fn check_reputation_gates(env:&Env,circle:&Circle,member:&Address)->Result<(),Ci
     if circle.contribution_amount>tier_max_contrib{return Err(CircleError::ContributionExceedsTier);}
     Ok(())
 }
+
+pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<(), CircleError> {
+    let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(CircleError::NotInitialized)?;
+    if admin != &stored_admin { return Err(CircleError::Unauthorized); }
+    admin.require_auth();
+    env.storage().instance().set(&DataKey::Treasury, treasury);
+    Ok(())
+}
+
+pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), CircleError> {
+    let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(CircleError::NotInitialized)?;
+    if admin != &stored_admin { return Err(CircleError::Unauthorized); }
+    admin.require_auth();
+    env.storage().instance().set(&DataKey::Token, token);
+    Ok(())
+}
+
+pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
+    let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(CircleError::NotInitialized)?;
+    if admin != &stored_admin { return Err(CircleError::Unauthorized); }
+    admin.require_auth();
+    env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+    Ok(())
+}
