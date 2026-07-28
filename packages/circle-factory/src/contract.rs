@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, BytesN, Env, Vec};
+use soroban_sdk::{Address, BytesN, Env, Vec, symbol_short};
 use crate::types::*; use common::pause;
 pub fn init(env: &Env, admin: &Address, fee_bps: i128, circle_wasm_hash: &BytesN<32>) -> Result<(), FactoryError> {
     admin.require_auth();
@@ -22,7 +22,7 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
     env.storage().persistent().set(&DataKey::CircleList, &circles);
     let c: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
     env.storage().instance().set(&DataKey::CircleCount, &c.wrapping_add(1));
-    CircleDeployed { creator: config.organizer.clone(), circle_id: cid.clone(), name: config.name.clone() }.publish(env);
+    env.events().publish((env.current_contract_address(), symbol_short!("deploy")), CircleDeployed { creator: config.organizer.clone(), circle_id: cid.clone(), name: config.name.clone() });
     Ok(cid)
 }
 pub fn get_circles(env: &Env) -> CircleRegistry { CircleRegistry { circles: env.storage().persistent().get(&DataKey::CircleList).unwrap_or_else(|| Vec::new(env)) } }
@@ -36,7 +36,7 @@ pub fn set_fee_config(env: &Env, admin: &Address, fee_bps: i128) -> Result<(), F
     if fee_bps < 0 || fee_bps > 10_000 { return Err(FactoryError::InvalidFeeBps); }
     let old: FeeConfig = env.storage().instance().get(&DataKey::FeeConfig).unwrap_or_else(|| FeeConfig { fee_bps:0, updated_at:0, updated_by: env.current_contract_address() });
     env.storage().instance().set(&DataKey::FeeConfig, &FeeConfig { fee_bps, updated_at: env.ledger().timestamp(), updated_by: admin.clone() });
-    FeeConfigUpdated { old_fee_bps: old.fee_bps, new_fee_bps: fee_bps, updated_by: admin.clone() }.publish(env);
+    env.events().publish((env.current_contract_address(), symbol_short!("fee_cfg")), FeeConfigUpdated { old_fee_bps: old.fee_bps, new_fee_bps: fee_bps, updated_by: admin.clone() });
     Ok(())
 }
 pub fn pause(env: &Env, admin: &Address) -> Result<(), FactoryError> { let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?; if admin != &s { return Err(FactoryError::Unauthorized); } pause::pause(env, admin).map_err(|_| FactoryError::ContractPaused) }
