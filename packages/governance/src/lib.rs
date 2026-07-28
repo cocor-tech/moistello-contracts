@@ -9,7 +9,10 @@ use soroban_sdk::{contract,contractimpl,Address,BytesN,Env,Vec};
     pub fn finalize_proposal(env:Env,proposal_id:u64)->Result<(),types::GovernanceError>{contract::finalize_proposal(&env,proposal_id)}
     pub fn execute_proposal(env:Env,proposal_id:u64)->Result<(),types::GovernanceError>{contract::execute_proposal(&env,proposal_id)}
     pub fn cancel_proposal(env:Env,caller:Address,proposal_id:u64)->Result<(),types::GovernanceError>{contract::cancel_proposal(&env,&caller,proposal_id)}
-    pub fn update_config(env:Env,admin:Address,new_config:types::GovernanceConfig)->Result<(),types::GovernanceError>{contract::update_config(&env,&admin,new_config)}
+    pub fn queue_config_update(env:Env,admin:Address,new_config:types::GovernanceConfig)->Result<(),types::GovernanceError>{contract::queue_config_update(&env,&admin,new_config)}
+    pub fn execute_config_update(env:Env)->Result<(),types::GovernanceError>{contract::execute_config_update(&env)}
+    pub fn cancel_config_update(env:Env,admin:Address)->Result<(),types::GovernanceError>{contract::cancel_config_update(&env,&admin)}
+    pub fn get_pending_config_update(env:Env)->Option<types::PendingConfigUpdate>{contract::get_pending_config_update(&env)}
     pub fn get_proposal(env:Env,id:u64)->Result<types::Proposal,types::GovernanceError>{contract::get_proposal(&env,id)}
     pub fn get_proposals(env:Env,status:types::ProposalStatus,limit:u32)->Vec<types::Proposal>{contract::get_proposals(&env,status,limit)}
     pub fn get_vote(env:Env,proposal_id:u64,voter:Address)->Option<types::VoteRecord>{contract::get_vote(&env,proposal_id,&voter)}

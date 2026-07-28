@@ -4,11 +4,23 @@ use common::pause;
 
 const BPS_DENOM:i128=10_000;
 
+/// Fixed delay a queued `GovernanceConfig` update must wait before it can be
+/// executed. Deliberately a hardcoded constant rather than sourced from
+/// `GovernanceConfig` itself: if it were configurable, an admin could queue
+/// a config change that zeroes it out and instantly self-approve any future
+/// change, defeating the whole point of a parameter-change timelock.
+const CONFIG_TIMELOCK_SECONDS:u64=172_800; // 48 hours
+
+fn validate_config(config:&GovernanceConfig)->Result<(),GovernanceError>{
+    if config.min_proposal_deposit<0||config.proposal_deposit<config.min_proposal_deposit{return Err(GovernanceError::InvalidConfig);}
+    if config.pass_threshold_bps==0||config.pass_threshold_bps>BPS_DENOM as u32{return Err(GovernanceError::InvalidConfig);}
+    Ok(())
+}
+
 pub fn init(env:&Env,admin:&Address,config:&GovernanceConfig)->Result<(),GovernanceError>{
     admin.require_auth();
     if env.storage().instance().has(&DataKey::Admin){return Err(GovernanceError::AlreadyInitialized);}
-    if config.min_proposal_deposit<0||config.proposal_deposit<config.min_proposal_deposit{return Err(GovernanceError::InvalidConfig);}
-    if config.pass_threshold_bps==0||config.pass_threshold_bps>BPS_DENOM as u32{return Err(GovernanceError::InvalidConfig);}
+    validate_config(config)?;
     env.storage().instance().set(&DataKey::Admin,admin);
     env.storage().instance().set(&DataKey::Config,config);
     env.storage().instance().set(&DataKey::ProposalCount,&0u64);
@@ -124,15 +136,50 @@ pub fn cancel_proposal(env:&Env,caller:&Address,proposal_id:u64)->Result<(),Gove
     Ok(())
 }
 
-pub fn update_config(env:&Env,admin:&Address,new_config:GovernanceConfig)->Result<(),GovernanceError>{
+/// Queues a `GovernanceConfig` change, executable no sooner than
+/// `CONFIG_TIMELOCK_SECONDS` (48h) from now. Only one update may be queued
+/// at a time — cancel the pending one first to replace it — so the
+/// executable timestamp a caller observes can't be silently pushed back out
+/// by re-queuing.
+pub fn queue_config_update(env:&Env,admin:&Address,new_config:GovernanceConfig)->Result<(),GovernanceError>{
     admin.require_auth();
     let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(GovernanceError::NotInitialized)?;
     if admin!=&s{return Err(GovernanceError::Unauthorized);}
-    if new_config.min_proposal_deposit<0||new_config.proposal_deposit<new_config.min_proposal_deposit{return Err(GovernanceError::InvalidConfig);}
-    if new_config.pass_threshold_bps==0||new_config.pass_threshold_bps>BPS_DENOM as u32{return Err(GovernanceError::InvalidConfig);}
-    env.storage().instance().set(&DataKey::Config,&new_config);
-    ConfigUpdated{updated_by:admin.clone()}.publish(env);
+    if env.storage().instance().has(&DataKey::PendingConfig){return Err(GovernanceError::ConfigUpdateAlreadyQueued);}
+    validate_config(&new_config)?;
+    let now=env.ledger().timestamp();
+    let executable_at=now.checked_add(CONFIG_TIMELOCK_SECONDS).ok_or(GovernanceError::InvalidConfig)?;
+    env.storage().instance().set(&DataKey::PendingConfig,&PendingConfigUpdate{new_config,queued_at:now,executable_at});
+    ConfigUpdateQueued{queued_by:admin.clone(),executable_at}.publish(env);
     Ok(())
+}
+
+/// Permissionless, like `execute_proposal`: the timelock is the control,
+/// not who happens to submit the transaction once it has elapsed.
+pub fn execute_config_update(env:&Env)->Result<(),GovernanceError>{
+    let pending:PendingConfigUpdate=env.storage().instance().get(&DataKey::PendingConfig).ok_or(GovernanceError::NoPendingConfigUpdate)?;
+    let now=env.ledger().timestamp();
+    if now<pending.executable_at{return Err(GovernanceError::TimelockNotElapsed);}
+    env.storage().instance().set(&DataKey::Config,&pending.new_config);
+    env.storage().instance().remove(&DataKey::PendingConfig);
+    ConfigUpdated{updated_by:env.current_contract_address()}.publish(env);
+    Ok(())
+}
+
+/// Admin-only: cancel a queued config update at any point during (or after)
+/// the timelock, before it has been executed.
+pub fn cancel_config_update(env:&Env,admin:&Address)->Result<(),GovernanceError>{
+    admin.require_auth();
+    let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(GovernanceError::NotInitialized)?;
+    if admin!=&s{return Err(GovernanceError::Unauthorized);}
+    if !env.storage().instance().has(&DataKey::PendingConfig){return Err(GovernanceError::NoPendingConfigUpdate);}
+    env.storage().instance().remove(&DataKey::PendingConfig);
+    ConfigUpdateCancelled{cancelled_by:admin.clone()}.publish(env);
+    Ok(())
+}
+
+pub fn get_pending_config_update(env:&Env)->Option<PendingConfigUpdate>{
+    env.storage().instance().get(&DataKey::PendingConfig)
 }
 
 pub fn get_proposal(env:&Env,id:u64)->Result<Proposal,GovernanceError>{
