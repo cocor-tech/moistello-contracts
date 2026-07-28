@@ -17,6 +17,14 @@ pub struct Upgraded {
     pub new_impl: Address,
 }
 
+/// Emitted when the contract's own Wasm bytecode is upgraded in place.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct ContractUpgraded {
+    pub by: Address,
+    pub new_wasm_hash: BytesN<32>,
+}
+
 pub fn get_implementation(env: &Env) -> Option<Address> {
     env.storage().instance().get(&symbol_short!("impl"))
 }
@@ -36,5 +44,6 @@ pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Res
 pub fn upgrade_contract(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) -> Result<(), UpgradeError> {
     admin.require_auth();
     env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+    ContractUpgraded { by: admin.clone(), new_wasm_hash: new_wasm_hash.clone() }.publish(env);
     Ok(())
 }
