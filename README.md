@@ -12,9 +12,8 @@ Smart contracts hold circle funds in escrow, enforce contribution rules, distrib
 contracts/
 ├── circle-factory/         # Deploys new Circle instances, maintains registry
 ├── circle/                 # Core ROSCA engine (per-circle contract)
-├── treasury/               # Collects 0.5% protocol fee
 ├── reputation-registry/    # On-chain MoiScore calculation/storage
-└── governance-token/       # MOI governance token (SEP-41)
+└── treasury/               # Collects 0.5% protocol fee
 ```
 
 ### Revenue Collection
@@ -93,13 +92,7 @@ MoiScore = Streak×0.35 + Completions×0.30 + Volume×0.20 + Recency×0.15
 - `withdraw(amount)`: Admin withdrawal
 - `get_balance()`: Current treasury holdings
 
-## Governance Token (MOI)
 
-SEP-41 compliant governance token for:
-- Circle voting power
-- Protocol parameter changes
-- Fee structure updates
-- Future DAO participation
 
 ## Security Architecture
 
