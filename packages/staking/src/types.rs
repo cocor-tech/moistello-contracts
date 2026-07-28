@@ -1,6 +1,4 @@
-#![cfg_attr(not(test), no_std)]
-
-use soroban_sdk::{contracterror, contractevent, contracttype, symbol_short, Address, Env};
+use soroban_sdk::{contracterror, contractevent, contracttype, Address};
 
 /// Staking period options with corresponding voting power multipliers
 #[contracttype]

@@ -1,5 +1,5 @@
 use soroban_sdk::{token, Address, Env};
-use soroban_token_sdk::TokenInterface;
+use soroban_sdk::token::TokenInterface;
 use crate::types::*;
 use common::pause;
 
