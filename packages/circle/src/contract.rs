@@ -5,6 +5,16 @@ use common::{math, pause};
 use common::reentrancy::ReentrancyGuard;
 
 pub fn init(env: &Env, admin: &Address, factory: &Address, config: &CircleConfig) -> Result<(), CircleError> {
+    // Only the designated admin can initialize — prevents hostile factory calls.
+    admin.require_auth();
+    // Prevent re-initialization.
+    if env.storage().instance().has(&DataKey::Admin) {
+        return Err(CircleError::AlreadyInitialized);
+    }
+    // Guard against contract's own address as admin (Soroban invalid-address equivalent).
+    if *admin == env.current_contract_address() {
+        return Err(CircleError::InvalidAdmin);
+    }
     if config.max_members < 2 || config.contribution_amount <= 0 || config.total_rounds == 0 || config.payout_type > 3 {
         return Err(CircleError::InvalidAmount);
     }

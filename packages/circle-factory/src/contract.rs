@@ -2,6 +2,10 @@ use soroban_sdk::{Address, BytesN, Env, Vec};
 use crate::types::*; use common::pause;
 pub fn init(env: &Env, admin: &Address, fee_bps: i128, circle_wasm_hash: &BytesN<32>) -> Result<(), FactoryError> {
     admin.require_auth();
+    // Prevent re-initialization.
+    if env.storage().instance().has(&DataKey::Admin) { return Err(FactoryError::AlreadyInitialized); }
+    // Guard against contract's own address as admin (Soroban invalid-address equivalent).
+    if *admin == env.current_contract_address() { return Err(FactoryError::InvalidAdmin); }
     if fee_bps < 0 || fee_bps > 10_000 { return Err(FactoryError::InvalidFeeBps); }
     env.storage().instance().set(&DataKey::Admin, admin);
     env.storage().instance().set(&DataKey::FeeConfig, &FeeConfig { fee_bps, updated_at: env.ledger().timestamp(), updated_by: admin.clone() });
