@@ -550,6 +550,8 @@ pub fn claim_referral_bonus(env: &Env, referrer: &Address, _treasury: &Address) 
 }
 
 pub fn update_streak(env: &Env, member: &Address, round: u32) -> Result<(), CircleError> {
+    // Only the member themselves can update their own streak — prevents arbitrary inflation.
+    member.require_auth();
     let circle: Circle = env.storage().instance().get(&DataKey::Circle).ok_or(CircleError::NotInitialized)?;
     if circle.status != CircleStatus::Active {
         return Err(CircleError::NotActive);
