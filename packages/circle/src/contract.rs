@@ -36,11 +36,13 @@ pub fn init(env: &Env, admin: &Address, factory: &Address, config: &CircleConfig
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().instance().set(&DataKey::Admin, admin);
     env.storage().instance().set(&DataKey::Factory, factory);
+    env.storage().instance().set(&DataKey::FeeBps, &config.fee_bps);
     env.storage().persistent().set(&DataKey::Members, &Vec::<Member>::new(env));
     env.storage().persistent().set(&DataKey::Contributions, &Map::<(Address, u32), Contribution>::new(env));
     env.storage().persistent().set(&DataKey::Payouts, &Vec::<PayoutRecipient>::new(env));
     env.storage().persistent().set(&DataKey::Bids, &Vec::<AuctionBid>::new(env));
     env.storage().persistent().set(&DataKey::Votes, &Vec::<VoteEntry>::new(env));
+    common::vrf::init_vrf(env, None).map_err(|_| CircleError::NotInitialized)?;
     Ok(())
 }
 
@@ -159,7 +161,8 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         _ => return Err(CircleError::InvalidPayoutType),
     };
     let pool = math::safe_mul(circle.contribution_amount, circle.member_count as i128).map_err(|_| CircleError::InvalidAmount)?;
-    let (net, fee) = math::apply_fee(pool, 0).map_err(|_| CircleError::InvalidAmount)?;
+    let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
+    let (net, fee) = math::apply_fee(pool, fee_bps as i128).map_err(|_| CircleError::InvalidAmount)?;
     let now = env.ledger().timestamp();
     let mut payouts: Vec<PayoutRecipient> = env.storage().persistent().get(&DataKey::Payouts).unwrap_or_else(|| Vec::new(env));
     payouts.push_back(PayoutRecipient {

@@ -120,50 +120,62 @@
               },
               "durability": "persistent",
               "val": {
-                "vec": [
+                "map": [
                   {
-                    "map": [
-                      {
-                        "key": {
-                          "symbol": "amount"
-                        },
-                        "val": {
-                          "i128": "1000000000"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "member"
-                        },
-                        "val": {
+                    "key": {
+                      "vec": [
+                        {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "on_time"
                         },
-                        "val": {
-                          "bool": true
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "round"
-                        },
-                        "val": {
+                        {
                           "u32": 0
                         }
-                      },
-                      {
-                        "key": {
-                          "symbol": "timestamp"
+                      ]
+                    },
+                    "val": {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "amount"
+                          },
+                          "val": {
+                            "i128": "1000000000"
+                          }
                         },
-                        "val": {
-                          "u64": "0"
+                        {
+                          "key": {
+                            "symbol": "member"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "on_time"
+                          },
+                          "val": {
+                            "bool": true
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "round"
+                          },
+                          "val": {
+                            "u32": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": "0"
+                          }
                         }
-                      }
-                    ]
+                      ]
+                    }
                   }
                 ]
               }
@@ -403,6 +415,22 @@
                       },
                       "val": {
                         "bool": false
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "vrf_ctr"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "vrf_salt"
+                      },
+                      "val": {
+                        "bytes": "524ee29b9c71075ed2e71f310e269e1d77a9434a0021e5057c588e9b64fc587c"
                       }
                     },
                     {

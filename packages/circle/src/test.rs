@@ -2,8 +2,9 @@
 
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{Address, Env, String};
+    use soroban_sdk::{Address, BytesN, Env, String};
     use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::Ledger as _;
     use crate as circle;
     use circle::{Circle, CircleArgs, CircleStatus};
 
@@ -439,8 +440,9 @@ mod tests {
         // But let's first contribute late
         client.try_contribute(&late_member, &config.contribution_amount, &0u32).unwrap();
 
-        // Now report should work if we had advanced time
-        assert!(client.try_report_late(&reporter, &late_member, &0u32).is_err()); // on_time was recorded as true
+        // Now report should succeed — contribution was made at timestamp=1000,
+        // well past the 1-second deadline, so on_time=false
+        assert!(client.try_report_late(&reporter, &late_member, &0u32).is_ok());
     }
 
     #[test]
@@ -452,7 +454,7 @@ mod tests {
         let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
-        let evidence_hash = [1u8; 32].into();
+        let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
@@ -470,7 +472,7 @@ mod tests {
         let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
-        let evidence_hash = [1u8; 32].into();
+        let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
@@ -488,7 +490,7 @@ mod tests {
         let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
-        let evidence_hash = [1u8; 32].into();
+        let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
