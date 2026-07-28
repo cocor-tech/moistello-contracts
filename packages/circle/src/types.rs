@@ -4,7 +4,7 @@ pub const STATUS_PENDING:u32=0;pub const STATUS_ACTIVE:u32=1;pub const STATUS_CO
 pub const MEMBER_ACTIVE:u32=0;pub const MEMBER_EXITED:u32=1;pub const MEMBER_DEFAULTED:u32=2;
 pub const RESOLVE_DISMISS:u32=1;pub const RESOLVE_FORCE_PAYOUT:u32=3;
 #[contracttype]#[derive(Clone,Debug)]
-pub struct CircleConfig{pub organizer:Address,pub name:String,pub contribution_amount:i128,pub max_members:u32,pub payout_type:u32,pub total_rounds:u32,pub contribution_deadline_seconds:u64,pub min_moi_score:u32,pub collateral_amount:i128,pub penalty_bps:u32,pub grace_period_seconds:u64,pub max_strikes:u32,pub slug:String,pub fee_bps:u32}
+pub use common::types::CircleConfig;
 #[contracttype]#[derive(Clone,Debug)]
 pub struct Circle{pub id:Address,pub name:String,pub organizer:Address,pub factory:Address,pub contribution_amount:i128,pub max_members:u32,pub member_count:u32,pub payout_type:u32,pub total_rounds:u32,pub current_round:u32,pub status:u32,pub started_at:u64,pub created_at:u64,pub contribution_deadline_seconds:u64,pub min_moi_score:u32,pub collateral_amount:i128,pub penalty_bps:u32,pub grace_period_seconds:u64,pub max_strikes:u32,pub payout_bitmap:u128,pub total_payouts:i128,pub total_fees:i128,pub slug:String}
 #[contracttype]#[derive(Clone,Debug)]pub struct Member{pub address:Address,pub position:u32,pub joined_at:u64,pub strikes:u32,pub status:u32,pub exited_at:u64,pub total_contributions:i128,pub total_received:i128}
@@ -23,7 +23,7 @@ pub struct Circle{pub id:Address,pub name:String,pub organizer:Address,pub facto
 #[contractevent(topics=["exited"])]#[derive(Clone,Debug)]pub struct MemberExited{#[topic]pub member:Address,pub penalty:i128}
 #[contractevent(topics=["defaulted"])]#[derive(Clone,Debug)]pub struct MemberDefaulted{#[topic]pub member:Address,pub strikes:u32}
 #[contractevent(topics=["completed"])]#[derive(Clone,Debug)]#[derive(Default)]
-pub struct CircleCompleted{pub total_payouts:i128}
+pub struct CircleCompleted{pub total_payouts:i128, pub circle_id:Address}
 #[contractevent]#[derive(Clone,Debug)]
 pub struct CircleCancelled{pub circle_id:Address,pub cancelled_by:Address,pub cancelled_at:u64}
 #[contractevent]#[derive(Clone,Debug)]pub struct DisputeRaised{pub member:Address,pub evidence_hash:BytesN<32>}
@@ -78,23 +78,6 @@ pub enum CircleFrequency {
     Monthly = 3,
 }
 
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct CircleConfig {
-    pub organizer: Address,
-    pub name: String,
-    pub contribution_amount: i128,
-    pub max_members: u32,
-    pub payout_type: u32,
-    pub total_rounds: u32,
-    pub contribution_deadline_seconds: u64,
-    pub min_moi_score: u32,
-    pub collateral_amount: i128,
-    pub penalty_bps: u32,
-    pub grace_period_seconds: u64,
-    pub max_strikes: u32,
-    pub slug: String,
-}
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -311,6 +294,7 @@ pub struct MemberDefaulted {
 #[derive(Default)]
 pub struct CircleCompleted {
     pub total_payouts: i128,
+    pub circle_id: Address,
 }
 
 #[contractevent]

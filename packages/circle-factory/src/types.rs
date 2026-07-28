@@ -1,5 +1,5 @@
 use soroban_sdk::{contracttype, contracterror, contractevent, Address, String, Vec};
-#[contracttype]#[derive(Clone,Debug)]pub struct CircleConfig{pub organizer:Address,pub name:String,pub contribution_amount:i128,pub max_members:u32,pub payout_type:u32,pub total_rounds:u32,pub contribution_deadline_seconds:u64,pub min_moi_score:u32,pub collateral_amount:i128,pub penalty_bps:u32,pub grace_period_seconds:u64,pub max_strikes:u32,pub slug:String}
+pub use common::types::CircleConfig;
 #[contracttype]#[derive(Clone,Debug)]pub struct FeeConfig{pub fee_bps:i128,pub updated_at:u64,pub updated_by:Address}
 #[contracttype]#[derive(Clone,Debug)]pub struct CircleEntry{pub circle_id:Address,pub name:String,pub organizer:Address,pub deployed_at:u64,pub status:u32}
 #[contracttype]#[derive(Clone,Debug)]pub struct CircleRegistry{pub circles:Vec<CircleEntry>}
