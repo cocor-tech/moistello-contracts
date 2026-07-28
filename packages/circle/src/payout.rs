@@ -5,26 +5,35 @@ use common::vrf;
 pub fn resolve_random(env:&Env,circle:&Circle,_round:u32)->Result<Address,CircleError>{
     let positions=vrf::shuffle_positions(env,circle.max_members);
     let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
+    let mut pos_to_addr:Map<u32,Address>=Map::new(env);
+    for i in 0..members.len(){
+        let m=members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.status==MemberStatus::Active{
+            pos_to_addr.set(m.position,m.address.clone());
+        }
+    }
     for i in 0..positions.len(){
         let pos=positions.get(i).ok_or(CircleError::NotInitialized)?;
         if(circle.payout_bitmap&(1u128<<pos))==0{
-            for j in 0..members.len(){
-                let m=members.get(j).ok_or(CircleError::NotInitialized)?;
-                if m.position==pos&&m.status==MemberStatus::Active{return Ok(m.address);}
+            if let Some(addr)=pos_to_addr.get(pos){
+                return Ok(addr);
             }
         }
     }
     Err(CircleError::PayoutAlreadyExecuted)
 }
 
-pub fn resolve_fixed(_env:&Env,circle:&Circle,round:u32)->Result<Address,CircleError>{
+pub fn resolve_fixed(env:&Env,circle:&Circle,round:u32)->Result<Address,CircleError>{
     let pos=(round%circle.max_members)as u32;
-    let members:Vec<Member>=_env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
+    let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
+    let mut pos_to_addr:Map<u32,Address>=Map::new(env);
     for i in 0..members.len(){
-        let m=members.get(i).ok_or(CircleError::NotInitialized)?;
-        if m.position==pos&&m.status==MemberStatus::Active{return Ok(m.address);}
+        let m=members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.status==MemberStatus::Active{
+            pos_to_addr.set(m.position,m.address.clone());
+        }
     }
-    Err(CircleError::NotMember)
+    pos_to_addr.get(pos).ok_or(CircleError::NotMember)
 }
 
 pub fn resolve_auction(env:&Env,_circle:&Circle,round:u32)->Result<(Address,u32),CircleError>{
