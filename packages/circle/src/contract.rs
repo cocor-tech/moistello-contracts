@@ -1,4 +1,5 @@
 use soroban_sdk::{Address, BytesN, Env, IntoVal, Map, Vec};
+use soroban_sdk::token::TokenClient;
 use crate::types::*;
 use crate::payout;
 use common::{math, pause};
@@ -544,6 +545,17 @@ pub fn claim_referral_bonus(env: &Env, referrer: &Address, _treasury: &Address) 
     if bonus_total <= 0 {
         return Err(CircleError::InvalidAmount);
     }
+
+    let token_address: Address = env.storage().instance()
+        .get(&DataKey::Token)
+        .ok_or(CircleError::NotInitialized)?;
+    let token_client = TokenClient::new(env, &token_address);
+    let contract_balance = token_client.balance(&env.current_contract_address());
+    if contract_balance < bonus_total {
+        return Err(CircleError::InsufficientContractBalance);
+    }
+    token_client.transfer(&env.current_contract_address(), referrer, &bonus_total);
+
     env.storage().persistent().set(&DataKey::Referrals, &referrals);
     ReferralBonusPaid { referrer: referrer.clone(), amount: bonus_total }.publish(env);
     Ok(())
@@ -600,6 +612,17 @@ pub fn claim_streak_bonus(env: &Env, member: &Address, _treasury: &Address) -> R
     }
     let bonus = math::safe_mul(circle.contribution_amount, streak_val as i128).map_err(|_| CircleError::InvalidAmount)?;
     let bonus_div = math::safe_div(bonus, 100).map_err(|_| CircleError::InvalidAmount)?;
+
+    let token_address: Address = env.storage().instance()
+        .get(&DataKey::Token)
+        .ok_or(CircleError::NotInitialized)?;
+    let token_client = TokenClient::new(env, &token_address);
+    let contract_balance = token_client.balance(&env.current_contract_address());
+    if contract_balance < bonus_div {
+        return Err(CircleError::InsufficientContractBalance);
+    }
+    token_client.transfer(&env.current_contract_address(), member, &bonus_div);
+
     StreakBonusPaid { member: member.clone(), amount: bonus_div, streak: streak_val }.publish(env);
     Ok(())
 }

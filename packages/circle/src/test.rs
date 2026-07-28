@@ -4,6 +4,7 @@
 mod tests {
     use soroban_sdk::{Address, Env, String};
     use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::StellarAssetClient;
     use crate as circle;
     use circle::{Circle, CircleArgs, CircleStatus};
 
@@ -102,6 +103,12 @@ mod tests {
         assert!(client.try_contribute(&member, &config.contribution_amount, &0u32).is_ok());
     }
 
+    fn create_test_token(env: &Env) -> (Address, StellarAssetClient) {
+        let token_admin = Address::generate(env);
+        let token_id = env.register_stellar_asset_contract(token_admin.clone());
+        (token_id, StellarAssetClient::new(env, &token_id))
+    }
+
     #[test]
     fn test_contribute_wrong_amount() {
         let env = Env::default();
@@ -118,6 +125,78 @@ mod tests {
         client.try_join(&member).unwrap();
         client.try_join(&other).unwrap();
         assert!(client.try_contribute(&member, &50_0000000i128, &0u32).is_err());
+    }
+
+    #[test]
+    fn test_claim_referral_bonus_transfers_tokens() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+
+        let (token, sac) = create_test_token(&env);
+        let treasury = Address::generate(&env);
+
+        client.try_set_token(&admin, &token).unwrap();
+        client.try_set_treasury(&admin, &treasury).unwrap();
+
+        let referrer = Address::generate(&env);
+        let referred = Address::generate(&env);
+
+        client.try_join(&referrer).unwrap();
+        client.try_join(&referred).unwrap();
+        client.try_register_referral(&referrer, &referred, &500u32).unwrap();
+        client.try_contribute(&referred, &config.contribution_amount, &0u32).unwrap();
+
+        let bonus_total = config.contribution_amount * 500 / 10000;
+        sac.mint(&contract_id, &bonus_total);
+        let before_balance = sac.balance(&referrer);
+
+        client.try_claim_referral_bonus(&referrer, &treasury).unwrap();
+
+        let after_balance = sac.balance(&referrer);
+        assert_eq!(after_balance, before_balance + bonus_total);
+        assert_eq!(sac.balance(&contract_id), bonus_total - bonus_total);
+    }
+
+    #[test]
+    fn test_claim_streak_bonus_transfers_tokens() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let mut config = create_config(&env);
+        config.max_members = 1u32;
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+
+        let (token, sac) = create_test_token(&env);
+        let treasury = Address::generate(&env);
+
+        client.try_set_token(&admin, &token).unwrap();
+        client.try_set_treasury(&admin, &treasury).unwrap();
+
+        let member = Address::generate(&env);
+        client.try_join(&member).unwrap();
+        client.try_update_streak(&member, &0u32).unwrap();
+        client.try_update_streak(&member, &1u32).unwrap();
+        client.try_update_streak(&member, &2u32).unwrap();
+
+        let bonus_div = config.contribution_amount * 3 / 100;
+        sac.mint(&contract_id, &bonus_div);
+        let before_balance = sac.balance(&member);
+
+        client.try_claim_streak_bonus(&member, &treasury).unwrap();
+
+        let after_balance = sac.balance(&member);
+        assert_eq!(after_balance, before_balance + bonus_div);
+        assert_eq!(sac.balance(&contract_id), bonus_div - bonus_div);
     }
 
     #[test]
