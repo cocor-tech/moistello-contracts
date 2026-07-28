@@ -7,16 +7,18 @@ pub enum PauseError {
 }
 
 /// Emitted when the contract is paused.
-#[contractevent]
+#[contractevent(topics = ["paused"])]
 #[derive(Clone, Debug)]
 pub struct Paused {
+    #[topic]
     pub by: Address,
 }
 
 /// Emitted when the contract is unpaused.
-#[contractevent]
+#[contractevent(topics = ["unpaused"])]
 #[derive(Clone, Debug)]
 pub struct Unpaused {
+    #[topic]
     pub by: Address,
 }
 

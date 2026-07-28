@@ -104,9 +104,10 @@ pub enum StakingError {
 }
 
 /// Event emitted when tokens are staked
-#[contractevent]
+#[contractevent(topics = ["staked"])]
 #[derive(Clone, Debug)]
 pub struct Staked {
+    #[topic]
     pub user: Address,
     pub amount: i128,
     pub period: u32,
@@ -115,26 +116,29 @@ pub struct Staked {
 }
 
 /// Event emitted when unstake is initiated
-#[contractevent]
+#[contractevent(topics = ["unstake"])]
 #[derive(Clone, Debug)]
 pub struct UnstakeInitiated {
+    #[topic]
     pub user: Address,
     pub amount: i128,
     pub claimable_time: u64,
 }
 
 /// Event emitted when tokens are claimed after unbonding
-#[contractevent]
+#[contractevent(topics = ["claimed"])]
 #[derive(Clone, Debug)]
 pub struct Claimed {
+    #[topic]
     pub user: Address,
     pub amount: i128,
 }
 
 /// Event emitted when voting power is queried (for governance integration)
-#[contractevent]
+#[contractevent(topics = ["vp_query"])]
 #[derive(Clone, Debug)]
 pub struct VotingPowerQueried {
+    #[topic]
     pub user: Address,
     pub voting_power: i128,
 }
