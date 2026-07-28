@@ -1,6 +1,9 @@
 #![cfg_attr(not(test), no_std)]
-mod types; mod contract; mod payout; #[cfg(test)] mod test;
-use soroban_sdk::{contract,contractimpl,Address,BytesN,Env};
+mod types; mod contract; mod payout; #[cfg(test)] mod test; #[cfg(test)] mod tests;
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+
+pub use types::{PayoutType, CircleStatus, MemberStatus, DisputeResolution, CircleFrequency, CircleError};
+
 #[contract]pub struct Circle;
 #[contractimpl]impl Circle{
     pub fn __constructor(env:Env,admin:Address,factory:Address,config:types::CircleConfig)->Result<(),types::CircleError>{contract::init(&env,&admin,&factory,&config)}

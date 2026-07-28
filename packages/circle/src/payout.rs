@@ -10,7 +10,7 @@ pub fn resolve_random(env:&Env,circle:&Circle,_round:u32)->Result<Address,Circle
         if(circle.payout_bitmap&(1u128<<pos))==0{
             for j in 0..members.len(){
                 let m=members.get(j).ok_or(CircleError::NotInitialized)?;
-                if m.position==pos&&m.status==MEMBER_ACTIVE{return Ok(m.address);}
+                if m.position==pos&&m.status==MemberStatus::Active{return Ok(m.address);}
             }
         }
     }
@@ -22,7 +22,7 @@ pub fn resolve_fixed(_env:&Env,circle:&Circle,round:u32)->Result<Address,CircleE
     let members:Vec<Member>=_env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
     for i in 0..members.len(){
         let m=members.get(i).ok_or(CircleError::NotInitialized)?;
-        if m.position==pos&&m.status==MEMBER_ACTIVE{return Ok(m.address);}
+        if m.position==pos&&m.status==MemberStatus::Active{return Ok(m.address);}
     }
     Err(CircleError::NotMember)
 }
@@ -65,7 +65,7 @@ fn count_active(env:&Env)->Result<u32,CircleError>{
     let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
     let mut c:u32=0;
     for i in 0..members.len(){
-        if members.get(i).ok_or(CircleError::NotInitialized)?.status==MEMBER_ACTIVE{
+        if members.get(i).ok_or(CircleError::NotInitialized)?.status==MemberStatus::Active{
             c=c.checked_add(1).ok_or(CircleError::InvalidAmount)?;
         }
     }
