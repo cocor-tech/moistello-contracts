@@ -3,7 +3,7 @@ mod types; mod contract; mod payout; #[cfg(test)] mod test;
 use soroban_sdk::{contract,contractimpl,Address,BytesN,Env};
 #[contract]pub struct Circle;
 #[contractimpl]impl Circle{
-    pub fn init(env:Env,admin:Address,factory:Address,config:types::CircleConfig)->Result<(),types::CircleError>{contract::init(&env,&admin,&factory,&config)}
+    pub fn __constructor(env:Env,admin:Address,factory:Address,config:types::CircleConfig)->Result<(),types::CircleError>{contract::init(&env,&admin,&factory,&config)}
     pub fn join(env:Env,member:Address)->Result<(),types::CircleError>{contract::join(&env,&member)}
     pub fn contribute(env:Env,member:Address,amount:i128,round:u32)->Result<(),types::CircleError>{contract::contribute(&env,&member,amount,round)}
     pub fn trigger_payout(env:Env,caller:Address,round:u32)->Result<(),types::CircleError>{contract::trigger_payout(&env,&caller,round)}
