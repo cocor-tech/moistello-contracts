@@ -38,7 +38,7 @@ Follow these directives strictly. Every deviation must be explicitly justified.
 ### 1.5 Immutability + Upgradability
 - Contracts deploy once. State persists forever.
 - Use the proxy + implementation pattern from `common/upgrade.rs`.
-- Governance vote required for upgrades.
+- Admin auth required for upgrades.
 - Never lose state during upgrades — store state in proxy, not implementation.
 
 ---

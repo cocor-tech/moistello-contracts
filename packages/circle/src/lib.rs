@@ -2,7 +2,7 @@
 mod types; mod contract; mod payout; #[cfg(test)] mod test; #[cfg(test)] mod tests;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
-pub use types::{PayoutType, CircleStatus, MemberStatus, DisputeResolution, CircleFrequency, CircleError};
+pub use types::CircleError;
 
 #[contract]pub struct Circle;
 #[contractimpl]impl Circle{
@@ -19,6 +19,7 @@ pub use types::{PayoutType, CircleStatus, MemberStatus, DisputeResolution, Circl
     pub fn get_status(env:Env)->types::Circle{contract::get_status(&env)}
     pub fn get_members(env:Env)->soroban_sdk::Vec<types::Member>{contract::get_members(&env)}
     pub fn get_contributions(env:Env,member:Address)->soroban_sdk::Vec<types::Contribution>{contract::get_contributions(&env,&member)}
+    pub fn get_pending_payout(env:Env,member:Address)->Option<i128>{contract::get_pending_payout(&env,&member)}
     pub fn pause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::pause_circle(&env,&admin)}
     pub fn unpause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::unpause_circle(&env,&admin)}
     pub fn register_referral(env:Env,referrer:Address,referred:Address,bonus_pct:u32)->Result<(),types::CircleError>{contract::register_referral(&env,&referrer,&referred,bonus_pct)}
@@ -36,3 +37,4 @@ pub use types::{PayoutType, CircleStatus, MemberStatus, DisputeResolution, Circl
     pub fn set_allowlist(env:Env,admin:Address,allowlist:soroban_sdk::Vec<Address>)->Result<(),types::CircleError>{contract::set_allowlist(&env,&admin,allowlist)}
     pub fn get_allowlist(env:Env)->soroban_sdk::Vec<Address>{contract::get_allowlist(&env)}
 }
+
