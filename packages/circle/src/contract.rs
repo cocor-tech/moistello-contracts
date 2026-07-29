@@ -551,6 +551,13 @@ pub fn claim_referral_bonus(env: &Env, referrer: &Address, _treasury: &Address) 
         return Err(CircleError::InvalidAmount);
     }
     env.storage().persistent().set(&DataKey::Referrals, &referrals);
+    let token_address: Address = env.storage().instance().get(&DataKey::Token).ok_or(CircleError::NotInitialized)?;
+    let token_client = soroban_sdk::token::Client::new(env, &token_address);
+    let contract_balance = token_client.balance(&env.current_contract_address());
+    if contract_balance < bonus_total {
+        return Err(CircleError::InsufficientContractBalance);
+    }
+    token_client.transfer(&env.current_contract_address(), referrer, &bonus_total);
     ReferralBonusPaid { referrer: referrer.clone(), amount: bonus_total }.publish(env);
     Ok(())
 }
@@ -606,6 +613,13 @@ pub fn claim_streak_bonus(env: &Env, member: &Address, _treasury: &Address) -> R
     }
     let bonus = math::safe_mul(circle.contribution_amount, streak_val as i128).map_err(|_| CircleError::InvalidAmount)?;
     let bonus_div = math::safe_div(bonus, 100).map_err(|_| CircleError::InvalidAmount)?;
+    let token_address2: Address = env.storage().instance().get(&DataKey::Token).ok_or(CircleError::NotInitialized)?;
+    let token_client2 = soroban_sdk::token::Client::new(env, &token_address2);
+    let contract_balance2 = token_client2.balance(&env.current_contract_address());
+    if contract_balance2 < bonus_div {
+        return Err(CircleError::InsufficientContractBalance);
+    }
+    token_client2.transfer(&env.current_contract_address(), member, &bonus_div);
     StreakBonusPaid { member: member.clone(), amount: bonus_div, streak: streak_val }.publish(env);
     Ok(())
 }
@@ -714,9 +728,9 @@ pub fn pause_circle(env:&Env,admin:&Address)->Result<(),CircleError>{let s:Addre
 pub fn unpause_circle(env:&Env,admin:&Address)->Result<(),CircleError>{let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(CircleError::NotInitialized)?;if admin!=&s{return Err(CircleError::Unauthorized);}pause::unpause(env,admin).map_err(|_|CircleError::ContractPaused)}
 pub fn batch_invite(env:&Env,caller:&Address,members:&Vec<Address>)->Result<(),CircleError>{pause::when_not_paused(env).map_err(|_|CircleError::ContractPaused)?;let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;let circle:Circle=env.storage().instance().get(&DataKey::Circle).ok_or(CircleError::NotInitialized)?;if caller!=&circle.organizer{return Err(CircleError::NotOrganizer);}if circle.status==STATUS_DISPUTED||circle.status==STATUS_COMPLETED{return Err(CircleError::NotActive);}let mut members_vec:Vec<Member>=env.storage().persistent().get(&DataKey::Members).unwrap_or_else(||Vec::new(env));for mi in 0..members.len(){let member=members.get(mi).ok_or(CircleError::VecAccessError)?;let score=scoring::get_score(env,&member);if score<circle.min_moi_score{return Err(CircleError::InsufficientMoiScore);}for i in 0..members_vec.len(){if members_vec.get(i).ok_or(CircleError::VecAccessError)?.address==member{return Err(CircleError::AlreadyMember);}}if members_vec.len()as u32>=circle.max_members{return Err(CircleError::CircleFull);}let now=env.ledger().timestamp();let pos=members_vec.len()as u32;members_vec.push_back(Member{address:member.clone(),position:pos,joined_at:now,strikes:0,status:MEMBER_ACTIVE,exited_at:0,total_contributions:0,total_received:0});}env.storage().persistent().set(&DataKey::Members,&members_vec);let circle_status=circle.status;let member_count=members_vec.len()as u32;let max_members=circle.max_members;let mut stored_circle=env.storage().instance().get::<DataKey,Circle>(&DataKey::Circle).ok_or(CircleError::NotInitialized)?;stored_circle.member_count=member_count;if member_count>=max_members&&circle_status==STATUS_PENDING{stored_circle.status=STATUS_ACTIVE;stored_circle.started_at=env.ledger().timestamp();}env.storage().instance().set(&DataKey::Circle,&stored_circle);for mi in 0..members.len(){let member=members.get(mi).ok_or(CircleError::VecAccessError)?;let pos=members_vec.get(mi).map(|m| m.position).unwrap_or(0);env.events().publish((env.current_contract_address(),symbol_short!("joined")),MemberJoined{member:member.clone(),position:pos});}Ok(())}
 pub fn register_referral(env:&Env,referrer:&Address,referred:&Address,bonus_pct:u32)->Result<(),CircleError>{pause::when_not_paused(env).map_err(|_|CircleError::ContractPaused)?;referrer.require_auth();if referrer==referred{return Err(CircleError::SelfReferral);}if bonus_pct>10000{return Err(CircleError::InvalidAmount);}let mut referrals:Vec<Referral>=env.storage().persistent().get(&DataKey::Referrals).unwrap_or_else(||Vec::new(env));for i in 0..referrals.len(){let r=referrals.get(i).ok_or(CircleError::VecAccessError)?;if r.referrer==*referrer&&r.referred==*referred{return Err(CircleError::AlreadyMember);}}referrals.push_back(Referral{referrer:referrer.clone(),referred:referred.clone(),bonus_pct,timestamp:env.ledger().timestamp()});env.storage().persistent().set(&DataKey::Referrals,&referrals);env.events().publish((env.current_contract_address(),symbol_short!("referral")),ReferralRegistered{referrer:referrer.clone(),referred:referred.clone(),bonus_pct});Ok(())}
-pub fn claim_referral_bonus(env:&Env,_referrer:&Address,_treasury:&Address)->Result<(),CircleError>{Err(CircleError::NotImplemented)}
+
 pub fn update_streak(env:&Env,_member:&Address,_round:u32)->Result<(),CircleError>{Err(CircleError::NotImplemented)}
-pub fn claim_streak_bonus(env:&Env,_member:&Address,_treasury:&Address)->Result<(),CircleError>{Err(CircleError::NotImplemented)}
+
 pub fn get_referrals(env:&Env)->Vec<Referral>{env.storage().persistent().get(&DataKey::Referrals).unwrap_or_else(||Vec::new(env))}
 pub fn get_streaks(env:&Env)->Vec<Streak>{Vec::new(env)}
 
