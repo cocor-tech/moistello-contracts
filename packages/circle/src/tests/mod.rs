@@ -1,6 +1,12 @@
 #![cfg_attr(not(test), no_std)]
 
 #[cfg(test)]
+mod test_integration;
+
+#[cfg(test)]
+mod test_stress;
+
+#[cfg(test)]
 mod tests {
     use soroban_sdk::{Env, Address};
 
