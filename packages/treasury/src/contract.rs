@@ -1,8 +1,115 @@
 use soroban_sdk::{Address,Env,Vec,symbol_short};use crate::types::*;use common::pause;
+
+/// Initializes the treasury contract with an admin and token address.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Administrator address with withdrawal privileges
+/// - `token`: Token contract address for deposits/withdrawals
+///
+/// # Authorization
+/// Requires authentication from the admin address.
+///
+/// # Panics
+/// Never panics. Initializes balance to 0 and empty deposit/withdrawal vectors.
 pub fn init(env:&Env,admin:&Address,token:&Address){admin.require_auth();env.storage().instance().set(&DataKey::Admin,admin);env.storage().instance().set(&DataKey::Token,token);env.storage().instance().set(&DataKey::Balance,&0i128);env.storage().persistent().set(&DataKey::Deposits,&Vec::<Deposit>::new(env));env.storage().persistent().set(&DataKey::Withdrawals,&Vec::<Withdrawal>::new(env));}
+/// Deposits fees from a circle into the treasury.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `from`: Address depositing the funds
+/// - `amount`: Amount to deposit (must be positive)
+/// - `circle_id`: Circle contract address originating the deposit
+///
+/// # Returns
+/// - `Ok(())` on successful deposit
+/// - `Err(TreasuryError::ContractPaused)` if treasury is paused
+/// - `Err(TreasuryError::InvalidAmount)` if amount <= 0 or overflow occurs
+/// - `Err(TreasuryError::NotInitialized)` if token address is not set
+///
+/// # Authorization
+/// Requires authentication from the `from` address.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed TreasuryError variants.
 pub fn deposit(env:&Env,from:&Address,amount:i128,circle_id:&Address)->Result<(),TreasuryError>{pause::when_not_paused(env).map_err(|_|TreasuryError::ContractPaused)?;from.require_auth();if amount<=0{return Err(TreasuryError::InvalidAmount);}let token:Address=env.storage().instance().get(&DataKey::Token).ok_or(TreasuryError::NotInitialized)?;let token_client=soroban_sdk::token::Client::new(env,&token);token_client.transfer(from,&env.current_contract_address(),&amount);let bal:i128=env.storage().instance().get(&DataKey::Balance).unwrap_or(0);env.storage().instance().set(&DataKey::Balance,&bal.checked_add(amount).ok_or(TreasuryError::InvalidAmount)?);let mut deps:Vec<Deposit>=env.storage().persistent().get(&DataKey::Deposits).unwrap_or_else(||Vec::new(env));deps.push_back(Deposit{from:from.clone(),amount,circle_id:circle_id.clone(),timestamp:env.ledger().timestamp()});env.storage().persistent().set(&DataKey::Deposits,&deps);env.events().publish((env.current_contract_address(),symbol_short!("deposit")),FeeDeposited{from:from.clone(),amount,circle_id:circle_id.clone()});Ok(())}
+/// Withdraws funds from the treasury to a recipient address.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address requesting the withdrawal
+/// - `to`: Recipient address
+/// - `amount`: Amount to withdraw (must be positive and <= balance)
+///
+/// # Returns
+/// - `Ok(())` on successful withdrawal
+/// - `Err(TreasuryError::ContractPaused)` if treasury is paused
+/// - `Err(TreasuryError::Unauthorized)` if caller is not the admin
+/// - `Err(TreasuryError::InvalidAmount)` if amount <= 0
+/// - `Err(TreasuryError::InsufficientBalance)` if balance < amount or underflow occurs
+/// - `Err(TreasuryError::NotInitialized)` if admin or token not set
+///
+/// # Authorization
+/// Requires authentication from admin and admin must match stored admin.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed TreasuryError variants.
 pub fn withdraw(env:&Env,admin:&Address,to:&Address,amount:i128)->Result<(),TreasuryError>{pause::when_not_paused(env).map_err(|_|TreasuryError::ContractPaused)?;admin.require_auth();let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;if admin!=&s{return Err(TreasuryError::Unauthorized);}if amount<=0{return Err(TreasuryError::InvalidAmount);}let bal:i128=env.storage().instance().get(&DataKey::Balance).unwrap_or(0);if bal<amount{return Err(TreasuryError::InsufficientBalance);}let token:Address=env.storage().instance().get(&DataKey::Token).ok_or(TreasuryError::NotInitialized)?;let token_client=soroban_sdk::token::Client::new(env,&token);token_client.transfer(&env.current_contract_address(),to,&amount);env.storage().instance().set(&DataKey::Balance,&bal.checked_sub(amount).ok_or(TreasuryError::InsufficientBalance)?);let mut wds:Vec<Withdrawal>=env.storage().persistent().get(&DataKey::Withdrawals).unwrap_or_else(||Vec::new(env));wds.push_back(Withdrawal{admin:admin.clone(),to:to.clone(),amount,timestamp:env.ledger().timestamp()});env.storage().persistent().set(&DataKey::Withdrawals,&wds);env.events().publish((env.current_contract_address(),symbol_short!("withdraw")),FundsWithdrawn{to:to.clone(),amount});Ok(())}
+/// Returns the current balance of the treasury.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+///
+/// # Returns
+/// Current treasury balance in token units, or 0 if not initialized.
+///
+/// # Panics
+/// Never panics. Returns 0 if balance is not set.
 pub fn get_balance(env:&Env)->i128{env.storage().instance().get(&DataKey::Balance).unwrap_or(0)}
+/// Returns all deposit records.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+///
+/// # Returns
+/// Vector of Deposit structs containing from address, amount, circle_id, and timestamp.
+///
+/// # Panics
+/// Never panics. Returns empty vector if no deposits exist.
 pub fn get_deposits(env:&Env)->Vec<Deposit>{env.storage().persistent().get(&DataKey::Deposits).unwrap_or_else(||Vec::new(env))}
+/// Pauses the treasury, preventing deposits and withdrawals.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `a`: Admin address requesting the pause
+///
+/// # Returns
+/// - `Ok(())` on successful pause
+/// - `Err(TreasuryError::Unauthorized)` if caller is not the admin
+/// - `Err(TreasuryError::NotInitialized)` if admin not set
+/// - `Err(TreasuryError::ContractPaused)` if pause operation fails
+///
+/// # Authorization
+/// Only the stored admin can pause the treasury.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed TreasuryError variants.
 pub fn pause(env:&Env,a:&Address)->Result<(),TreasuryError>{let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;if a!=&s{return Err(TreasuryError::Unauthorized);}pause::pause(env,a).map_err(|_|TreasuryError::ContractPaused)}
+/// Unpauses the treasury, allowing deposits and withdrawals to resume.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `a`: Admin address requesting the unpause
+///
+/// # Returns
+/// - `Ok(())` on successful unpause
+/// - `Err(TreasuryError::Unauthorized)` if caller is not the admin
+/// - `Err(TreasuryError::NotInitialized)` if admin not set
+/// - `Err(TreasuryError::ContractPaused)` if unpause operation fails
+///
+/// # Authorization
+/// Only the stored admin can unpause the treasury.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed TreasuryError variants.
 pub fn unpause(env:&Env,a:&Address)->Result<(),TreasuryError>{let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;if a!=&s{return Err(TreasuryError::Unauthorized);}pause::unpause(env,a).map_err(|_|TreasuryError::ContractPaused)}
