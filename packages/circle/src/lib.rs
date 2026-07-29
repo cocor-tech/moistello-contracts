@@ -2,7 +2,7 @@
 mod types; mod contract; mod payout; #[cfg(test)] mod test; #[cfg(test)] mod tests;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
-pub use types::CircleError;
+pub use types::{CircleError, CircleStatus};
 
 #[contract]pub struct Circle;
 #[contractimpl]impl Circle{
