@@ -291,6 +291,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "rand",
+ "reputation-registry",
  "serde_json",
  "soroban-sdk",
  "soroban-token-sdk",
