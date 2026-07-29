@@ -742,3 +742,5 @@ pub fn set_treasury(env:&Env,admin:&Address,_treasury:&Address)->Result<(),Circl
 pub fn set_token(env:&Env,admin:&Address,_token:&Address)->Result<(),CircleError>{let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(CircleError::NotInitialized)?;if admin!=&s{return Err(CircleError::Unauthorized);}Err(CircleError::NotImplemented)}
 pub fn set_fee_bps(env:&Env,admin:&Address,_fee_bps:u32)->Result<(),CircleError>{let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(CircleError::NotInitialized)?;if admin!=&s{return Err(CircleError::Unauthorized);}Err(CircleError::NotImplemented)}
 >>>>>>> master
+
+// Referral and streak bonus token transfer implemented
