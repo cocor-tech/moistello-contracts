@@ -100,6 +100,11 @@ pub enum StakingError {
     NoUnbondingPosition = 110,
     AlreadyStaked = 111,
     Overflow = 112,
+    /// The staking contract does not hold enough tokens to fulfil the claim.
+    /// Returned as a typed preflight error before attempting the transfer so
+    /// callers (and the Go-side error classifier) receive a machine-readable
+    /// code rather than an opaque host panic.
+    InsufficientContractBalance = 113,
 }
 
 /// Event emitted when tokens are staked
