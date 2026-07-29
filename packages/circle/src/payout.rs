@@ -3,7 +3,7 @@ use crate::types::*;
 use common::vrf;
 
 pub fn resolve_random(env:&Env,circle:&Circle,_round:u32)->Result<Address,CircleError>{
-    let positions=vrf::shuffle_positions(env,circle.max_members);
+    let positions=vrf::shuffle_positions(env,circle.max_members).map_err(|_| CircleError::InvalidAmount)?;
     let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
     let mut pos_to_addr:Map<u32,Address>=Map::new(env);
     for i in 0..members.len(){
