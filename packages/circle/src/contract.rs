@@ -31,3 +31,4 @@ pub fn set_token(env:&Env,admin:&Address,token:&Address)->Result<(),CircleError>
 pub fn set_fee_bps(env:&Env,admin:&Address,_fee_bps:u32)->Result<(),CircleError>{let s:Address=env.storage().instance().get(&DataKey::Admin).ok_or(CircleError::NotInitialized)?;if admin!=&s{return Err(CircleError::Unauthorized);}Err(CircleError::NotImplemented)}
 
 // Referral and streak bonus: contract transfers tokens from DataKey::Token to users
+# Token transfer support for referral/streak bonuses
