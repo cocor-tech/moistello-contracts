@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 9,
+    "address": 7,
     "nonce": 0,
     "mux_id": 0
   },
@@ -45,25 +45,7 @@
         }
       ]
     ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "function_name": "join",
-              "args": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
+    [],
     []
   ],
   "ledger": {
@@ -269,74 +251,6 @@
                         }
                       }
                     ]
-                  },
-                  {
-                    "map": [
-                      {
-                        "key": {
-                          "symbol": "address"
-                        },
-                        "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "exited_at"
-                        },
-                        "val": {
-                          "u64": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "joined_at"
-                        },
-                        "val": {
-                          "u64": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "position"
-                        },
-                        "val": {
-                          "u32": 1
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "status"
-                        },
-                        "val": {
-                          "u32": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "strikes"
-                        },
-                        "val": {
-                          "u32": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "total_contributions"
-                        },
-                        "val": {
-                          "i128": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "total_received"
-                        },
-                        "val": {
-                          "i128": "0"
-                        }
-                      }
-                    ]
                   }
                 ]
               }
@@ -500,7 +414,7 @@
                               "symbol": "max_members"
                             },
                             "val": {
-                              "u32": 2
+                              "u32": 5
                             }
                           },
                           {
@@ -516,7 +430,7 @@
                               "symbol": "member_count"
                             },
                             "val": {
-                              "u32": 2
+                              "u32": 1
                             }
                           },
                           {
@@ -588,7 +502,7 @@
                               "symbol": "status"
                             },
                             "val": {
-                              "u32": 1
+                              "u32": 0
                             }
                           },
                           {
@@ -657,26 +571,6 @@
               "key": {
                 "ledger_key_nonce": {
                   "nonce": "5541220902715666415"
-                }
-              },
-              "durability": "temporary",
-              "val": "void"
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 6311999
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5",
-              "key": {
-                "ledger_key_nonce": {
-                  "nonce": "1033654523790656264"
                 }
               },
               "durability": "temporary",

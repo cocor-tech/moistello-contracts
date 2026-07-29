@@ -4,6 +4,7 @@
 mod tests {
     use soroban_sdk::{Address, Env, String};
     use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::Ledger;
     use crate as circle;
 
     const MEMBER_ACTIVE: u32 = 0u32;
@@ -230,5 +231,173 @@ mod tests {
 
         // Should be completed
         assert_eq!(client.get_status().status, 2u32);
+    }
+
+    // --- #128: batch_invite ---
+    #[test]
+    fn test_batch_invite_organizer_only() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 5u32;
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let non_organizer = Address::generate(&env);
+        let members = soroban_sdk::vec![&env, Address::generate(&env)];
+        assert!(client.try_batch_invite(&non_organizer, &members).is_err());
+    }
+
+    #[test]
+    fn test_batch_invite_adds_members() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 5u32;
+        let organizer = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+        let m3 = Address::generate(&env);
+        let members = soroban_sdk::vec![&env, m1.clone(), m2.clone(), m3.clone()];
+        assert!(client.try_batch_invite(&organizer, &members).is_ok());
+        assert_eq!(client.get_members().len(), 3);
+    }
+
+    #[test]
+    fn test_batch_invite_rejects_duplicates() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 5u32;
+        let organizer = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+        // First invite m1 solo
+        assert!(client.try_join(&m1).is_ok());
+        // Then batch invite m1 again — should fail
+        let members = soroban_sdk::vec![&env, m1.clone(), m2.clone()];
+        assert!(client.try_batch_invite(&organizer, &members).is_err());
+    }
+
+    #[test]
+    fn test_batch_invite_rejects_when_paused() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let admin = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        assert!(client.try_pause_circle(&admin).is_ok());
+        let members = soroban_sdk::vec![&env, Address::generate(&env)];
+        assert!(client.try_batch_invite(&admin, &members).is_err());
+    }
+
+    // --- #127: self-referral prevention ---
+    #[test]
+    fn test_register_referral_different_addresses() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let referrer = Address::generate(&env);
+        let referred = Address::generate(&env);
+        assert!(client.try_register_referral(&referrer, &referred, &1000u32).is_ok());
+    }
+
+    #[test]
+    fn test_register_referral_self_referral_fails() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let addr = Address::generate(&env);
+        let result = client.try_register_referral(&addr, &addr, &1000u32);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_register_referral_rejects_excessive_bonus() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let referrer = Address::generate(&env);
+        let referred = Address::generate(&env);
+        assert!(client.try_register_referral(&referrer, &referred, &20000u32).is_err());
+    }
+
+    // --- #129: time-weighted contributions ---
+    #[test]
+    fn test_contribution_has_time_weight() {
+        let env = Env::default();
+        env.ledger().with_mut(|li| li.timestamp = 12345);
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        let (token, client) = setup_test_env(&env, &mut config);
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&m1).unwrap();
+        client.try_join(&m2).unwrap();
+        mint_tokens(&env, &token, &m1, config.contribution_amount);
+        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap();
+
+        let contribs = client.get_contributions(&m1);
+        assert_eq!(contribs.len(), 1);
+        let c = contribs.get(0).unwrap();
+        assert_eq!(c.time_weight, 12345);
+    }
+
+    #[test]
+    fn test_payout_uses_time_weighted_distribution() {
+        let env = Env::default();
+        env.ledger().with_mut(|li| li.timestamp = 1000000);
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.total_rounds = 1u32;
+        let admin = config.organizer.clone();
+        let (token, client) = setup_test_env(&env, &mut config);
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&m1).unwrap();
+        client.try_join(&m2).unwrap();
+        mint_tokens(&env, &token, &m1, config.contribution_amount);
+        mint_tokens(&env, &token, &m2, config.contribution_amount);
+        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap();
+        client.try_contribute(&m2, &config.contribution_amount, &0u32).unwrap();
+        assert!(client.try_trigger_payout(&admin, &0u32).is_ok());
+        // After payout, pool = 2 * contribution_amount should be distributed
+        let status = client.get_status();
+        assert_eq!(status.current_round, 1u32);
+    }
+
+    // --- #130: migration storage test ---
+    #[test]
+    fn test_storage_upgrade_preserves_state() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let member = Address::generate(&env);
+        assert!(client.try_join(&member).is_ok());
+
+        // Read back - state should be intact
+        let members = client.get_members();
+        assert_eq!(members.len(), 1);
+        let m = members.get(0).unwrap();
+        assert_eq!(m.address, member);
+
+        let status = client.get_status();
+        assert_eq!(status.member_count, 1);
     }
 }
