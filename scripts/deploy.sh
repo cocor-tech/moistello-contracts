@@ -8,8 +8,27 @@ echo "=== Moistello Contract Deployment — $NETWORK ==="
 if [ "$NETWORK" = "testnet" ]; then
     RPC_URL="https://soroban-testnet.stellar.org"
     NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
-    ADMIN_PUBLIC="GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"
-    ADMIN_SECRET="SDDBM2MKQSV2ZPEDKTSI3IWNEUSJU5DAWW5NSRWNKJ4FABXSYGYW72FO"
+    ADMIN_PUBLIC="${TESTNET_ADMIN_PUBLIC_KEY}"
+    ADMIN_SECRET="${TESTNET_ADMIN_SECRET_KEY}"
+    if [ -z "$ADMIN_PUBLIC" ] || [ -z "$ADMIN_SECRET" ]; then
+        echo ""
+        echo "ERROR: Testnet admin keys not configured."
+        echo ""
+        echo "  Generate a testnet keypair:"
+        echo "    stellar keys generate moistello-testnet --network testnet"
+        echo "    stellar keys show moistello-testnet"
+        echo ""
+        echo "  Then export the keys:"
+        echo "    export TESTNET_ADMIN_PUBLIC_KEY=\"<public-key>\""
+        echo "    export TESTNET_ADMIN_SECRET_KEY=\"<secret-key>\""
+        echo ""
+        echo "  Or use a .env file:"
+        echo '    echo "TESTNET_ADMIN_PUBLIC_KEY=<public-key>" > .env'
+        echo '    echo "TESTNET_ADMIN_SECRET_KEY=<secret-key>" >> .env'
+        echo "    source .env"
+        echo ""
+        exit 1
+    fi
 else
     RPC_URL="https://soroban.stellar.org"
     NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
@@ -32,22 +51,21 @@ soroban config identity address "$IDENTITY" 2>/dev/null
 WASM_DIR="target/wasm32v1-none/release"
 
 # Deploy contracts in dependency order
-echo ""
-echo "1/5 Deploying Circle Factory..."
+echo "1/4 Deploying Circle Factory..."
 FACTORY_ID=$(soroban contract deploy \
     --wasm "$WASM_DIR/circle_factory.optimized.wasm" \
     --source "$IDENTITY" \
     --network "$NETWORK")
 echo "   Factory: $FACTORY_ID"
 
-echo "2/5 Deploying Circle (base template)..."
+echo "2/4 Deploying Circle (base template)..."
 CIRCLE_WASM_HASH=$(soroban contract install \
     --wasm "$WASM_DIR/circle.optimized.wasm" \
     --source "$IDENTITY" \
     --network "$NETWORK")
 echo "   Circle WASM Hash: $CIRCLE_WASM_HASH"
 
-echo "3/5 Deploying Reputation Registry..."
+echo "3/4 Deploying Reputation Registry..."
 REP_ID=$(soroban contract deploy \
     --wasm "$WASM_DIR/reputation_registry.optimized.wasm" \
     --source "$IDENTITY" \

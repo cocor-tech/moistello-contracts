@@ -10,6 +10,7 @@ pub fn init(env: &Env, admin: &Address, factory: &Address, config: &CircleConfig
     }
     let circle = Circle {
         id: env.current_contract_address(),
+        token: config.token.clone(),
         name: config.name.clone(),
         organizer: config.organizer.clone(),
         factory: factory.clone(),
@@ -413,6 +414,7 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
 pub fn get_status(env: &Env) -> Circle {
     env.storage().instance().get(&DataKey::Circle).unwrap_or(Circle {
         id: env.current_contract_address(),
+        token: env.current_contract_address(),
         name: soroban_sdk::String::from_str(env, ""),
         organizer: env.current_contract_address(),
         factory: env.current_contract_address(),
