@@ -235,7 +235,7 @@ pub enum CircleEvent {
 .PHONY: build optimize test deploy-bindings bindings clean
 
 build:
-	@for pkg in circle-factory circle reputation-registry governance-token treasury; do \
+	@for pkg in circle-factory circle reputation-registry treasury; do \
 		echo "Building $$pkg..."; \
 		cargo build --target wasm32-unknown-unknown --release -p $$pkg; \
 	done
@@ -296,7 +296,7 @@ public_key = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"
 secret_key = "SDDBM2MKQSV2ZPEDKTSI3IWNEUSJU5DAWW5NSRWNKJ4FABXSYGYW72FO"
 
 [deploy_order]
-contracts = ["common", "circle-factory", "treasury", "reputation-registry", "governance-token", "circle"]
+contracts = ["common", "circle-factory", "treasury", "reputation-registry", "circle"]
 
 [circle-factory]
 init_args = { admin = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC", fee_bps = 50 }
@@ -722,7 +722,7 @@ impl CircleV2 { /* upgraded logic */ }
 
 // Upgrade process:
 // 1. Deploy new implementation
-// 2. Governance vote approves upgrade
+// 2. Admin approves upgrade
 // 3. Admin calls proxy.setImplementation(newAddress)
 // 4. All state preserved (in proxy storage, not implementation)
 ```
