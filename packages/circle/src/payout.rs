@@ -8,7 +8,7 @@ pub fn resolve_random(env:&Env,circle:&Circle,_round:u32)->Result<Address,Circle
     let mut pos_to_addr:Map<u32,Address>=Map::new(env);
     for i in 0..members.len(){
         let m=members.get(i).ok_or(CircleError::VecAccessError)?;
-        if m.status==MemberStatus::Active{
+        if m.status==MemberStatus::Active as u32{
             pos_to_addr.set(m.position,m.address.clone());
         }
     }
@@ -32,7 +32,7 @@ pub fn resolve_fixed(env:&Env,circle:&Circle,round:u32)->Result<Address,CircleEr
     let mut pos_to_addr:Map<u32,Address>=Map::new(env);
     for i in 0..members.len(){
         let m=members.get(i).ok_or(CircleError::VecAccessError)?;
-        if m.status==MemberStatus::Active{
+        if m.status==MemberStatus::Active as u32{
             pos_to_addr.set(m.position,m.address.clone());
         }
     }
@@ -99,7 +99,7 @@ fn count_active(env:&Env)->Result<u32,CircleError>{
     let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
     let mut c:u32=0;
     for i in 0..members.len(){
-        if members.get(i).ok_or(CircleError::NotInitialized)?.status==MemberStatus::Active{
+        if members.get(i).ok_or(CircleError::NotInitialized)?.status==MemberStatus::Active as u32{
             c=c.checked_add(1).ok_or(CircleError::InvalidAmount)?;
         }
     }
