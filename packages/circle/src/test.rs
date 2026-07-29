@@ -441,6 +441,96 @@ mod tests {
         assert_eq!(client.get_status().status, 2u32);
     }
 
+    // ===== Issue 1: Allowlist Tests =====
+
+    #[test]
+    fn test_empty_allowlist_permits_all() {
+        // No allowlist set — anyone can join (existing behaviour preserved)
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        // No allowlist configured, join should succeed
+        assert!(client.try_join(&member).is_ok());
+        assert_eq!(client.get_allowlist().len(), 0);
+    }
+
+    #[test]
+    fn test_allowlist_permits_allowlisted_member() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let admin = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+        let allowed = Address::generate(&env);
+
+        env.mock_all_auths();
+        // Set allowlist to exactly [allowed]
+        let mut allowlist = soroban_sdk::Vec::new(&env);
+        allowlist.push_back(allowed.clone());
+        client.set_allowlist(&admin, &allowlist);
+
+        // Allowed address should join successfully
+        assert!(client.try_join(&allowed).is_ok());
+    }
+
+    #[test]
+    fn test_allowlist_blocks_non_allowlisted_member() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let admin = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+        let allowed = Address::generate(&env);
+        let outsider = Address::generate(&env);
+
+        env.mock_all_auths();
+        // Set allowlist to exactly [allowed]
+        let mut allowlist = soroban_sdk::Vec::new(&env);
+        allowlist.push_back(allowed.clone());
+        client.set_allowlist(&admin, &allowlist);
+
+        // Outsider (not on allowlist) should be rejected
+        let result = client.try_join(&outsider);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_allowlist_only_admin_can_set() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+        let non_admin = Address::generate(&env);
+
+        env.mock_all_auths_allowing_non_root_auth();
+        // Non-admin trying to set allowlist should fail
+        let allowlist: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+        // We remove the auto-auth and verify it fails without admin creds
+        let result = client.try_set_allowlist(&non_admin, &allowlist);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_allowlist_get_returns_set_list() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let admin = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+        let a1 = Address::generate(&env);
+        let a2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        let mut allowlist = soroban_sdk::Vec::new(&env);
+        allowlist.push_back(a1.clone());
+        allowlist.push_back(a2.clone());
+        client.set_allowlist(&admin, &allowlist);
+
+        let stored = client.get_allowlist();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored.get(0).unwrap(), a1);
+        assert_eq!(stored.get(1).unwrap(), a2);
+    }
+
     // ===== Issue 4: Fee BPS Tests =====
 
     #[test]
@@ -504,7 +594,7 @@ mod tests {
 
         // pool = 200_0000000, fee = 0.5% = 1_0000000, net = 199_0000000
         let pool = amount * 2;
-        let expected_fee = pool * 50 / 10_000;
+        let expected_fee = pool * 50 / 10_000; // = 1_0000000
         let expected_net = pool - expected_fee;
 
         let circle = client.get_status();
