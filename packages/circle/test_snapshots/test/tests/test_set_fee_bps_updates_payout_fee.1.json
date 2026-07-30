@@ -189,94 +189,118 @@
               },
               "durability": "persistent",
               "val": {
-                "vec": [
+                "map": [
                   {
-                    "map": [
-                      {
-                        "key": {
-                          "symbol": "amount"
-                        },
-                        "val": {
-                          "i128": "1000000000"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "member"
-                        },
-                        "val": {
+                    "key": {
+                      "vec": [
+                        {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "on_time"
                         },
-                        "val": {
-                          "bool": true
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "round"
-                        },
-                        "val": {
+                        {
                           "u32": 0
                         }
-                      },
-                      {
-                        "key": {
-                          "symbol": "timestamp"
+                      ]
+                    },
+                    "val": {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "amount"
+                          },
+                          "val": {
+                            "i128": "1000000000"
+                          }
                         },
-                        "val": {
-                          "u64": "0"
+                        {
+                          "key": {
+                            "symbol": "member"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "on_time"
+                          },
+                          "val": {
+                            "bool": true
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "round"
+                          },
+                          "val": {
+                            "u32": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": "0"
+                          }
                         }
-                      }
-                    ]
+                      ]
+                    }
                   },
                   {
-                    "map": [
-                      {
-                        "key": {
-                          "symbol": "amount"
-                        },
-                        "val": {
-                          "i128": "1000000000"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "member"
-                        },
-                        "val": {
+                    "key": {
+                      "vec": [
+                        {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "on_time"
                         },
-                        "val": {
-                          "bool": true
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "round"
-                        },
-                        "val": {
+                        {
                           "u32": 0
                         }
-                      },
-                      {
-                        "key": {
-                          "symbol": "timestamp"
+                      ]
+                    },
+                    "val": {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "amount"
+                          },
+                          "val": {
+                            "i128": "1000000000"
+                          }
                         },
-                        "val": {
-                          "u64": "0"
+                        {
+                          "key": {
+                            "symbol": "member"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "on_time"
+                          },
+                          "val": {
+                            "bool": true
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "round"
+                          },
+                          "val": {
+                            "u32": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": "0"
+                          }
                         }
-                      }
-                    ]
+                      ]
+                    }
                   }
                 ]
               }
@@ -366,7 +390,7 @@
                           "symbol": "total_received"
                         },
                         "val": {
-                          "i128": "0"
+                          "i128": "2000000000"
                         }
                       }
                     ]
@@ -434,7 +458,7 @@
                           "symbol": "total_received"
                         },
                         "val": {
-                          "i128": "1800000000"
+                          "i128": "0"
                         }
                       }
                     ]
@@ -471,7 +495,7 @@
                           "symbol": "amount"
                         },
                         "val": {
-                          "i128": "1800000000"
+                          "i128": "2000000000"
                         }
                       },
                       {
@@ -479,7 +503,7 @@
                           "symbol": "fee"
                         },
                         "val": {
-                          "i128": "200000000"
+                          "i128": "0"
                         }
                       },
                       {
@@ -495,7 +519,7 @@
                           "symbol": "recipient"
                         },
                         "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                         }
                       },
                       {
@@ -710,7 +734,7 @@
                               "symbol": "payout_bitmap"
                             },
                             "val": {
-                              "u128": "0"
+                              "u128": "1"
                             }
                           },
                           {
@@ -758,7 +782,7 @@
                               "symbol": "total_fees"
                             },
                             "val": {
-                              "i128": "200000000"
+                              "i128": "0"
                             }
                           },
                           {
@@ -766,7 +790,7 @@
                               "symbol": "total_payouts"
                             },
                             "val": {
-                              "i128": "1800000000"
+                              "i128": "2000000000"
                             }
                           },
                           {

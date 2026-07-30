@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 6,
     "nonce": 0,
     "mux_id": 0
   },
@@ -51,16 +51,16 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "contribute",
+              "function_name": "register_referral",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": "1000000000"
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
                 {
-                  "u32": 0
+                  "u32": 500
                 }
               ]
             }
@@ -94,7 +94,6 @@
         }
       ]
     ],
-    [],
     []
   ],
   "ledger": {
@@ -148,62 +147,6 @@
               "durability": "persistent",
               "val": {
                 "map": [
-                  {
-                    "key": {
-                      "vec": [
-                        {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                        },
-                        {
-                          "u32": 0
-                        }
-                      ]
-                    },
-                    "val": {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "amount"
-                          },
-                          "val": {
-                            "i128": "1000000000"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "member"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "on_time"
-                          },
-                          "val": {
-                            "bool": true
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "round"
-                          },
-                          "val": {
-                            "u32": 0
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "timestamp"
-                          },
-                          "val": {
-                            "u64": "0"
-                          }
-                        }
-                      ]
-                    }
-                  },
                   {
                     "key": {
                       "vec": [
@@ -348,7 +291,7 @@
                           "symbol": "total_received"
                         },
                         "val": {
-                          "i128": "2000000000"
+                          "i128": "0"
                         }
                       }
                     ]
@@ -445,55 +388,63 @@
               },
               "durability": "persistent",
               "val": {
+                "vec": []
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "Referrals"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
                 "vec": [
                   {
                     "map": [
                       {
                         "key": {
-                          "symbol": "amount"
+                          "symbol": "bonus_pct"
                         },
                         "val": {
-                          "i128": "2000000000"
+                          "u32": 500
                         }
                       },
                       {
                         "key": {
-                          "symbol": "fee"
+                          "symbol": "claimed"
                         },
                         "val": {
-                          "i128": "0"
+                          "bool": false
                         }
                       },
                       {
                         "key": {
-                          "symbol": "payout_type"
+                          "symbol": "referred"
                         },
                         "val": {
-                          "u32": 0
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                         }
                       },
                       {
                         "key": {
-                          "symbol": "recipient"
+                          "symbol": "referrer"
                         },
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "round"
-                        },
-                        "val": {
-                          "u32": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "timestamp"
-                        },
-                        "val": {
-                          "u64": "0"
                         }
                       }
                     ]
@@ -612,7 +563,7 @@
                               "symbol": "current_round"
                             },
                             "val": {
-                              "u32": 1
+                              "u32": 0
                             }
                           },
                           {
@@ -692,7 +643,7 @@
                               "symbol": "payout_bitmap"
                             },
                             "val": {
-                              "u128": "1"
+                              "u128": "0"
                             }
                           },
                           {
@@ -748,7 +699,7 @@
                               "symbol": "total_payouts"
                             },
                             "val": {
-                              "i128": "2000000000"
+                              "i128": "0"
                             }
                           },
                           {

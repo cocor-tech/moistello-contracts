@@ -2,8 +2,10 @@
 
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{Address, Env, String};
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, BytesN, Env, String};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+    use soroban_sdk::token::Client as TokenClient;
+    use soroban_sdk::token::StellarAssetClient;
     use crate as circle;
     use circle::{Circle, CircleArgs, CircleStatus};
 
@@ -452,7 +454,7 @@ mod tests {
         let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
-        let evidence_hash = [1u8; 32].into();
+        let evidence_hash = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
@@ -470,7 +472,7 @@ mod tests {
         let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
-        let evidence_hash = [1u8; 32].into();
+        let evidence_hash = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
@@ -488,7 +490,7 @@ mod tests {
         let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(&env, &contract_id);
         let member = Address::generate(&env);
-        let evidence_hash = [1u8; 32].into();
+        let evidence_hash = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         client.try_join(&member).unwrap();
@@ -611,5 +613,243 @@ mod tests {
 
         assert!(client.try_pause_circle(&unauthorized).is_err());
         assert!(client.try_unpause_circle(&unauthorized).is_err());
+    }
+
+    // ── helper: deploy a 2-member active circle with a real token wired up ──────
+    fn setup_active_circle_with_token(env: &Env) -> (
+        circle::CircleClient,
+        Address, // admin
+        Address, // m1
+        Address, // m2
+        Address, // token_id  (use TokenClient::new(env, &token_id) to interact)
+        Address, // contract_id
+    ) {
+        let mut config = create_config(env);
+        config.max_members = 2u32;
+        let admin = config.organizer.clone();
+        let factory = Address::generate(env);
+        let contract_id = env.register(circle::Circle, circle::CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(env, &contract_id);
+
+        // Deploy a test token
+        let token_admin = Address::generate(env);
+        let token_id = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+        let sac_client = StellarAssetClient::new(env, &token_id);
+        let token_client = TokenClient::new(env, &token_id);
+
+        // Mock auth globally so all subsequent calls (mint, set_token, join) are authorised
+        env.mock_all_auths();
+
+        // Mint plenty of tokens to the circle contract so it can pay out bonuses
+        sac_client.mint(&contract_id, &1_000_000_0000000i128);
+
+        // Wire the token into the circle contract
+        client.set_token(&admin, &token_id);
+
+        // Two members join → circle becomes Active
+        let m1 = Address::generate(env);
+        let m2 = Address::generate(env);
+        client.join(&m1);
+        client.join(&m2);
+
+        (client, admin, m1, m2, token_id, contract_id)
+    }
+
+    // ── claim_referral_bonus ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_claim_referral_bonus_transfers_tokens() {
+        let env = Env::default();
+        let (client, _admin, m1, m2, token_id, _contract_id) =
+            setup_active_circle_with_token(&env);
+        let token_client = TokenClient::new(&env, &token_id);
+
+        env.mock_all_auths();
+
+        // m1 refers m2 with 500 bps (5%)
+        client.register_referral(&m1, &m2, &500u32);
+
+        // m2 makes a contribution so there is something to calculate the bonus from
+        client.contribute(&m2, &100_0000000i128, &0u32);
+
+        let referrer_balance_before = token_client.balance(&m1);
+
+        let treasury = Address::generate(&env); // passed but unused by contract
+        client.claim_referral_bonus(&m1, &treasury);
+
+        let referrer_balance_after = token_client.balance(&m1);
+
+        // bonus = contribution_amount * bonus_pct / 10000
+        // = 100_0000000 * 500 / 10000 = 5_0000000
+        let expected_bonus = 5_0000000i128;
+        assert_eq!(
+            referrer_balance_after - referrer_balance_before,
+            expected_bonus,
+            "referrer should receive exact bonus amount"
+        );
+    }
+
+    #[test]
+    fn test_claim_referral_bonus_no_double_claim() {
+        let env = Env::default();
+        let (client, _admin, m1, m2, _token_id, _contract_id) =
+            setup_active_circle_with_token(&env);
+
+        env.mock_all_auths();
+
+        client.register_referral(&m1, &m2, &500u32);
+        client.contribute(&m2, &100_0000000i128, &0u32);
+
+        let treasury = Address::generate(&env);
+        client.claim_referral_bonus(&m1, &treasury);
+
+        // Second claim should fail — referral is already marked claimed
+        // (bonus_total will be 0 → InvalidAmount)
+        let result = client.try_claim_referral_bonus(&m1, &treasury);
+        assert!(
+            result.is_err(),
+            "second claim_referral_bonus should fail"
+        );
+    }
+
+    #[test]
+    fn test_claim_referral_bonus_no_token_set_returns_error() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(circle::Circle, circle::CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+
+        env.mock_all_auths();
+
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+        client.join(&m1);
+        client.join(&m2);
+
+        // Register referral and make a contribution — but do NOT call set_token
+        client.register_referral(&m1, &m2, &500u32);
+        client.contribute(&m2, &100_0000000i128, &0u32);
+
+        let treasury = Address::generate(&env);
+        let result = client.try_claim_referral_bonus(&m1, &treasury);
+        assert!(result.is_err(), "should fail when no token is configured");
+    }
+
+    #[test]
+    fn test_claim_referral_bonus_not_active_circle() {
+        let env = Env::default();
+        let config = create_config(&env); // max_members=5, circle stays Pending with 1 member
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(circle::Circle, circle::CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+
+        env.mock_all_auths();
+        let referrer = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        // Circle is still Pending — should be rejected
+        let result = client.try_claim_referral_bonus(&referrer, &treasury);
+        assert!(result.is_err(), "claim_referral_bonus should fail when circle is not Active");
+    }
+
+    // ── claim_streak_bonus ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_claim_streak_bonus_transfers_tokens() {
+        let env = Env::default();
+        let (client, _admin, m1, _m2, token_id, _contract_id) =
+            setup_active_circle_with_token(&env);
+        let token_client = TokenClient::new(&env, &token_id);
+
+        env.mock_all_auths();
+
+        // Give m1 a streak of 3 by calling update_streak three times
+        client.update_streak(&m1, &0u32);
+        client.update_streak(&m1, &1u32);
+        client.update_streak(&m1, &2u32);
+
+        let member_balance_before = token_client.balance(&m1);
+
+        let treasury = Address::generate(&env);
+        client.claim_streak_bonus(&m1, &treasury);
+
+        let member_balance_after = token_client.balance(&m1);
+
+        // bonus = contribution_amount * streak / 100
+        // = 100_0000000 * 3 / 100 = 3_0000000
+        let expected_bonus = 3_0000000i128;
+        assert_eq!(
+            member_balance_after - member_balance_before,
+            expected_bonus,
+            "member should receive exact streak bonus"
+        );
+    }
+
+    #[test]
+    fn test_claim_streak_bonus_below_threshold_fails() {
+        let env = Env::default();
+        let (client, _admin, m1, _m2, _token_id, _contract_id) =
+            setup_active_circle_with_token(&env);
+
+        env.mock_all_auths();
+
+        // Only 2 rounds of streak — below threshold of 3
+        client.update_streak(&m1, &0u32);
+        client.update_streak(&m1, &1u32);
+
+        let treasury = Address::generate(&env);
+        let result = client.try_claim_streak_bonus(&m1, &treasury);
+        assert!(
+            result.is_err(),
+            "streak bonus should fail when streak < 3"
+        );
+    }
+
+    #[test]
+    fn test_claim_streak_bonus_no_token_set_returns_error() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(circle::Circle, circle::CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+
+        env.mock_all_auths();
+
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+        client.join(&m1);
+        client.join(&m2);
+
+        // Build up a streak — but do NOT set the token
+        client.update_streak(&m1, &0u32);
+        client.update_streak(&m1, &1u32);
+        client.update_streak(&m1, &2u32);
+
+        let treasury = Address::generate(&env);
+        let result = client.try_claim_streak_bonus(&m1, &treasury);
+        assert!(result.is_err(), "should fail when no token is configured");
+    }
+
+    #[test]
+    fn test_claim_streak_bonus_not_active_circle() {
+        let env = Env::default();
+        let config = create_config(&env); // stays Pending
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(circle::Circle, circle::CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+
+        env.mock_all_auths();
+        let member = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        let result = client.try_claim_streak_bonus(&member, &treasury);
+        assert!(result.is_err(), "claim_streak_bonus should fail when circle is not Active");
     }
 }

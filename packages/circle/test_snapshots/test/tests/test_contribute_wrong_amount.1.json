@@ -96,7 +96,7 @@
               },
               "durability": "persistent",
               "val": {
-                "vec": []
+                "map": []
               }
             }
           },
@@ -555,18 +555,6 @@
                       },
                       "val": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
-                            "symbol": "FeeBps"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "u32": 0
                       }
                     }
                   ]

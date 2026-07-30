@@ -216,6 +216,7 @@ pub enum CircleError {
     SelfReferral = 35,
     StreakBonusUnlocked = 36,
     InvalidStreakThreshold = 37,
+    TokenNotSet = 38,
 }
 
 #[contractevent]
