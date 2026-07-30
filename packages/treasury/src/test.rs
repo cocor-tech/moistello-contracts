@@ -201,5 +201,51 @@ fn test_pause_blocks_withdraw() {
     assert_eq!(result, Err(Ok(TreasuryError::ContractPaused)));
 }
 
+#[test]
+fn test_rescue_tokens_requires_pause() {
+    let env = Env::default();
+    let (client, admin, token) = setup(&env);
+    let recipient = Address::generate(&env);
+
+    let result = client.try_rescue_tokens(&admin, &recipient, &token, &100i128);
+    assert_eq!(result, Err(Ok(TreasuryError::ContractNotPaused)));
+}
+
+#[test]
+fn test_rescue_tokens_requires_admin() {
+    let env = Env::default();
+    let (client, admin, token) = setup(&env);
+    let from = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let circle_id = Address::generate(&env);
+
+    mint_tokens(&env, &token, &from, 500i128);
+    client.deposit_fee(&from, &500i128, &circle_id);
+    client.pause(&admin);
+
+    let result = client.try_rescue_tokens(&stranger, &recipient, &token, &100i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_rescue_tokens_transfers_and_updates_balance_for_managed_token() {
+    let env = Env::default();
+    let (client, admin, token) = setup(&env);
+    let from = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let circle_id = Address::generate(&env);
+
+    mint_tokens(&env, &token, &from, 1_000i128);
+    client.deposit_fee(&from, &1_000i128, &circle_id);
+    client.pause(&admin);
+
+    client.rescue_tokens(&admin, &recipient, &token, &250i128);
+
+    assert_eq!(client.get_balance(), 750i128);
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&recipient), 250i128);
+}
+
 
 

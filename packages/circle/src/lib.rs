@@ -23,6 +23,7 @@ pub use types::CircleError;
     pub fn pause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::pause_circle(&env,&admin)}
     pub fn unpause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::unpause_circle(&env,&admin)}
     pub fn batch_invite(env:Env,caller:Address,members:soroban_sdk::Vec<Address>)->Result<(),types::CircleError>{contract::batch_invite(&env,&caller,&members)}
+    pub fn batch_payout(env:Env,caller:Address,recipients:soroban_sdk::Vec<Address>,amounts:soroban_sdk::Vec<i128>,round:u32)->Result<(),types::CircleError>{contract::batch_payout(&env,&caller,&recipients,&amounts,round)}
     pub fn register_referral(env:Env,referrer:Address,referred:Address,bonus_pct:u32)->Result<(),types::CircleError>{contract::register_referral(&env,&referrer,&referred,bonus_pct)}
     pub fn claim_referral_bonus(env:Env,referrer:Address,treasury:Address)->Result<(),types::CircleError>{contract::claim_referral_bonus(&env,&referrer,&treasury)}
     pub fn update_streak(env:Env,member:Address,round:u32)->Result<(),types::CircleError>{contract::update_streak(&env,&member,round)}
