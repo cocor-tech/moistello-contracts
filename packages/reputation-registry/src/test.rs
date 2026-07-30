@@ -115,7 +115,7 @@ fn test_record_rejects_invalid_activity_type() {
     let (client, _admin) = setup(&env);
     let user = Address::generate(&env);
 
-    let result = client.try_record(&user, &5u32, &100);
+    let result = client.try_record_activity(&user, &5u32, &100);
     assert_eq!(result, Err(Ok(ReputationError::InvalidActivityType)));
 }
 
@@ -125,7 +125,7 @@ fn test_record_rejects_invalid_impact() {
     let (client, _admin) = setup(&env);
     let user = Address::generate(&env);
 
-    let result = client.try_record(&user, &ACTIVITY_JOIN, &1001);
+    let result = client.try_record_activity(&user, &ACTIVITY_JOIN, &1001);
     assert_eq!(result, Err(Ok(ReputationError::InvalidScoreImpact)));
 }
 
@@ -140,10 +140,10 @@ fn test_get_history_filters_by_user() {
     client.record(&user_b, &ACTIVITY_CONTRIBUTE, &50);
     client.record(&user_a, &ACTIVITY_COMPLETE, &200);
 
-    let history_a = client.get_history(&user_a);
+    let history_a = client.get_history(&user_a, &0, &100);
     assert_eq!(history_a.len(), 2);
 
-    let history_b = client.get_history(&user_b);
+    let history_b = client.get_history(&user_b, &0, &100);
     assert_eq!(history_b.len(), 1);
 }
 
@@ -180,11 +180,11 @@ fn test_pause_blocks_record() {
     let user = Address::generate(&env);
 
     client.pause(&admin);
-    let result = client.try_record(&user, &ACTIVITY_JOIN, &100);
+    let result = client.try_record_activity(&user, &ACTIVITY_JOIN, &100);
     assert_eq!(result, Err(Ok(ReputationError::ContractPaused)));
 
     client.unpause(&admin);
-    assert!(client.try_record(&user, &ACTIVITY_JOIN, &100).is_ok());
+    assert!(client.try_record_activity(&user, &ACTIVITY_JOIN, &100).is_ok());
 }
 
 #[test]

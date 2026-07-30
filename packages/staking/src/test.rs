@@ -2,6 +2,7 @@
 
 use soroban_sdk::{Address, Env};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
+use crate::Staking;
 use crate::types::{StakingError, StakingPeriod, DataKey, UNBONDING_PERIOD_SECONDS};
 use crate::StakingClient;
 

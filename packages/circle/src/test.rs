@@ -197,7 +197,7 @@ mod tests {
         let mut config = create_config(&env);
         let (_, client) = setup_test_env(&env, &mut config);
         let member = Address::generate(&env);
-        let contributions = client.get_contributions(&member);
+        let contributions = client.get_contributions(&member, &0, &100);
         assert_eq!(contributions.len(), 0);
     }
 
@@ -386,7 +386,7 @@ mod tests {
         let result = client.try_contribute(&m1, &config.contribution_amount, &0u32);
         // Should succeed since m1 is a member and contributions is empty
         assert!(result.is_ok());
-        let contributions = client.get_contributions(&m1);
+        let contributions = client.get_contributions(&m1, &0, &100);
         assert_eq!(contributions.len(), 1);
     }
 
@@ -518,7 +518,7 @@ mod tests {
         client.try_join(&other).unwrap();
         client.try_contribute(&member, &config.contribution_amount, &0u32).unwrap();
 
-        let contributions = client.get_contributions(&member);
+        let contributions = client.get_contributions(&member, &0, &100);
         assert_eq!(contributions.len(), 1);
         assert_eq!(contributions.get(0).unwrap().member, member);
         assert_eq!(contributions.get(0).unwrap().round, 0u32);
