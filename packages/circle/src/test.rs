@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, String, Vec};
 
 use crate::{Circle, CircleArgs, CircleClient, CircleError};
@@ -26,6 +26,7 @@ fn create_config(env: &Env, token: &Address) -> crate::types::CircleConfig {
         grace_period_seconds: 0,
         max_strikes: 3,
         slug: String::from_str(env, "test-circle"),
+        payout_cooldown_seconds: 0,
     }
 }
 
@@ -74,6 +75,44 @@ fn test_batch_payout_rejects_more_than_ten_recipients() {
 
     let result = client.try_batch_payout(&admin, &recipients, &amounts, &0_u32);
     assert_eq!(result, Err(Ok(CircleError::InvalidAmount)));
+}
+
+#[test]
+fn test_trigger_payout_enforces_cooldown_between_rounds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let config = crate::types::CircleConfig {
+        payout_cooldown_seconds: 3_600,
+        ..create_config(&env, &token)
+    };
+    let admin = config.organizer.clone();
+    let factory = Address::generate(&env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    let member = Address::generate(&env);
+    let other = Address::generate(&env);
+    client.join(&member);
+    client.join(&other);
+
+    mint_tokens(&env, &token, &member, 100);
+    mint_tokens(&env, &token, &other, 100);
+    client.contribute(&member, &100_i128, &0_u32);
+    client.contribute(&other, &100_i128, &0_u32);
+    client.trigger_payout(&admin, &0_u32);
+
+    mint_tokens(&env, &token, &member, 100);
+    mint_tokens(&env, &token, &other, 100);
+    client.contribute(&member, &100_i128, &1_u32);
+    client.contribute(&other, &100_i128, &1_u32);
+
+    let result = client.try_trigger_payout(&admin, &1_u32);
+    assert_eq!(result, Err(Ok(CircleError::PayoutCooldownActive)));
+
+    env.ledger().set_timestamp(env.ledger().timestamp() + 3_600);
+    client.trigger_payout(&admin, &1_u32);
 }
 
 #[test]
