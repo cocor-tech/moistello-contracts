@@ -12,3 +12,6 @@ common = { path = "../common" }
 
 [features]
 testutils = ["soroban-sdk/testutils"]
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
