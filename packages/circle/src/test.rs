@@ -6,17 +6,15 @@ mod tests {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::testutils::Ledger as _;
     use crate as circle;
-<<<<<<< HEAD
     use circle::{Circle, CircleArgs, CircleStatus};
-=======
     use circle::CircleError;
 
     const MEMBER_ACTIVE: u32 = 0u32;
->>>>>>> master
 
     fn create_config(env: &Env) -> circle::types::CircleConfig {
         circle::types::CircleConfig {
             organizer: Address::generate(env),
+            token: Address::generate(env),
             name: String::from_str(env, "Test Circle"),
             contribution_amount: 100_0000000i128,
             max_members: 5u32,
@@ -29,7 +27,6 @@ mod tests {
             grace_period_seconds: 86400u64,
             max_strikes: 3u32,
             slug: String::from_str(env, "test-circle"),
-            fee_bps: 0u32,
         }
     }
 
@@ -409,7 +406,6 @@ mod tests {
         let env = Env::default();
         let mut config = create_config(&env);
         config.max_members = 2u32;
-        config.fee_bps = 500u32; // 5%
         let admin = config.organizer.clone();
         let factory = Address::generate(&env);
         let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
@@ -418,6 +414,7 @@ mod tests {
         let m2 = Address::generate(&env);
 
         env.mock_all_auths();
+        client.try_set_fee_bps(&admin, &500u32).unwrap(); // 5%
         client.try_join(&m1).unwrap();
         client.try_join(&m2).unwrap();
         client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap();
@@ -1040,5 +1037,446 @@ mod tests {
         env.mock_all_auths_allowing_non_root_auth();
         let result = client.try_set_fee_bps(&non_admin, &50u32);
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Issue 2: Oracle Fallback Tests
+    // =========================================================================
+
+    /// No oracle configured — trigger_payout should still succeed with zero
+    /// yield (oracle call is optional, degrades gracefully).
+    #[test]
+    fn test_trigger_payout_no_oracle_configured_succeeds() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.total_rounds = 1u32;
+        let admin = config.organizer.clone();
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+        mint_tokens(&env, &token, &m1, config.contribution_amount * 2);
+        mint_tokens(&env, &token, &m2, config.contribution_amount * 2);
+        client.try_join(&m1).unwrap();
+        client.try_join(&m2).unwrap();
+        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap();
+        client.try_contribute(&m2, &config.contribution_amount, &0u32).unwrap();
+
+        // No oracle set → yield_rate = 0 → payout proceeds normally
+        assert!(client.try_trigger_payout(&admin, &0u32).is_ok());
+    }
+
+    /// Admin can set primary oracle address; getter returns it.
+    #[test]
+    fn test_set_oracle_happy_path() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let admin = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+        let oracle_addr = Address::generate(&env);
+
+        env.mock_all_auths();
+        assert!(client.try_set_oracle(&admin, &oracle_addr).is_ok());
+        assert_eq!(client.get_oracle(), Some(oracle_addr));
+    }
+
+    /// Admin can set fallback oracle address; getter returns it.
+    #[test]
+    fn test_set_fallback_oracle_happy_path() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let admin = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+        let fallback_addr = Address::generate(&env);
+
+        env.mock_all_auths();
+        assert!(client.try_set_fallback_oracle(&admin, &fallback_addr).is_ok());
+        assert_eq!(client.get_fallback_oracle(), Some(fallback_addr));
+    }
+
+    /// Non-admin cannot set primary oracle.
+    #[test]
+    fn test_set_oracle_unauthorized_rejected() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+        let non_admin = Address::generate(&env);
+        let oracle_addr = Address::generate(&env);
+
+        env.mock_all_auths_allowing_non_root_auth();
+        assert!(client.try_set_oracle(&non_admin, &oracle_addr).is_err());
+        assert_eq!(client.get_oracle(), None);
+    }
+
+    /// Non-admin cannot set fallback oracle.
+    #[test]
+    fn test_set_fallback_oracle_unauthorized_rejected() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+        let non_admin = Address::generate(&env);
+        let fallback_addr = Address::generate(&env);
+
+        env.mock_all_auths_allowing_non_root_auth();
+        assert!(client.try_set_fallback_oracle(&non_admin, &fallback_addr).is_err());
+        assert_eq!(client.get_fallback_oracle(), None);
+    }
+
+    /// get_oracle returns None before any oracle is configured.
+    #[test]
+    fn test_get_oracle_default_none() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+        assert_eq!(client.get_oracle(), None);
+    }
+
+    /// get_fallback_oracle returns None before any fallback is configured.
+    #[test]
+    fn test_get_fallback_oracle_default_none() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let (_, client) = setup_test_env(&env, &mut config);
+        assert_eq!(client.get_fallback_oracle(), None);
+    }
+
+    /// Oracle can be updated (overwritten) by admin.
+    #[test]
+    fn test_set_oracle_can_be_updated() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let admin = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let oracle_v1 = Address::generate(&env);
+        let oracle_v2 = Address::generate(&env);
+
+        client.try_set_oracle(&admin, &oracle_v1).unwrap();
+        assert_eq!(client.get_oracle(), Some(oracle_v1));
+
+        client.try_set_oracle(&admin, &oracle_v2).unwrap();
+        assert_eq!(client.get_oracle(), Some(oracle_v2));
+    }
+
+    /// Both primary and fallback can be set independently.
+    #[test]
+    fn test_set_both_oracles_independently() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        let admin = config.organizer.clone();
+        let (_, client) = setup_test_env(&env, &mut config);
+        let primary = Address::generate(&env);
+        let fallback = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_set_oracle(&admin, &primary).unwrap();
+        client.try_set_fallback_oracle(&admin, &fallback).unwrap();
+
+        assert_eq!(client.get_oracle(), Some(primary));
+        assert_eq!(client.get_fallback_oracle(), Some(fallback));
+    }
+
+    // =========================================================================
+    // Issue 1: State Machine Transition Tests
+    //
+    // Table of (from_status, operation, expected_result):
+    //
+    //  Pending  + join       → Ok  (fills circle, may transition to Active)
+    //  Active   + join       → Err (CircleFull after fill, or NotActive if Completed)
+    //  Completed + join      → Err (NotActive)
+    //  Cancelled + join      → Err (NotActive — via Disputed path)
+    //  Pending  + contribute → Err (NotActive — circle not started yet)
+    //  Active   + contribute → Ok
+    //  Completed + contribute→ Err (NotActive)
+    //  Active   + trigger_payout → Ok
+    //  Completed + trigger_payout → Err (NotActive)
+    //  Cancelled + trigger_payout → Err (NotActive)
+    //  Active   + cancel (via raise_dispute) → Ok → status = Disputed
+    //  Completed + raise_dispute → not blocked by status (only checks DISPUTED)
+    //  Active   + exit_circle → Ok
+    //  Completed + exit_circle → Err (NotActive)
+    // =========================================================================
+
+    /// Helper: build a 2-member active circle with a real token (both members joined).
+    /// Returns `(client, admin, m1, m2)` — tokens already minted for m1/m2.
+    fn make_active_circle(env: &Env) -> (circle::CircleClient, Address, Address, Address) {
+        let mut config = create_config(env);
+        config.max_members = 2u32;
+        config.total_rounds = 2u32;
+        let admin = config.organizer.clone();
+        let (token, client) = setup_test_env(env, &mut config);
+        env.mock_all_auths();
+        let m1 = Address::generate(env);
+        let m2 = Address::generate(env);
+        // Pre-mint enough tokens for 2 rounds of contributions each
+        mint_tokens(env, &token, &m1, 100_0000000i128 * 5);
+        mint_tokens(env, &token, &m2, 100_0000000i128 * 5);
+        client.try_join(&m1).unwrap();
+        client.try_join(&m2).unwrap();
+        // Circle is now Active (member_count == max_members)
+        assert_eq!(client.get_status().status, CircleStatus::Active);
+        (client, admin, m1, m2)
+    }
+
+    /// Helper: build a completed circle (all rounds done).
+    fn make_completed_circle(env: &Env) -> (circle::CircleClient, Address, Address, Address) {
+        let (client, admin, m1, m2) = make_active_circle(env);
+        env.mock_all_auths();
+        // Round 0
+        client.try_contribute(&m1, &100_0000000i128, &0u32).unwrap();
+        client.try_contribute(&m2, &100_0000000i128, &0u32).unwrap();
+        client.try_trigger_payout(&admin, &0u32).unwrap();
+        // Round 1
+        client.try_contribute(&m1, &100_0000000i128, &1u32).unwrap();
+        client.try_contribute(&m2, &100_0000000i128, &1u32).unwrap();
+        client.try_trigger_payout(&admin, &1u32).unwrap();
+        assert_eq!(client.get_status().status, CircleStatus::Completed);
+        (client, admin, m1, m2)
+    }
+
+    // ------ Pending → illegal operations ------
+
+    /// Pending circle: contribute is rejected (NotActive — circle hasn't started).
+    #[test]
+    fn test_state_pending_contribute_rejected() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 5u32; // Only 1 member joins → stays Pending
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&member).unwrap();
+        // Circle still Pending (only 1/5 members)
+        assert_eq!(client.get_status().status, CircleStatus::Pending);
+
+        let result = client.try_contribute(&member, &config.contribution_amount, &0u32);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    /// Pending circle: trigger_payout is rejected (NotActive).
+    #[test]
+    fn test_state_pending_trigger_payout_rejected() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 5u32;
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &contract_id);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&member).unwrap();
+        assert_eq!(client.get_status().status, CircleStatus::Pending);
+
+        let result = client.try_trigger_payout(&admin, &0u32);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    // ------ Completed → illegal operations ------
+
+    /// Completed circle: join is rejected (NotActive).
+    #[test]
+    fn test_state_completed_join_rejected() {
+        let env = Env::default();
+        let (client, _admin, _m1, _m2) = make_completed_circle(&env);
+        let new_member = Address::generate(&env);
+
+        env.mock_all_auths();
+        let result = client.try_join(&new_member);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    /// Completed circle: contribute is rejected (NotActive).
+    #[test]
+    fn test_state_completed_contribute_rejected() {
+        let env = Env::default();
+        let (client, _admin, m1, _m2) = make_completed_circle(&env);
+
+        env.mock_all_auths();
+        let result = client.try_contribute(&m1, &100_0000000i128, &2u32);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    /// Completed circle: trigger_payout is rejected (NotActive).
+    #[test]
+    fn test_state_completed_trigger_payout_rejected() {
+        let env = Env::default();
+        let (client, admin, _m1, _m2) = make_completed_circle(&env);
+
+        env.mock_all_auths();
+        let result = client.try_trigger_payout(&admin, &2u32);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    /// Completed circle: exit_circle is rejected (NotActive).
+    #[test]
+    fn test_state_completed_exit_rejected() {
+        let env = Env::default();
+        let (client, _admin, m1, _m2) = make_completed_circle(&env);
+
+        env.mock_all_auths();
+        let result = client.try_exit_circle(&m1);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    // ------ Disputed → illegal operations ------
+
+    /// Disputed circle: join is rejected (NotActive).
+    #[test]
+    fn test_state_disputed_join_rejected() {
+        let env = Env::default();
+        let (client, _admin, m1, _m2) = make_active_circle(&env);
+        let evidence: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+
+        env.mock_all_auths();
+        client.try_raise_dispute(&m1, &evidence).unwrap();
+        assert_eq!(client.get_status().status, CircleStatus::Disputed);
+
+        let new_member = Address::generate(&env);
+        let result = client.try_join(&new_member);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    /// Disputed circle: contribute is rejected (NotActive).
+    #[test]
+    fn test_state_disputed_contribute_rejected() {
+        let env = Env::default();
+        let (client, _admin, m1, _m2) = make_active_circle(&env);
+        let evidence: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+
+        env.mock_all_auths();
+        client.try_raise_dispute(&m1, &evidence).unwrap();
+
+        let result = client.try_contribute(&m1, &100_0000000i128, &0u32);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    /// Disputed circle: trigger_payout is rejected (NotActive).
+    #[test]
+    fn test_state_disputed_trigger_payout_rejected() {
+        let env = Env::default();
+        let (client, admin, m1, _m2) = make_active_circle(&env);
+        let evidence: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+
+        env.mock_all_auths();
+        client.try_raise_dispute(&m1, &evidence).unwrap();
+
+        let result = client.try_trigger_payout(&admin, &0u32);
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
+    }
+
+    /// Disputed circle: raise_dispute again is rejected (DisputeAlreadyRaised).
+    #[test]
+    fn test_state_disputed_raise_dispute_again_rejected() {
+        let env = Env::default();
+        let (client, _admin, m1, m2) = make_active_circle(&env);
+        let evidence: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+
+        env.mock_all_auths();
+        client.try_raise_dispute(&m1, &evidence).unwrap();
+
+        let result = client.try_raise_dispute(&m2, &evidence);
+        assert_eq!(result, Err(Ok(CircleError::DisputeAlreadyRaised)));
+    }
+
+    // ------ resolve_dispute → resumes Active ------
+
+    /// resolve_dispute on Disputed circle → status returns to Active.
+    #[test]
+    fn test_state_disputed_resolve_returns_to_active() {
+        let env = Env::default();
+        let (client, admin, m1, _m2) = make_active_circle(&env);
+        let evidence: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+
+        env.mock_all_auths();
+        client.try_raise_dispute(&m1, &evidence).unwrap();
+        assert_eq!(client.get_status().status, CircleStatus::Disputed);
+
+        client.try_resolve_dispute(&admin, &1u32).unwrap(); // RESOLVE_DISMISS
+        assert_eq!(client.get_status().status, CircleStatus::Active);
+    }
+
+    /// resolve_dispute on non-Disputed circle → NoActiveDispute.
+    #[test]
+    fn test_state_active_resolve_dispute_no_dispute_rejected() {
+        let env = Env::default();
+        let (client, admin, _m1, _m2) = make_active_circle(&env);
+
+        env.mock_all_auths();
+        let result = client.try_resolve_dispute(&admin, &1u32);
+        assert_eq!(result, Err(Ok(CircleError::NoActiveDispute)));
+    }
+
+    // ------ Active → valid payout advances round, completes when done ------
+
+    /// Active circle: after all rounds complete, status is Completed.
+    #[test]
+    fn test_state_active_completes_after_all_rounds() {
+        let env = Env::default();
+        let (client, admin, m1, m2) = make_active_circle(&env);
+
+        env.mock_all_auths();
+        // Round 0
+        client.try_contribute(&m1, &100_0000000i128, &0u32).unwrap();
+        client.try_contribute(&m2, &100_0000000i128, &0u32).unwrap();
+        client.try_trigger_payout(&admin, &0u32).unwrap();
+        assert_eq!(client.get_status().current_round, 1u32);
+
+        // Round 1
+        client.try_contribute(&m1, &100_0000000i128, &1u32).unwrap();
+        client.try_contribute(&m2, &100_0000000i128, &1u32).unwrap();
+        client.try_trigger_payout(&admin, &1u32).unwrap();
+
+        assert_eq!(client.get_status().status, CircleStatus::Completed);
+    }
+
+    /// Wrong round number in Active circle → RoundNotCurrent.
+    #[test]
+    fn test_state_active_wrong_round_rejected() {
+        let env = Env::default();
+        let (client, admin, _m1, _m2) = make_active_circle(&env);
+
+        env.mock_all_auths();
+        let result = client.try_trigger_payout(&admin, &99u32);
+        assert_eq!(result, Err(Ok(CircleError::RoundNotCurrent)));
+    }
+
+    /// Contribute to wrong round in Active circle → RoundNotCurrent.
+    #[test]
+    fn test_state_active_contribute_wrong_round_rejected() {
+        let env = Env::default();
+        let (client, _admin, m1, _m2) = make_active_circle(&env);
+
+        env.mock_all_auths();
+        let result = client.try_contribute(&m1, &100_0000000i128, &5u32);
+        assert_eq!(result, Err(Ok(CircleError::RoundNotCurrent)));
+    }
+
+    /// Deploy a circle reusing the token already embedded in `config`.
+    /// Returns `(token_address, client)`.
+    fn setup_test_env<'a>(
+        env: &'a Env,
+        config: &mut circle::types::CircleConfig,
+    ) -> (Address, circle::CircleClient<'a>) {
+        let admin = config.organizer.clone();
+        let factory = Address::generate(env);
+        let token = config.token.clone();
+        let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &*config));
+        let client = circle::CircleClient::new(env, &contract_id);
+        (token, client)
+    }
+
+    /// Mint SEP-41 tokens to a recipient.
+    fn mint_tokens(env: &Env, token: &Address, recipient: &Address, amount: i128) {
+        let token_client = soroban_sdk::token::StellarAssetClient::new(env, token);
+        token_client.mint(recipient, &amount);
     }
 }
