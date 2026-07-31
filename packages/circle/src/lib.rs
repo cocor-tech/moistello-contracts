@@ -38,5 +38,6 @@ pub use types::CircleError;
     pub fn set_fee_bps(env:Env,admin:Address,fee_bps:u32)->Result<(),types::CircleError>{contract::set_fee_bps(&env,&admin,fee_bps)}
     pub fn set_allowlist(env:Env,admin:Address,allowlist:soroban_sdk::Vec<Address>)->Result<(),types::CircleError>{contract::set_allowlist(&env,&admin,allowlist)}
     pub fn get_allowlist(env:Env)->soroban_sdk::Vec<Address>{contract::get_allowlist(&env)}
+    pub fn update_config(env:Env,admin:Address,new_config:types::CircleConfigUpdate)->Result<(),types::CircleError>{contract::update_config(&env,&admin,&new_config)}
 }
 
