@@ -27,7 +27,7 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
 }
 pub fn get_circles(env: &Env) -> CircleRegistry { CircleRegistry { circles: env.storage().persistent().get(&DataKey::CircleList).unwrap_or_else(|| Vec::new(env)) } }
 pub fn get_circle_count(env: &Env) -> u32 { env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0) }
-pub fn get_fee_config(env: &Env) -> FeeConfig { env.storage().instance().get(&DataKey::FeeConfig).unwrap_or_else(|| FeeConfig { fee_bps:0, updated_at:0, updated_by: env.current_contract_address() }) }
+pub fn get_fee_config(env: &Env) -> Option<FeeConfig> { env.storage().instance().get(&DataKey::FeeConfig) }
 pub fn set_fee_config(env: &Env, admin: &Address, fee_bps: i128) -> Result<(), FactoryError> {
     pause::when_not_paused(env).map_err(|_| FactoryError::ContractPaused)?;
     admin.require_auth();
