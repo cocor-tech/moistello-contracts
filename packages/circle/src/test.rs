@@ -77,6 +77,27 @@ fn test_batch_payout_rejects_more_than_ten_recipients() {
 }
 
 #[test]
+fn test_trigger_payout_rejects_zero_net_amount() {
+    let env = Env::default();
+    let (client, admin, token) = setup_circle(&env);
+    let member = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    client.join(&member);
+    client.join(&other);
+
+    mint_tokens(&env, &token, &member, 100);
+    mint_tokens(&env, &token, &other, 100);
+    client.contribute(&member, &100_i128, &0_u32);
+    client.contribute(&other, &100_i128, &0_u32);
+
+    client.set_fee_bps(&admin, &10_000u32);
+
+    let result = client.try_trigger_payout(&admin, &0_u32);
+    assert_eq!(result, Err(Ok(CircleError::ZeroPayoutAmount)));
+}
+
+#[test]
 fn test_batch_payout_happy_path() {
     let env = Env::default();
     let (client, admin, token) = setup_circle(&env);
