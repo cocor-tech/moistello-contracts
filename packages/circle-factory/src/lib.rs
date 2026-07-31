@@ -8,7 +8,7 @@ impl CircleFactory {
     pub fn deploy_circle(env: Env, config: types::CircleConfig) -> Result<Address, types::FactoryError> { contract::deploy_circle(&env, &config) }
     pub fn get_circles(env: Env) -> types::CircleRegistry { contract::get_circles(&env) }
     pub fn get_circle_count(env: Env) -> u32 { contract::get_circle_count(&env) }
-    pub fn get_fee_config(env: Env) -> types::FeeConfig { contract::get_fee_config(&env) }
+    pub fn get_fee_config(env: Env) -> Option<types::FeeConfig> { contract::get_fee_config(&env) }
     pub fn set_fee_config(env: Env, admin: Address, fee_bps: i128) -> Result<(), types::FactoryError> { contract::set_fee_config(&env, &admin, fee_bps) }
     pub fn pause(env: Env, admin: Address) -> Result<(), types::FactoryError> { contract::pause(&env, &admin) }
     pub fn unpause(env: Env, admin: Address) -> Result<(), types::FactoryError> { contract::unpause(&env, &admin) }
