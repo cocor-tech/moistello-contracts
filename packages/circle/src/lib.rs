@@ -19,23 +19,9 @@ pub use types::CircleError;
     pub fn get_status(env:Env)->types::Circle{contract::get_status(&env)}
     pub fn get_members(env:Env)->soroban_sdk::Vec<types::Member>{contract::get_members(&env)}
     pub fn get_contributions(env:Env,member:Address,page:u32,page_size:u32)->soroban_sdk::Vec<types::Contribution>{contract::get_contributions(&env,&member,page,page_size)}
-    pub fn get_pending_payout(env:Env,member:Address)->Option<i128>{contract::get_pending_payout(&env,&member)}
+
     pub fn pause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::pause_circle(&env,&admin)}
     pub fn unpause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::unpause_circle(&env,&admin)}
     pub fn batch_invite(env:Env,caller:Address,members:soroban_sdk::Vec<Address>)->Result<(),types::CircleError>{contract::batch_invite(&env,&caller,&members)}
-    pub fn register_referral(env:Env,referrer:Address,referred:Address,bonus_pct:u32)->Result<(),types::CircleError>{contract::register_referral(&env,&referrer,&referred,bonus_pct)}
-    pub fn claim_referral_bonus(env:Env,referrer:Address,treasury:Address)->Result<(),types::CircleError>{contract::claim_referral_bonus(&env,&referrer,&treasury)}
-    pub fn update_streak(env:Env,member:Address,round:u32)->Result<(),types::CircleError>{contract::update_streak(&env,&member,round)}
-    pub fn claim_streak_bonus(env:Env,member:Address,treasury:Address)->Result<(),types::CircleError>{contract::claim_streak_bonus(&env,&member,&treasury)}
-    pub fn get_referrals(env:Env)->soroban_sdk::Vec<types::Referral>{contract::get_referrals(&env)}
-    pub fn get_streaks(env:Env)->soroban_sdk::Vec<types::Streak>{contract::get_streaks(&env)}
-    pub fn get_member_streak(env:Env,member:Address)->types::Streak{contract::get_member_streak(&env,&member)}
-    pub fn set_reputation_registry(env:Env,admin:Address,registry:Address)->Result<(),types::CircleError>{contract::set_reputation_registry(&env,&admin,&registry)}
-    pub fn get_reputation_registry(env:Env)->Option<Address>{contract::get_reputation_registry(&env)}
-    pub fn set_treasury(env:Env,admin:Address,treasury:Address)->Result<(),types::CircleError>{contract::set_treasury(&env,&admin,&treasury)}
-    pub fn set_token(env:Env,admin:Address,token:Address)->Result<(),types::CircleError>{contract::set_token(&env,&admin,&token)}
-    pub fn set_fee_bps(env:Env,admin:Address,fee_bps:u32)->Result<(),types::CircleError>{contract::set_fee_bps(&env,&admin,fee_bps)}
-    pub fn set_allowlist(env:Env,admin:Address,allowlist:soroban_sdk::Vec<Address>)->Result<(),types::CircleError>{contract::set_allowlist(&env,&admin,allowlist)}
-    pub fn get_allowlist(env:Env)->soroban_sdk::Vec<Address>{contract::get_allowlist(&env)}
 }
 
