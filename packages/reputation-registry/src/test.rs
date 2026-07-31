@@ -196,3 +196,17 @@ fn test_pause_unauthorized() {
     let result = client.try_pause(&stranger);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_pause_blocks_get_score() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+    let user = Address::generate(&env);
+
+    client.pause(&admin);
+    let result = client.try_get_score(&user);
+    assert_eq!(result, Err(Ok(ReputationError::ContractPaused)));
+
+    client.unpause(&admin);
+    assert!(client.try_get_score(&user).is_ok());
+}
