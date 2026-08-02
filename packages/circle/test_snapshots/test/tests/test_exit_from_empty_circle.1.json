@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 8,
+    "address": 7,
     "nonce": 0,
     "mux_id": 0
   },
@@ -33,29 +33,10 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "function_name": "join",
+              "function_name": "exit_circle",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "function_name": "join",
-              "args": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
                 }
               ]
             }
@@ -201,144 +182,7 @@
               },
               "durability": "persistent",
               "val": {
-                "vec": [
-                  {
-                    "map": [
-                      {
-                        "key": {
-                          "symbol": "address"
-                        },
-                        "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "exited_at"
-                        },
-                        "val": {
-                          "u64": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "joined_at"
-                        },
-                        "val": {
-                          "u64": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "position"
-                        },
-                        "val": {
-                          "u32": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "status"
-                        },
-                        "val": {
-                          "u32": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "strikes"
-                        },
-                        "val": {
-                          "u32": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "total_contributions"
-                        },
-                        "val": {
-                          "i128": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "total_received"
-                        },
-                        "val": {
-                          "i128": "0"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "map": [
-                      {
-                        "key": {
-                          "symbol": "address"
-                        },
-                        "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "exited_at"
-                        },
-                        "val": {
-                          "u64": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "joined_at"
-                        },
-                        "val": {
-                          "u64": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "position"
-                        },
-                        "val": {
-                          "u32": 1
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "status"
-                        },
-                        "val": {
-                          "u32": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "strikes"
-                        },
-                        "val": {
-                          "u32": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "total_contributions"
-                        },
-                        "val": {
-                          "i128": "0"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "total_received"
-                        },
-                        "val": {
-                          "i128": "0"
-                        }
-                      }
-                    ]
-                  }
-                ]
+                "vec": []
               }
             }
           },
@@ -411,6 +255,22 @@
                   "storage": [
                     {
                       "key": {
+                        "symbol": "vrf_ctr"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "vrf_salt"
+                      },
+                      "val": {
+                        "bytes": "524ee29b9c71075ed2e71f310e269e1d77a9434a0021e5057c588e9b64fc587c"
+                      }
+                    },
+                    {
+                      "key": {
                         "vec": [
                           {
                             "symbol": "Admin"
@@ -418,7 +278,7 @@
                         ]
                       },
                       "val": {
-                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                       }
                     },
                     {
@@ -500,7 +360,7 @@
                               "symbol": "max_members"
                             },
                             "val": {
-                              "u32": 2
+                              "u32": 5
                             }
                           },
                           {
@@ -516,7 +376,7 @@
                               "symbol": "member_count"
                             },
                             "val": {
-                              "u32": 2
+                              "u32": 0
                             }
                           },
                           {
@@ -540,7 +400,7 @@
                               "symbol": "organizer"
                             },
                             "val": {
-                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                             }
                           },
                           {
@@ -588,7 +448,7 @@
                               "symbol": "status"
                             },
                             "val": {
-                              "u32": 1
+                              "u32": 0
                             }
                           },
                           {
@@ -657,26 +517,6 @@
               "key": {
                 "ledger_key_nonce": {
                   "nonce": "5541220902715666415"
-                }
-              },
-              "durability": "temporary",
-              "val": "void"
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 6311999
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5",
-              "key": {
-                "ledger_key_nonce": {
-                  "nonce": "1033654523790656264"
                 }
               },
               "durability": "temporary",
