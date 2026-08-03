@@ -97,8 +97,6 @@ pub fn finalize_proposal(env:&Env,proposal_id:u64)->Result<(),GovernanceError>{
     let votes_for_scaled=proposal.votes_for.checked_mul(BPS_DENOM).ok_or(GovernanceError::InvalidConfig)?;
     let passed=quorum_met&&decisive>0&&math::safe_div(votes_for_scaled,decisive).map_err(|_|GovernanceError::InvalidConfig)?>=config.pass_threshold_bps as i128;
     if passed{
-        proposal.status=ProposalStatus::Succeeded;
-        ProposalStatusChanged{id:proposal_id,status:ProposalStatus::Succeeded}.publish(env);
         proposal.timelock_ends_at=now.checked_add(config.timelock_seconds).ok_or(GovernanceError::InvalidConfig)?;
         proposal.status=ProposalStatus::Queued;
         ProposalStatusChanged{id:proposal_id,status:ProposalStatus::Queued}.publish(env);

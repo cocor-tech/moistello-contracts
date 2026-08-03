@@ -1,5 +1,5 @@
 use soroban_sdk::{token, Address, Env};
-use soroban_sdk::token::TokenInterface;
+
 use crate::types::*;
 use common::pause;
 
@@ -29,7 +29,9 @@ pub fn stake(
 ) -> Result<(), StakingError> {
     // Check if contract is paused
     pause::when_not_paused(env).map_err(|_| StakingError::ContractPaused)?;
-    
+
+    user.require_auth();
+
     // Validate amount
     if amount <= 0 {
         return Err(StakingError::InvalidAmount);
