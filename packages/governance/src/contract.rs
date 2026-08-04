@@ -1,6 +1,6 @@
 use soroban_sdk::{Address,BytesN,Env,Val,Vec};
 use crate::types::*;
-use common::pause;
+use common::{math,pause};
 
 const BPS_DENOM:i128=10_000;
 
@@ -89,7 +89,13 @@ pub fn finalize_proposal(env:&Env,proposal_id:u64)->Result<(),GovernanceError>{
     let total_votes=proposal.votes_for+proposal.votes_against+proposal.votes_abstain;
     let quorum_met=total_votes>=config.quorum_votes as i128;
     let decisive=proposal.votes_for+proposal.votes_against;
-    let passed=quorum_met&&decisive>0&&proposal.votes_for.checked_mul(BPS_DENOM).ok_or(GovernanceError::InvalidConfig)?/decisive>=config.pass_threshold_bps as i128;
+    // Use safe_div to guard against a zero decisive denominator — a raw `/`
+    // would panic on-chain if both votes_for and votes_against are zero.
+    // The `decisive > 0` short-circuit prevents the division in practice, but
+    // relying on evaluation order for safety is fragile; safe_div makes the
+    // invariant explicit and returns a typed MathError if ever reached.
+    let votes_for_scaled=proposal.votes_for.checked_mul(BPS_DENOM).ok_or(GovernanceError::InvalidConfig)?;
+    let passed=quorum_met&&decisive>0&&math::safe_div(votes_for_scaled,decisive).map_err(|_|GovernanceError::InvalidConfig)?>=config.pass_threshold_bps as i128;
     if passed{
         proposal.timelock_ends_at=now.checked_add(config.timelock_seconds).ok_or(GovernanceError::InvalidConfig)?;
         proposal.status=ProposalStatus::Queued;
