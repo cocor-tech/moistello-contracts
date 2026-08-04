@@ -1,5 +1,5 @@
 #![cfg_attr(not(test), no_std)]
-mod types; mod contract; mod payout; #[cfg(test)] mod test; #[cfg(test)] mod tests;
+mod types; mod contract; mod payout; mod oracle; #[cfg(test)] mod test; #[cfg(test)] mod tests;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
 pub use types::CircleError;
@@ -38,5 +38,9 @@ pub use types::CircleError;
     pub fn set_fee_bps(env:Env,admin:Address,fee_bps:u32)->Result<(),types::CircleError>{contract::set_fee_bps(&env,&admin,fee_bps)}
     pub fn set_allowlist(env:Env,admin:Address,allowlist:soroban_sdk::Vec<Address>)->Result<(),types::CircleError>{contract::set_allowlist(&env,&admin,allowlist)}
     pub fn get_allowlist(env:Env)->soroban_sdk::Vec<Address>{contract::get_allowlist(&env)}
+    pub fn set_oracle(env:Env,admin:Address,oracle:Address)->Result<(),types::CircleError>{contract::set_oracle(&env,&admin,&oracle)}
+    pub fn set_fallback_oracle(env:Env,admin:Address,oracle:Address)->Result<(),types::CircleError>{contract::set_fallback_oracle(&env,&admin,&oracle)}
+    pub fn get_oracle(env:Env)->Option<Address>{contract::get_oracle(&env)}
+    pub fn get_fallback_oracle(env:Env)->Option<Address>{contract::get_fallback_oracle(&env)}
 }
 
