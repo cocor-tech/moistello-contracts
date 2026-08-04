@@ -843,7 +843,7 @@ fn setup_circle(env: &Env) -> (CircleClient<'_>, Address, Address) {
 #[test]
 fn test_contribute_rejects_amount_above_circle_max() {
     let env = Env::default();
-    let (client, _admin, token) = setup_circle(&env);
+    let (client, _admin, _token) = setup_circle(&env);
     let member = Address::generate(&env);
     let other = Address::generate(&env);
 
@@ -904,4 +904,119 @@ fn test_batch_payout_happy_path() {
     let token_client = soroban_sdk::token::Client::new(&env, &token);
     assert_eq!(token_client.balance(&member_one), 80_i128);
     assert_eq!(token_client.balance(&member_two), 120_i128);
+}
+
+#[test]
+fn test_resolve_dispute_cancellation_refunds_contributions() {
+    let env = Env::default();
+    let (client, admin, token) = setup_circle(&env);
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+
+    client.join(&member_one);
+    client.join(&member_two);
+
+    mint_tokens(&env, &token, &member_one, 100);
+    mint_tokens(&env, &token, &member_two, 100);
+    client.contribute(&member_one, &100_i128, &0_u32);
+    client.contribute(&member_two, &100_i128, &0_u32);
+
+    let evidence = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
+    client.raise_dispute(&member_one, &evidence);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&member_one), 0_i128);
+    assert_eq!(token_client.balance(&member_two), 0_i128);
+
+    // Resolve dispute with RESOLVE_CANCEL (4)
+    client.resolve_dispute(&admin, &crate::types::RESOLVE_CANCEL);
+
+    assert_eq!(client.get_status().status, crate::types::STATUS_CANCELLED);
+    assert_eq!(token_client.balance(&member_one), 100_i128);
+    assert_eq!(token_client.balance(&member_two), 100_i128);
+}
+#[test]
+fn test_resolve_dispute_cancellation_refunds_collateral_and_contributions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let mut config = create_config(&env, &token);
+    config.collateral_amount = 50_i128;
+    let admin = config.organizer.clone();
+    let factory = Address::generate(&env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+
+    mint_tokens(&env, &token, &member_one, 150);
+    mint_tokens(&env, &token, &member_two, 150);
+
+    client.join(&member_one);
+    client.join(&member_two);
+
+    client.contribute(&member_one, &100_i128, &0_u32);
+    client.contribute(&member_two, &100_i128, &0_u32);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&member_one), 0_i128);
+    assert_eq!(token_client.balance(&member_two), 0_i128);
+
+    let evidence = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
+    client.raise_dispute(&member_one, &evidence);
+
+    client.resolve_dispute(&admin, &crate::types::RESOLVE_CANCEL);
+
+    assert_eq!(client.get_status().status, crate::types::STATUS_CANCELLED);
+    assert_eq!(token_client.balance(&member_one), 150_i128);
+    assert_eq!(token_client.balance(&member_two), 150_i128);
+}
+
+#[test]
+fn test_exit_blocked_when_cancelled_or_disputed() {
+    let env = Env::default();
+    let (client, admin, token) = setup_circle(&env);
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+
+    client.join(&member_one);
+    client.join(&member_two);
+
+    mint_tokens(&env, &token, &member_one, 100);
+    mint_tokens(&env, &token, &member_two, 100);
+    client.contribute(&member_one, &100_i128, &0_u32);
+    client.contribute(&member_two, &100_i128, &0_u32);
+
+    let evidence = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
+    client.raise_dispute(&member_one, &evidence);
+
+    // Try exit while disputed
+    let res_disputed = client.try_exit_circle(&member_one);
+    assert_eq!(res_disputed, Err(Ok(CircleError::NotActive)));
+
+    client.resolve_dispute(&admin, &crate::types::RESOLVE_CANCEL);
+
+    // Try exit after cancelled
+    let res_cancelled = client.try_exit_circle(&member_one);
+    assert_eq!(res_cancelled, Err(Ok(CircleError::NotActive)));
+}
+
+#[test]
+fn test_resolve_dispute_unauthorized() {
+    let env = Env::default();
+    let (client, _admin, _token) = setup_circle(&env);
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+
+    client.join(&member_one);
+    client.join(&member_two);
+
+    let evidence = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
+    client.raise_dispute(&member_one, &evidence);
+
+    let non_admin = Address::generate(&env);
+    let result = client.try_resolve_dispute(&non_admin, &crate::types::RESOLVE_CANCEL);
+    assert_eq!(result, Err(Ok(CircleError::Unauthorized)));
 }
