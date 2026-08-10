@@ -905,3 +905,285 @@ fn test_batch_payout_happy_path() {
     assert_eq!(token_client.balance(&member_one), 80_i128);
     assert_eq!(token_client.balance(&member_two), 120_i128);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// State-machine transition tests (Issue: no tests for illegal transitions)
+//
+// Each test validates one (from_status, to_status, operation) tuple.
+// Legal transitions are expected to succeed; illegal ones must return a typed
+// error — never panic.
+//
+// Observed state machine:
+//   PENDING  ──(join fills circle)──►  ACTIVE
+//   ACTIVE   ──(all rounds done)  ──►  COMPLETED
+//   ACTIVE   ──(raise_dispute)    ──►  DISPUTED
+//   DISPUTED ──(resolve_dispute)  ──►  ACTIVE
+//
+// Status constants: PENDING=0, ACTIVE=1, COMPLETED=2, DISPUTED=4
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Build a fresh circle in PENDING state (only 1 of 2 seats filled).
+fn sm_pending_circle(env: &Env) -> (CircleClient<'_>, Address, Address, Address) {
+    env.mock_all_auths();
+    let token_admin = Address::generate(env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let config = create_config(env, &token);
+    let admin = config.organizer.clone();
+    let factory = Address::generate(env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+    let client = CircleClient::new(env, &contract_id);
+
+    // Join one member so the circle is PENDING (not yet full — max_members=2)
+    let member = Address::generate(env);
+    mint_tokens(env, &token, &member, 10_000);
+    client.join(&member);
+
+    assert_eq!(client.get_status().status, 0u32, "must be PENDING");
+    (client, admin, token, member)
+}
+
+/// Build a circle with `rounds` rounds in ACTIVE state (both seats filled).
+fn sm_active_circle<'a>(
+    env: &'a Env,
+    rounds: u32,
+) -> (CircleClient<'a>, Address, Address, Address, Address) {
+    env.mock_all_auths();
+    let token_admin = Address::generate(env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let mut config = create_config(env, &token);
+    config.total_rounds = rounds;
+    let admin = config.organizer.clone();
+    let factory = Address::generate(env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+    let client = CircleClient::new(env, &contract_id);
+
+    let m1 = Address::generate(env);
+    let m2 = Address::generate(env);
+    mint_tokens(env, &token, &m1, 100_000);
+    mint_tokens(env, &token, &m2, 100_000);
+    client.join(&m1);
+    client.join(&m2); // fills circle → ACTIVE
+
+    assert_eq!(client.get_status().status, 1u32, "must be ACTIVE");
+    (client, admin, token, m1, m2)
+}
+
+/// Drive a 2-member, N-round circle all the way to COMPLETED.
+fn sm_completed_circle(env: &Env) -> (CircleClient<'_>, Address, Address, Address, Address) {
+    let (client, admin, token, m1, m2) = sm_active_circle(env, 2);
+    // Round 0
+    client.contribute(&m1, &100_i128, &0u32);
+    client.contribute(&m2, &100_i128, &0u32);
+    client.trigger_payout(&admin, &0u32);
+    // Round 1 — completes the circle
+    client.contribute(&m1, &100_i128, &1u32);
+    client.contribute(&m2, &100_i128, &1u32);
+    client.trigger_payout(&admin, &1u32);
+    assert_eq!(client.get_status().status, 2u32, "must be COMPLETED");
+    (client, admin, token, m1, m2)
+}
+
+/// Put an ACTIVE circle into DISPUTED state.
+fn sm_disputed_circle(env: &Env) -> (CircleClient<'_>, Address, Address, Address, Address) {
+    let (client, admin, token, m1, m2) = sm_active_circle(env, 3);
+    let evidence = soroban_sdk::BytesN::from_array(env, &[0u8; 32]);
+    client.raise_dispute(&m1, &evidence);
+    assert_eq!(client.get_status().status, 4u32, "must be DISPUTED");
+    (client, admin, token, m1, m2)
+}
+
+// ── Legal transition tests ───────────────────────────────────────────────────
+
+/// PENDING → ACTIVE: filling the last seat promotes the circle.
+#[test]
+fn sm_pending_to_active_on_last_join() {
+    let env = Env::default();
+    let (client, _admin, token, _m1) = sm_pending_circle(&env);
+    let m2 = Address::generate(&env);
+    mint_tokens(&env, &token, &m2, 10_000);
+    client.join(&m2);
+    assert_eq!(client.get_status().status, 1u32, "circle must be ACTIVE after last member joins");
+}
+
+/// ACTIVE → COMPLETED: all rounds paid out.
+#[test]
+fn sm_active_to_completed_after_all_rounds() {
+    let env = Env::default();
+    let (_, _, _, _, _) = sm_completed_circle(&env);
+    // sm_completed_circle already asserts status == COMPLETED; reaching here is the test.
+}
+
+/// ACTIVE → DISPUTED: raising a dispute suspends the circle.
+#[test]
+fn sm_active_to_disputed_on_raise_dispute() {
+    let env = Env::default();
+    let (_, _, _, _, _) = sm_disputed_circle(&env);
+    // sm_disputed_circle already asserts status == DISPUTED; reaching here is the test.
+}
+
+/// DISPUTED → ACTIVE: resolving the dispute reactivates the circle.
+#[test]
+fn sm_disputed_to_active_on_resolve_dispute() {
+    let env = Env::default();
+    let (client, admin, _token, _m1, _m2) = sm_disputed_circle(&env);
+    client.resolve_dispute(&admin, &1u32); // RESOLVE_DISMISS = 1
+    assert_eq!(client.get_status().status, 1u32, "circle must be ACTIVE after dispute resolved");
+}
+
+// ── Illegal transition tests — COMPLETED state ──────────────────────────────
+
+/// join on COMPLETED circle must be rejected with NotActive.
+#[test]
+fn sm_completed_rejects_join() {
+    let env = Env::default();
+    let (client, _admin, token, _m1, _m2) = sm_completed_circle(&env);
+    let newcomer = Address::generate(&env);
+    mint_tokens(&env, &token, &newcomer, 10_000);
+    let result = client.try_join(&newcomer);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NotActive)),
+        "join on COMPLETED must return NotActive"
+    );
+}
+
+/// contribute on COMPLETED circle must be rejected.
+#[test]
+fn sm_completed_rejects_contribute() {
+    let env = Env::default();
+    let (client, _admin, token, m1, _m2) = sm_completed_circle(&env);
+    mint_tokens(&env, &token, &m1, 10_000);
+    // current_round == total_rounds after completion; any round value fails
+    let result = client.try_contribute(&m1, &100_i128, &2u32);
+    assert!(result.is_err(), "contribute on COMPLETED must fail");
+}
+
+/// trigger_payout on COMPLETED circle must return NotActive.
+#[test]
+fn sm_completed_rejects_trigger_payout() {
+    let env = Env::default();
+    let (client, admin, _token, _m1, _m2) = sm_completed_circle(&env);
+    let result = client.try_trigger_payout(&admin, &2u32);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NotActive)),
+        "trigger_payout on COMPLETED must return NotActive"
+    );
+}
+
+/// exit on COMPLETED circle must be rejected.
+#[test]
+fn sm_completed_rejects_exit() {
+    let env = Env::default();
+    let (client, _admin, _token, m1, _m2) = sm_completed_circle(&env);
+    let result = client.try_exit_circle(&m1);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NotActive)),
+        "exit on COMPLETED must return NotActive"
+    );
+}
+
+// ── Illegal transition tests — PENDING state ────────────────────────────────
+
+/// trigger_payout on PENDING circle (not yet ACTIVE) must return NotActive.
+#[test]
+fn sm_pending_rejects_trigger_payout() {
+    let env = Env::default();
+    let (client, admin, _token, _m1) = sm_pending_circle(&env);
+    let result = client.try_trigger_payout(&admin, &0u32);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NotActive)),
+        "trigger_payout on PENDING must return NotActive"
+    );
+}
+
+/// contribute on PENDING circle (only partially filled) must return NotActive.
+#[test]
+fn sm_pending_rejects_contribute() {
+    let env = Env::default();
+    let (client, _admin, token, m1) = sm_pending_circle(&env);
+    mint_tokens(&env, &token, &m1, 10_000);
+    let result = client.try_contribute(&m1, &100_i128, &0u32);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NotActive)),
+        "contribute on PENDING must return NotActive"
+    );
+}
+
+// ── Illegal transition tests — DISPUTED state ───────────────────────────────
+
+/// raise_dispute on already-DISPUTED circle must return DisputeAlreadyRaised.
+#[test]
+fn sm_disputed_rejects_second_dispute() {
+    let env = Env::default();
+    let (client, _admin, _token, _m1, m2) = sm_disputed_circle(&env);
+    let evidence = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
+    let result = client.try_raise_dispute(&m2, &evidence);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::DisputeAlreadyRaised)),
+        "second raise_dispute must return DisputeAlreadyRaised"
+    );
+}
+
+/// trigger_payout on DISPUTED circle must return NotActive.
+#[test]
+fn sm_disputed_rejects_trigger_payout() {
+    let env = Env::default();
+    let (client, admin, _token, _m1, _m2) = sm_disputed_circle(&env);
+    let result = client.try_trigger_payout(&admin, &0u32);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NotActive)),
+        "trigger_payout on DISPUTED must return NotActive"
+    );
+}
+
+/// contribute on DISPUTED circle must return NotActive.
+#[test]
+fn sm_disputed_rejects_contribute() {
+    let env = Env::default();
+    let (client, _admin, token, m1, _m2) = sm_disputed_circle(&env);
+    mint_tokens(&env, &token, &m1, 10_000);
+    let result = client.try_contribute(&m1, &100_i128, &0u32);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NotActive)),
+        "contribute on DISPUTED must return NotActive"
+    );
+}
+
+/// join on DISPUTED circle must return NotActive (same guard as COMPLETED).
+#[test]
+fn sm_disputed_rejects_join() {
+    let env = Env::default();
+    let (client, _admin, token, _m1, _m2) = sm_disputed_circle(&env);
+    let newcomer = Address::generate(&env);
+    mint_tokens(&env, &token, &newcomer, 10_000);
+    let result = client.try_join(&newcomer);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NotActive)),
+        "join on DISPUTED must return NotActive"
+    );
+}
+
+// ── Idempotency / re-entry guard ─────────────────────────────────────────────
+
+/// resolve_dispute on a circle that has no active dispute must return NoActiveDispute.
+#[test]
+fn sm_active_resolve_without_dispute_returns_error() {
+    let env = Env::default();
+    let (client, admin, _token, _m1, _m2) = sm_active_circle(&env, 2);
+    let result = client.try_resolve_dispute(&admin, &1u32);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::NoActiveDispute)),
+        "resolve_dispute on non-disputed circle must return NoActiveDispute"
+    );
+}
