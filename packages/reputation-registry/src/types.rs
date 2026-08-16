@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype,contracterror,contractevent,Address};
+use soroban_sdk::{contracttype,contracterror,Address};
 pub const ACTIVITY_JOIN:u32=0;pub const ACTIVITY_CONTRIBUTE:u32=1;pub const ACTIVITY_COMPLETE:u32=2;pub const ACTIVITY_DEFAULT:u32=3;pub const ACTIVITY_PAYOUT_RECEIVED:u32=4;
 pub const TIER_BRONZE:u32=0;pub const TIER_SILVER:u32=1;pub const TIER_GOLD:u32=2;pub const TIER_PLATINUM:u32=3;pub const TIER_DIAMOND:u32=4;
 #[contracttype]#[derive(Clone,Debug)]pub struct MoiScore{pub user:Address,pub score:u32,pub tier:u32,pub total_circles:u32,pub completed_circles:u32,pub defaulted_circles:u32,pub streak_count:u32,pub last_activity_at:u64,pub updated_at:u64}

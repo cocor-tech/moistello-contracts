@@ -1,9 +1,9 @@
 #![cfg(test)]
 
-use soroban_sdk::testutils::{Address as _, Events};
-use soroban_sdk::{Address, Env, IntoVal, Symbol, TryIntoVal};
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{Address, Env};
 use crate::{ReputationRegistry, ReputationRegistryClient};
-use crate::types::{MoiScore, ReputationError, Activity, ACTIVITY_JOIN, ACTIVITY_CONTRIBUTE, ACTIVITY_COMPLETE, ACTIVITY_DEFAULT, TIER_BRONZE, TIER_SILVER, TIER_GOLD, TIER_PLATINUM, TIER_DIAMOND};
+use crate::types::{ReputationError, ACTIVITY_JOIN, ACTIVITY_CONTRIBUTE, ACTIVITY_COMPLETE, ACTIVITY_DEFAULT, TIER_BRONZE, TIER_SILVER, TIER_GOLD, TIER_PLATINUM, TIER_DIAMOND};
 
 fn setup(env: &Env) -> (ReputationRegistryClient, Address) {
     env.mock_all_auths();
