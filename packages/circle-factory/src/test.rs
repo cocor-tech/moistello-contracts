@@ -1,12 +1,15 @@
 #![cfg(test)]
 
-use soroban_sdk::testutils::{Address as _, Events};
-use soroban_sdk::{Address, BytesN, Env, IntoVal, Symbol, TryIntoVal};
-use crate::{CircleFactory, CircleFactoryClient}; use crate::types::{CircleConfig, CircleRegistry, FactoryError};
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{Address, BytesN, Env};
+use crate::{CircleFactory, CircleFactoryClient}; use crate::types::{CircleConfig, FactoryError};
 
 fn install_wasm_hash(env: &Env) -> BytesN<32> {
-    let hash = BytesN::from_array(env, &[0; 32]);
-    hash
+    // Test fixture wasm shipped with soroban-sdk (valid Soroban contract
+    // wasm with metadata section). The factory only deploys it; the deployed
+    // contract is never invoked by the factory tests.
+    let wasm: &[u8] = include_bytes!("../test_wasm/contract.wasm");
+    env.deployer().upload_contract_wasm(wasm)
 }
 
 fn sample_config(env: &Env, organizer: &Address) -> CircleConfig {
