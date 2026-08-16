@@ -343,6 +343,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "timestamp"
                         },
                         "val": {

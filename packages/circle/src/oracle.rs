@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), no_std)]
-
 //! Oracle integration for the Circle contract.
 //!
 //! The circle reads a `yield_rate` (in basis-points) from a configurable
@@ -16,7 +14,7 @@
 //! If neither oracle is configured `get_yield_rate` returns `Ok(0)` so
 //! that rounds can still complete without yield adjustment.
 
-use soroban_sdk::{symbol_short, Address, Env, IntoVal};
+use soroban_sdk::{symbol_short, Address, Env, Error, IntoVal};
 
 use crate::types::{CircleError, DataKey, OracleFallbackUsed};
 
@@ -31,7 +29,7 @@ use crate::types::{CircleError, DataKey, OracleFallbackUsed};
 /// returns a `Result` so we can handle oracle unavailability gracefully.
 fn call_oracle(env: &Env, oracle: &Address, round: u32) -> Result<i128, ()> {
     let args = (round,).into_val(env);
-    env.try_invoke_contract::<i128, _>(oracle, &symbol_short!("yld_rate"), args)
+    env.try_invoke_contract::<i128, Error>(oracle, &symbol_short!("yld_rate"), args)
         .map_err(|_| ())
         .and_then(|res| res.map_err(|_| ()))
 }

@@ -368,6 +368,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "1000"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "timestamp"
                         },
                         "val": {

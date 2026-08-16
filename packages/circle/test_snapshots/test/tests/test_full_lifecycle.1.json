@@ -859,6 +859,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "timestamp"
                         },
                         "val": {
@@ -903,6 +911,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "timestamp"
                         },
                         "val": {
@@ -943,6 +959,14 @@
                         },
                         "val": {
                           "u32": 0
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
                         }
                       },
                       {
@@ -991,6 +1015,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "timestamp"
                         },
                         "val": {
@@ -1035,6 +1067,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "timestamp"
                         },
                         "val": {
@@ -1075,6 +1115,14 @@
                         },
                         "val": {
                           "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
                         }
                       },
                       {
@@ -1123,6 +1171,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "timestamp"
                         },
                         "val": {
@@ -1167,6 +1223,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "timestamp"
                         },
                         "val": {
@@ -1207,6 +1271,14 @@
                         },
                         "val": {
                           "u32": 2
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "time_weight"
+                        },
+                        "val": {
+                          "u64": "0"
                         }
                       },
                       {
