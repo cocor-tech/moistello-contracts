@@ -5,7 +5,7 @@ mod tests {
     use soroban_sdk::{Address, Env, String};
     use soroban_sdk::testutils::Address as _;
     use crate as governance_token;
-    use governance_token::{GovernanceToken, GovernanceTokenClient, types::TokenError};
+    use governance_token::{GovernanceToken, GovernanceTokenClient};
 
     fn setup(env: &Env) -> (Address, GovernanceTokenClient) {
         let admin = Address::generate(env);
