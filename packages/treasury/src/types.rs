@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype,contracterror,contractevent,Address};
+use soroban_sdk::{contracttype,contracterror,Address};
 #[contracttype]#[derive(Clone,Debug)]pub struct Deposit{pub from:Address,pub amount:i128,pub circle_id:Address,pub timestamp:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct Withdrawal{pub admin:Address,pub to:Address,pub amount:i128,pub timestamp:u64}
 #[contracttype]#[derive(Clone)]pub enum DataKey{Admin,Balance,Deposits,Withdrawals,Token}
