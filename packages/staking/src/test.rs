@@ -2,19 +2,20 @@
 
 use soroban_sdk::{Address, Env};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
-use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
+use soroban_sdk::token::StellarAssetClient;
 use crate::Staking;
 use crate::types::{StakingError, StakingPeriod, DataKey, UNBONDING_PERIOD_SECONDS};
 use crate::StakingClient;
 
 fn setup_test_env() -> (Env, Address, Address, Address) {
     let env = Env::default();
+    env.mock_all_auths();
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let token_admin = Address::generate(&env);
     
     // Deploy a test token
-    let token_contract_id = env.register_stellar_asset_contract(token_admin.clone());
+    let token_contract_id = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
     let token_admin_client = StellarAssetClient::new(&env, &token_contract_id);
     
     // Mint tokens to user
@@ -24,7 +25,7 @@ fn setup_test_env() -> (Env, Address, Address, Address) {
 }
 
 fn deploy_staking_contract<'a>(env: &'a Env, admin: &Address, token: &Address) -> StakingClient<'a> {
-    let staking_contract_id = env.register_contract(None, Staking);
+    let staking_contract_id = env.register(Staking, ());
     let staking_client = StakingClient::new(env, &staking_contract_id);
     
     staking_client.init(admin, token);
@@ -39,15 +40,21 @@ fn test_init() {
     let staking_client = deploy_staking_contract(&env, &admin, &token);
     
     // Verify admin is stored
-    let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    let stored_admin: Address = env.as_contract(&staking_client.address, || {
+        env.storage().instance().get(&DataKey::Admin).unwrap()
+    });
     assert_eq!(stored_admin, admin);
     
     // Verify token is stored
-    let stored_token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+    let stored_token: Address = env.as_contract(&staking_client.address, || {
+        env.storage().instance().get(&DataKey::Token).unwrap()
+    });
     assert_eq!(stored_token, token);
     
     // Verify paused is false
-    let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap();
+    let paused: bool = env.as_contract(&staking_client.address, || {
+        env.storage().instance().get(&soroban_sdk::symbol_short!("paused")).unwrap()
+    });
     assert!(!paused);
     
     // Verify total staked is 0
@@ -273,7 +280,9 @@ fn test_pause_contract() {
     staking_client.pause(&admin);
     
     // Verify paused state
-    let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap();
+    let paused: bool = env.as_contract(&staking_client.address, || {
+        env.storage().instance().get(&soroban_sdk::symbol_short!("paused")).unwrap()
+    });
     assert!(paused);
     
     // Try to stake while paused
@@ -293,7 +302,9 @@ fn test_unpause_contract() {
     staking_client.unpause(&admin);
     
     // Verify unpaused state
-    let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap();
+    let paused: bool = env.as_contract(&staking_client.address, || {
+        env.storage().instance().get(&soroban_sdk::symbol_short!("paused")).unwrap()
+    });
     assert!(!paused);
     
     // Should be able to stake now
@@ -313,14 +324,16 @@ fn test_pause_unauthorized() {
 
 #[test]
 fn test_update_admin() {
-    let (env, admin, user, token) = setup_test_env();
+    let (env, admin, _, token) = setup_test_env();
     let staking_client = deploy_staking_contract(&env, &admin, &token);
     
     let new_admin = Address::generate(&env);
     staking_client.update_admin(&admin, &new_admin);
     
     // Verify new admin
-    let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    let stored_admin: Address = env.as_contract(&staking_client.address, || {
+        env.storage().instance().get(&DataKey::Admin).unwrap()
+    });
     assert_eq!(stored_admin, new_admin);
     
     // Old admin should no longer be able to pause
@@ -402,7 +415,7 @@ fn test_full_staking_lifecycle() {
 
 #[test]
 fn test_multiple_users_staking() {
-    let (env, admin, token, _) = setup_test_env();
+    let (env, admin, _, token) = setup_test_env();
     let staking_client = deploy_staking_contract(&env, &admin, &token);
     
     let user1 = Address::generate(&env);

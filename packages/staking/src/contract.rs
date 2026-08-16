@@ -1,4 +1,4 @@
-use soroban_sdk::{token, Address, Env};
+use soroban_sdk::{token, symbol_short, Address, Env};
 
 use crate::types::*;
 use common::pause;
@@ -14,7 +14,7 @@ pub fn init(env: &Env, admin: &Address, token: &Address) {
     env.storage().instance().set(&DataKey::Token, token);
     
     // Initialize paused state to false
-    env.storage().instance().set(&DataKey::Paused, &false);
+    env.storage().instance().set(&symbol_short!("paused"), &false);
     
     // Initialize total staked to 0
     env.storage().instance().set(&DataKey::TotalStaked, &0i128);
