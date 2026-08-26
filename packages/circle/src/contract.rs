@@ -1,3 +1,4 @@
+use crate::oracle;
 use crate::payout;
 use crate::types::*;
 use common::reentrancy::ReentrancyGuard;
@@ -75,6 +76,7 @@ pub fn init(
     env.storage()
         .persistent()
         .set(&DataKey::Contributions, &Vec::<Contribution>::new(env));
+    common::vrf::init_vrf(env, None).map_err(|_| CircleError::InvalidAmount)?;
     env.storage()
         .persistent()
         .set(&DataKey::Payouts, &Vec::<PayoutRecipient>::new(env));
@@ -126,6 +128,9 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     let allowlist: Vec<Address> = env
         .storage()
         .instance()
+    let allowlist: Vec<Address> = env
+        .storage()
+        .persistent()
         .get(&DataKey::Allowlist)
         .unwrap_or_else(|| Vec::new(env));
     if allowlist.len() > 0 {
@@ -139,6 +144,10 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
         if !permitted {
             return Err(CircleError::AllowlistNotPermitted);
         }
+    }
+    let score = scoring::get_score(env, member);
+    if score < circle.min_moi_score {
+        return Err(CircleError::InsufficientMoiScore);
     }
     let mut members: Vec<Member> = env
         .storage()
@@ -170,6 +179,10 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
         total_received: 0,
     });
     circle.member_count = circle.member_count.wrapping_add(1);
+    circle.member_count = circle
+        .member_count
+        .checked_add(1)
+        .ok_or(CircleError::InvalidAmount)?;
     if circle.member_count >= circle.max_members && circle.status == STATUS_PENDING {
         circle.status = STATUS_ACTIVE;
         circle.started_at = now;
@@ -268,12 +281,15 @@ pub fn contribute(
         <= circle
             .started_at
             .wrapping_add(circle.contribution_deadline_seconds);
+            .checked_add(circle.contribution_deadline_seconds)
+            .ok_or(CircleError::InvalidAmount)?;
     contributions.push_back(Contribution {
         member: member.clone(),
         round,
         amount,
         timestamp: now,
         on_time,
+        time_weight: now,
     });
     env.storage()
         .persistent()
@@ -365,6 +381,28 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         }
     }
     let now = env.ledger().timestamp();
+    let _yield_rate_bps = oracle::get_yield_rate(env, round)?;
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    let now = env.ledger().timestamp();
+    let all_contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut total_weighted: u128 = 0;
+    let mut member_weighted: Map<Address, u128> = Map::new(env);
+    for i in 0..all_contributions.len() {
+        let c = all_contributions
+            .get(i)
+            .ok_or(CircleError::VecAccessError)?;
+        if c.round == round {
+            let time_held = (now as u128).saturating_sub(c.timestamp as u128);
+            let w = (c.amount as u128).saturating_mul(time_held);
+            total_weighted = total_weighted.saturating_add(w);
+            let prev = member_weighted.get(c.member.clone()).unwrap_or(0);
+            member_weighted.set(c.member.clone(), prev.saturating_add(w));
+        }
+    }
     let mut payouts: Vec<PayoutRecipient> = env
         .storage()
         .persistent()
@@ -399,6 +437,82 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             members.set(i, m);
         }
     }
+    let mut distributed: i128 = 0;
+    let net_u = net as u128;
+    for i in 0..members.len() {
+        let m = members.get(i).ok_or(CircleError::VecAccessError)?;
+        if let Some(w) = member_weighted.get(m.address.clone()) {
+            if total_weighted > 0 {
+                let share = if distributed == 0 && w == total_weighted {
+                    net
+                } else {
+                    (net_u.saturating_mul(w) / total_weighted) as i128
+                };
+                if share > 0 {
+                    token_client.transfer(&circle.id, &m.address, &share);
+                    distributed = math::safe_add(distributed, share)
+                        .map_err(|_| CircleError::InvalidAmount)?;
+                    payouts.push_back(PayoutRecipient {
+                        recipient: m.address.clone(),
+                        round,
+                        amount: share,
+                        fee: 0,
+                        payout_type,
+                        timestamp: now,
+                    });
+                    for j in 0..members.len() {
+                        let mut m2 = members.get(j).ok_or(CircleError::VecAccessError)?;
+                        if m2.address == m.address {
+                            m2.total_received = math::safe_add(m2.total_received, share)
+                                .map_err(|_| CircleError::InvalidAmount)?;
+                            members.set(j, m2);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if fee > 0 && distributed > 0 {
+        if let Some(treasury) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::Treasury)
+        {
+            token_client.transfer(&circle.id, &treasury, &fee);
+        }
+    }
+    if distributed < net {
+        let dust = math::safe_sub(net, distributed).map_err(|_| CircleError::InvalidAmount)?;
+        token_client.transfer(&circle.id, &recipient, &dust);
+        payouts.push_back(PayoutRecipient {
+            recipient: recipient.clone(),
+            round,
+            amount: dust,
+            fee: 0,
+            payout_type,
+            timestamp: now,
+        });
+        for j in 0..members.len() {
+            let mut m2 = members.get(j).ok_or(CircleError::VecAccessError)?;
+            if m2.address == recipient.clone() {
+                m2.total_received = math::safe_add(m2.total_received, dust)
+                    .map_err(|_| CircleError::InvalidAmount)?;
+                members.set(j, m2);
+            }
+        }
+        distributed = math::safe_add(distributed, dust).map_err(|_| CircleError::InvalidAmount)?;
+    }
+    circle.current_round = circle
+        .current_round
+        .checked_add(1)
+        .ok_or(CircleError::InvalidAmount)?;
+    circle.total_payouts = math::safe_add(circle.total_payouts, distributed)
+        .map_err(|_| CircleError::InvalidAmount)?;
+    circle.total_fees =
+        math::safe_add(circle.total_fees, fee).map_err(|_| CircleError::InvalidAmount)?;
+    if circle.current_round >= circle.total_rounds {
+        circle.status = STATUS_COMPLETED;
+    }
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().persistent().set(&DataKey::Payouts, &payouts);
     env.storage().persistent().set(&DataKey::Members, &members);
@@ -408,6 +522,7 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             recipient,
             round,
             amount: net,
+            amount: distributed,
             fee,
             payout_type,
         },
@@ -428,12 +543,15 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             }
         }
         let members: Vec<Member> = env
+        let final_members: Vec<Member> = env
             .storage()
             .persistent()
             .get(&DataKey::Members)
             .ok_or(CircleError::NotInitialized)?;
         for i in 0..members.len() {
             let m = members.get(i).ok_or(CircleError::NotInitialized)?;
+        for i in 0..final_members.len() {
+            let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
             if m.status == MEMBER_ACTIVE {
                 scoring::record_circle_completion(env, &m.address);
             }
@@ -753,6 +871,7 @@ pub fn report_late(
         let mut m = members.get(i).ok_or(CircleError::VecAccessError)?;
         if m.address == *late_member {
             m.strikes = m.strikes.wrapping_add(1);
+            m.strikes = m.strikes.checked_add(1).ok_or(CircleError::InvalidAmount)?;
             if m.strikes >= circle.max_strikes {
                 m.status = MEMBER_DEFAULTED;
                 scoring::record_default(env, &m.address);
@@ -964,6 +1083,12 @@ pub fn get_members(env: &Env) -> Vec<Member> {
 /// # Panics
 /// Never panics. Returns empty vector if member has made no contributions.
 pub fn get_contributions(env: &Env, member: &Address) -> Vec<Contribution> {
+pub fn get_contributions(
+    env: &Env,
+    member: &Address,
+    page: u32,
+    page_size: u32,
+) -> Vec<Contribution> {
     let all: Vec<Contribution> = env
         .storage()
         .persistent()
@@ -1135,6 +1260,21 @@ pub fn get_pending_payout(env: &Env, member: &Address) -> Option<i128> {
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
+    let start = page.saturating_mul(page_size);
+    let end = start.saturating_add(page_size);
+    let mut count = 0;
+    for i in 0..all.len() {
+        if let Some(c) = all.get(i) {
+            if c.member == *member {
+                if count >= start && count < end {
+                    out.push_back(c);
+                }
+                count += 1;
+            }
+        }
+    }
+    out
+}
 pub fn pause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
@@ -1193,6 +1333,108 @@ pub fn unpause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
 pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
     admin.require_auth();
     let s: Address = env
+pub fn batch_invite(
+    env: &Env,
+    caller: &Address,
+    members: &Vec<Address>,
+) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    if caller != &circle.organizer {
+        return Err(CircleError::NotOrganizer);
+    }
+    if circle.status == STATUS_DISPUTED || circle.status == STATUS_COMPLETED {
+        return Err(CircleError::NotActive);
+    }
+    let mut members_vec: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .unwrap_or_else(|| Vec::new(env));
+    for mi in 0..members.len() {
+        let member = members.get(mi).ok_or(CircleError::VecAccessError)?;
+        let score = scoring::get_score(env, &member);
+        if score < circle.min_moi_score {
+            return Err(CircleError::InsufficientMoiScore);
+        }
+        for i in 0..members_vec.len() {
+            if members_vec
+                .get(i)
+                .ok_or(CircleError::VecAccessError)?
+                .address
+                == member
+            {
+                return Err(CircleError::AlreadyMember);
+            }
+        }
+        if members_vec.len() as u32 >= circle.max_members {
+            return Err(CircleError::CircleFull);
+        }
+        let now = env.ledger().timestamp();
+        let pos = members_vec.len() as u32;
+        members_vec.push_back(Member {
+            address: member.clone(),
+            position: pos,
+            joined_at: now,
+            strikes: 0,
+            status: MEMBER_ACTIVE,
+            exited_at: 0,
+            total_contributions: 0,
+            total_received: 0,
+        });
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::Members, &members_vec);
+    let circle_status = circle.status;
+    let member_count = members_vec.len() as u32;
+    let max_members = circle.max_members;
+    let mut stored_circle = env
+        .storage()
+        .instance()
+        .get::<DataKey, Circle>(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    stored_circle.member_count = member_count;
+    if member_count >= max_members && circle_status == STATUS_PENDING {
+        stored_circle.status = STATUS_ACTIVE;
+        stored_circle.started_at = env.ledger().timestamp();
+    }
+    env.storage()
+        .instance()
+        .set(&DataKey::Circle, &stored_circle);
+    for mi in 0..members.len() {
+        let member = members.get(mi).ok_or(CircleError::VecAccessError)?;
+        let pos = members_vec.get(mi).map(|m| m.position).unwrap_or(0);
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("joined")),
+            MemberJoined {
+                member: member.clone(),
+                position: pos,
+            },
+        );
+    }
+    Ok(())
+}
+pub fn batch_payout(
+    env: &Env,
+    caller: &Address,
+    recipients: &Vec<Address>,
+    amounts: &Vec<i128>,
+    round: u32,
+) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    let stored_admin: Address = env
         .storage()
         .instance()
         .get(&DataKey::Admin)
@@ -1224,6 +1466,189 @@ pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), Circl
 /// Never panics. All errors are returned as typed CircleError variants.
 pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<(), CircleError> {
     admin.require_auth();
+    if caller != &circle.organizer && caller != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    if circle.status != STATUS_ACTIVE {
+        return Err(CircleError::NotActive);
+    }
+    if round != circle.current_round {
+        return Err(CircleError::RoundNotCurrent);
+    }
+    if recipients.len() == 0 || recipients.len() > 10 || recipients.len() != amounts.len() {
+        return Err(CircleError::InvalidAmount);
+    }
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    let now = env.ledger().timestamp();
+    let mut payouts: Vec<PayoutRecipient> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Payouts)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .ok_or(CircleError::NotInitialized)?;
+    for i in 0..recipients.len() {
+        let recipient = recipients.get(i).ok_or(CircleError::VecAccessError)?;
+        let amount = amounts.get(i).ok_or(CircleError::VecAccessError)?;
+        if amount <= 0 {
+            return Err(CircleError::InvalidAmount);
+        }
+        token_client.transfer(&circle.id, &recipient, &amount);
+        payouts.push_back(PayoutRecipient {
+            recipient: recipient.clone(),
+            round,
+            amount,
+            fee: 0,
+            payout_type: circle.payout_type,
+            timestamp: now,
+        });
+        for j in 0..members.len() {
+            let mut member = members.get(j).ok_or(CircleError::VecAccessError)?;
+            if member.address == recipient {
+                member.total_received = math::safe_add(member.total_received, amount)
+                    .map_err(|_| CircleError::InvalidAmount)?;
+                members.set(j, member);
+                break;
+            }
+        }
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("payout")),
+            PayoutExecuted {
+                recipient,
+                round,
+                amount,
+                fee: 0,
+                payout_type: circle.payout_type,
+            },
+        );
+    }
+    env.storage().persistent().set(&DataKey::Payouts, &payouts);
+    env.storage().persistent().set(&DataKey::Members, &members);
+    Ok(())
+}
+pub fn register_referral(
+    env: &Env,
+    referrer: &Address,
+    referred: &Address,
+    bonus_pct: u32,
+) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    referrer.require_auth();
+    if referrer == referred {
+        return Err(CircleError::SelfReferral);
+    }
+    if bonus_pct > 10000 {
+        return Err(CircleError::InvalidAmount);
+    }
+    let mut referrals: Vec<Referral> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Referrals)
+        .unwrap_or_else(|| Vec::new(env));
+    for i in 0..referrals.len() {
+        let r = referrals.get(i).ok_or(CircleError::VecAccessError)?;
+        if r.referrer == *referrer && r.referred == *referred {
+            return Err(CircleError::AlreadyMember);
+        }
+    }
+    referrals.push_back(Referral {
+        referrer: referrer.clone(),
+        referred: referred.clone(),
+        bonus_pct,
+        timestamp: env.ledger().timestamp(),
+    });
+    env.storage().persistent().set(&DataKey::Referrals, &referrals);
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("referral")),
+        ReferralRegistered {
+            referrer: referrer.clone(),
+            referred: referred.clone(),
+            bonus_pct,
+        },
+    );
+    Ok(())
+}
+pub fn claim_referral_bonus(
+    env: &Env,
+    referrer: &Address,
+    _treasury: &Address,
+) -> Result<(), CircleError> {
+    let token_address: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Token)
+        .ok_or(CircleError::NotInitialized)?;
+    let token_client = soroban_sdk::token::Client::new(env, &token_address);
+    let contract_balance = token_client.balance(&env.current_contract_address());
+    if contract_balance <= 0 {
+        return Err(CircleError::InsufficientContractBalance);
+    }
+    token_client.transfer(&env.current_contract_address(), referrer, &contract_balance);
+    Ok(())
+}
+pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
+    Err(CircleError::NotImplemented)
+}
+pub fn claim_streak_bonus(
+    env: &Env,
+    member: &Address,
+    _treasury: &Address,
+) -> Result<(), CircleError> {
+    let token_address: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Token)
+        .ok_or(CircleError::NotInitialized)?;
+    let token_client = soroban_sdk::token::Client::new(env, &token_address);
+    let contract_balance = token_client.balance(&env.current_contract_address());
+    if contract_balance <= 0 {
+        return Err(CircleError::InsufficientContractBalance);
+    }
+    token_client.transfer(&env.current_contract_address(), member, &contract_balance);
+    Ok(())
+}
+pub fn get_referrals(env: &Env) -> Vec<Referral> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Referrals)
+        .unwrap_or_else(|| Vec::new(env))
+}
+pub fn get_streaks(env: &Env) -> Vec<Streak> {
+    Vec::new(env)
+}
+pub fn get_member_streak(_env: &Env, _member: &Address) -> Streak {
+    Streak {
+        member: _member.clone(),
+        current_streak: 0,
+        longest_streak: 0,
+        last_round: 0,
+    }
+}
+pub fn set_reputation_registry(
+    env: &Env,
+    admin: &Address,
+    registry: &Address,
+) -> Result<(), CircleError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    env.storage()
+        .instance()
+        .set(&DataKey::ReputationRegistry, registry);
+    Ok(())
+}
+pub fn get_reputation_registry(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::ReputationRegistry)
+}
+pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
         .instance()
@@ -1254,6 +1679,7 @@ pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<()
 /// Never panics. All errors are returned as typed CircleError variants.
 pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), CircleError> {
     admin.require_auth();
+pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
         .instance()
@@ -1297,6 +1723,25 @@ pub fn set_allowlist(
     allowlist: Vec<Address>,
 ) -> Result<(), CircleError> {
     admin.require_auth();
+    env.storage().instance().set(&DataKey::Token, token);
+    Ok(())
+}
+pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    if fee_bps > 10_000 {
+        return Err(CircleError::InvalidAmount);
+    }
+    env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+    Ok(())
+}
+pub fn set_allowlist(env: &Env, admin: &Address, allowlist: Vec<Address>) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
         .instance()
@@ -1332,6 +1777,16 @@ pub fn set_reputation_registry(
     registry: &Address,
 ) -> Result<(), CircleError> {
     admin.require_auth();
+    env.storage().persistent().set(&DataKey::Allowlist, &allowlist);
+    Ok(())
+}
+pub fn get_allowlist(env: &Env) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Allowlist)
+        .unwrap_or_else(|| Vec::new(env))
+}
+pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
         .instance()
@@ -1383,4 +1838,28 @@ pub fn get_member_streak(env: &Env, _member: &Address) -> Streak {
         count: 0,
         last_round: 0,
     }
+    oracle::set_primary_oracle(env, oracle);
+    Ok(())
+}
+pub fn set_fallback_oracle(
+    env: &Env,
+    admin: &Address,
+    oracle: &Address,
+) -> Result<(), CircleError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    oracle::set_fallback_oracle(env, oracle);
+    Ok(())
+}
+pub fn get_oracle(env: &Env) -> Option<Address> {
+    oracle::get_primary_oracle(env)
+}
+pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
+    oracle::get_fallback_oracle(env)
 }

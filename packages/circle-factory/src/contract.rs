@@ -54,14 +54,16 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
     config.organizer.require_auth();
     if config.max_members < 2 || config.contribution_amount <= 0 || config.total_rounds == 0 || config.payout_type > 3 { return Err(FactoryError::InvalidConfig); }
     let wh: BytesN<32> = env.storage().instance().get(&DataKey::WasmHash).ok_or(FactoryError::WasmHashNotSet)?;
-    let salt = [0u8; 32];
+    let count: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
+    let mut salt = [0u8; 32];
+    salt[28..32].copy_from_slice(&count.to_be_bytes());
     let cid = env.deployer().with_current_contract(BytesN::from_array(env, &salt)).deploy_v2(wh, ());
     let now = env.ledger().timestamp();
     let mut circles: Vec<CircleEntry> = env.storage().persistent().get(&DataKey::CircleList).unwrap_or_else(|| Vec::new(env));
     circles.push_back(CircleEntry { circle_id: cid.clone(), name: config.name.clone(), organizer: config.organizer.clone(), deployed_at: now, status: 0 });
     env.storage().persistent().set(&DataKey::CircleList, &circles);
     let c: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
-    env.storage().instance().set(&DataKey::CircleCount, &c.wrapping_add(1));
+    env.storage().instance().set(&DataKey::CircleCount, &c.checked_add(1).ok_or(FactoryError::InvalidConfig)?);
     env.events().publish((env.current_contract_address(), symbol_short!("deploy")), CircleDeployed { creator: config.organizer.clone(), circle_id: cid.clone(), name: config.name.clone() });
     Ok(cid)
 }
