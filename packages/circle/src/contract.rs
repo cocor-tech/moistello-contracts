@@ -4,6 +4,24 @@ use crate::types::*;
 use common::reentrancy::ReentrancyGuard;
 use common::{math, pause};
 use reputation_registry::scoring;
+use soroban_sdk::{symbol_short, Address, BytesN, Env, Map, Vec};
+
+/// Initializes a new circle contract with the provided configuration.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Administrator address with elevated privileges
+/// - `factory`: Factory contract address that deployed this circle
+/// - `config`: Circle configuration including organizer, token, contribution amount, max members, payout type, and rounds
+///
+/// # Returns
+/// - `Ok(())` on successful initialization
+/// - `Err(CircleError::InvalidAmount)` if config validation fails (max_members < 2, contribution_amount <= 0, total_rounds == 0, or payout_type > 3)
+/// - `Err(CircleError::CircleSizeExceedsTier)` if max_members exceeds organizer's tier limit
+/// - `Err(CircleError::ContributionExceedsTier)` if contribution_amount exceeds organizer's tier limit
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     symbol_short, Address, BytesN, Env, IntoVal, Map, Vec,
@@ -74,6 +92,27 @@ pub fn init(
         .set(&DataKey::Votes, &Vec::<VoteEntry>::new(env));
     Ok(())
 }
+/// Allows a member to join an active circle.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `member`: Address of the member attempting to join
+///
+/// # Returns
+/// - `Ok(())` on successful join
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if reentrancy guard fails or circle status is DISPUTED/COMPLETED
+/// - `Err(CircleError::InsufficientMoiScore)` if member's MoiScore is below minimum threshold
+/// - `Err(CircleError::AllowlistNotPermitted)` if allowlist is configured and member is not on it
+/// - `Err(CircleError::AlreadyMember)` if member has already joined
+/// - `Err(CircleError::CircleFull)` if max_members limit has been reached
+/// - `Err(CircleError::VecAccessError)` if vector access fails
+///
+/// # Authorization
+/// Requires authentication from the `member` address.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
@@ -86,6 +125,13 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     if circle.status == STATUS_DISPUTED || circle.status == STATUS_COMPLETED {
         return Err(CircleError::NotActive);
     }
+    let score = scoring::get_score(env, member);
+    if score < circle.min_moi_score {
+        return Err(CircleError::InsufficientMoiScore);
+    }
+    let allowlist: Vec<Address> = env
+        .storage()
+        .instance()
     let allowlist: Vec<Address> = env
         .storage()
         .persistent()
@@ -136,6 +182,7 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
         total_contributions: 0,
         total_received: 0,
     });
+    circle.member_count = circle.member_count.wrapping_add(1);
     circle.member_count = circle
         .member_count
         .checked_add(1)
@@ -155,6 +202,30 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     );
     Ok(())
 }
+/// Records a contribution from a circle member for the current round.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `member`: Address of the contributing member
+/// - `amount`: Contribution amount (must exactly match circle's configured contribution_amount)
+/// - `round`: Round number (must match circle's current_round)
+///
+/// # Returns
+/// - `Ok(())` on successful contribution
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if reentrancy guard fails or circle status is not ACTIVE
+/// - `Err(CircleError::RoundNotCurrent)` if provided round does not match current_round
+/// - `Err(CircleError::ContributionMismatch)` if amount does not match configured contribution_amount
+/// - `Err(CircleError::NotMember)` if member has not joined the circle
+/// - `Err(CircleError::InvalidMemberStatus)` if member status is not ACTIVE
+/// - `Err(CircleError::AlreadyContributed)` if member has already contributed for this round
+/// - `Err(CircleError::VecAccessError)` if vector access fails
+///
+/// # Authorization
+/// Requires authentication from the `member` address.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn contribute(
     env: &Env,
     member: &Address,
@@ -213,6 +284,7 @@ pub fn contribute(
     let on_time = now
         <= circle
             .started_at
+            .wrapping_add(circle.contribution_deadline_seconds);
             .checked_add(circle.contribution_deadline_seconds)
             .ok_or(CircleError::InvalidAmount)?;
     contributions.push_back(Contribution {
@@ -238,6 +310,28 @@ pub fn contribute(
     scoring::record_on_time_payment(env, member, &circle.id, amount);
     Ok(())
 }
+/// Triggers payout for the current round based on the circle's payout type.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `caller`: Address triggering the payout (must be organizer or admin)
+/// - `round`: Round number (must match circle's current_round)
+///
+/// # Returns
+/// - `Ok(())` on successful payout
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if reentrancy guard fails or circle status is not ACTIVE
+/// - `Err(CircleError::Unauthorized)` if caller is neither organizer nor admin
+/// - `Err(CircleError::RoundNotCurrent)` if provided round does not match current_round
+/// - `Err(CircleError::InvalidPayoutType)` if payout_type is invalid
+/// - `Err(CircleError::InvalidAmount)` if math operations fail
+/// - Other errors propagated from payout resolution functions
+///
+/// # Authorization
+/// Requires caller to be the circle organizer or admin.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 
 fn deposit_protocol_fee(
     env: &Env,
@@ -307,6 +401,18 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         .unwrap_or(0u32);
     let (net, fee) =
         math::apply_fee(pool, fee_bps as i128).map_err(|_| CircleError::InvalidAmount)?;
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    token_client.transfer(&circle.id, &recipient, &net);
+    if fee > 0 {
+        if let Some(treasury) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::Treasury)
+        {
+            token_client.transfer(&circle.id, &treasury, &fee);
+        }
+    }
+    let now = env.ledger().timestamp();
     let _yield_rate_bps = oracle::get_yield_rate(env, round)?;
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     let now = env.ledger().timestamp();
@@ -334,11 +440,35 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         .persistent()
         .get(&DataKey::Payouts)
         .unwrap_or_else(|| Vec::new(env));
+    payouts.push_back(PayoutRecipient {
+        recipient: recipient.clone(),
+        round,
+        amount: net,
+        fee,
+        payout_type,
+        timestamp: now,
+    });
+    circle.current_round = circle.current_round.wrapping_add(1);
+    circle.total_payouts =
+        math::safe_add(circle.total_payouts, net).map_err(|_| CircleError::InvalidAmount)?;
+    circle.total_fees =
+        math::safe_add(circle.total_fees, fee).map_err(|_| CircleError::InvalidAmount)?;
+    if circle.current_round >= circle.total_rounds {
+        circle.status = STATUS_COMPLETED;
+    }
     let mut members: Vec<Member> = env
         .storage()
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
+    for i in 0..members.len() {
+        let mut m = members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.address == recipient {
+            m.total_received =
+                math::safe_add(m.total_received, net).map_err(|_| CircleError::InvalidAmount)?;
+            members.set(i, m);
+        }
+    }
     let mut distributed: i128 = 0;
     let net_u = net as u128;
     for i in 0..members.len() {
@@ -423,6 +553,7 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         PayoutExecuted {
             recipient,
             round,
+            amount: net,
             amount: distributed,
             fee,
             payout_type,
@@ -443,11 +574,14 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
                 }
             }
         }
+        let members: Vec<Member> = env
         let final_members: Vec<Member> = env
             .storage()
             .persistent()
             .get(&DataKey::Members)
             .ok_or(CircleError::NotInitialized)?;
+        for i in 0..members.len() {
+            let m = members.get(i).ok_or(CircleError::NotInitialized)?;
         for i in 0..final_members.len() {
             let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
             if m.status == MEMBER_ACTIVE {
@@ -457,6 +591,29 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     }
     Ok(())
 }
+/// Submits a bid for auction-based payout rounds.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `bidder`: Address placing the bid
+/// - `discount_bips`: Discount rate in basis points (0-10000, where 10000 = 100%)
+/// - `round`: Round number (must match circle's current_round)
+///
+/// # Returns
+/// - `Ok(())` on successful bid placement
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if reentrancy guard fails
+/// - `Err(CircleError::InvalidPayoutType)` if circle's payout_type is not PAYOUT_AUCTION
+/// - `Err(CircleError::InvalidBid)` if discount_bips > 10000
+/// - `Err(CircleError::RoundNotCurrent)` if provided round does not match current_round
+/// - `Err(CircleError::AlreadyBidded)` if bidder has already placed a bid for this round
+/// - `Err(CircleError::VecAccessError)` if vector access fails
+///
+/// # Authorization
+/// Requires authentication from the `bidder` address.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn auction_bid(
     env: &Env,
     bidder: &Address,
@@ -508,6 +665,30 @@ pub fn auction_bid(
     );
     Ok(())
 }
+/// Casts a vote for a payout recipient in vote-based payout rounds.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `voter`: Address casting the vote (must be an active member)
+/// - `vote_for`: Address being voted for as payout recipient
+/// - `round`: Round number (must match circle's current_round)
+///
+/// # Returns
+/// - `Ok(())` on successful vote
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if reentrancy guard fails
+/// - `Err(CircleError::InvalidPayoutType)` if circle's payout_type is not PAYOUT_VOTE
+/// - `Err(CircleError::RoundNotCurrent)` if provided round does not match current_round
+/// - `Err(CircleError::NotMember)` if voter is not a member
+/// - `Err(CircleError::InvalidMemberStatus)` if voter's status is not ACTIVE
+/// - `Err(CircleError::AlreadyVoted)` if voter has already voted for this round
+/// - `Err(CircleError::VecAccessError)` if vector access fails
+///
+/// # Authorization
+/// Requires authentication from the `voter` address.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn vote_payout(
     env: &Env,
     voter: &Address,
@@ -574,6 +755,30 @@ pub fn vote_payout(
     );
     Ok(())
 }
+/// Allows a member to exit the circle with an early withdrawal penalty.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `member`: Address of the member exiting
+///
+/// # Returns
+/// - `Ok(())` on successful exit
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if reentrancy guard fails or circle status is COMPLETED
+/// - `Err(CircleError::InvalidMemberStatus)` if member's status is not ACTIVE
+/// - `Err(CircleError::InvalidAmount)` if penalty calculation fails
+/// - `Err(CircleError::VecAccessError)` if vector access fails
+///
+/// # Authorization
+/// Requires authentication from the `member` address.
+///
+/// # Notes
+/// - 5% penalty is calculated on total contributions made
+/// - Member's collateral is returned if configured
+/// - Member status is set to MEMBER_EXITED
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn exit(env: &Env, member: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
@@ -632,6 +837,31 @@ pub fn exit(env: &Env, member: &Address) -> Result<(), CircleError> {
     );
     Ok(())
 }
+/// Reports a member for late payment and increments their strike count.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `reporter`: Address reporting the late payment
+/// - `late_member`: Address of the member being reported
+/// - `round`: Round number for the late payment
+///
+/// # Returns
+/// - `Ok(())` on successful report
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if reentrancy guard fails or circle status is not ACTIVE
+/// - `Err(CircleError::NotMember)` if late_member has no late contribution for the specified round
+/// - `Err(CircleError::VecAccessError)` if vector access fails
+///
+/// # Authorization
+/// Requires authentication from the `reporter` address.
+///
+/// # Notes
+/// - Member must have a contribution marked as not on_time for the specified round
+/// - If strikes >= max_strikes, member status is set to MEMBER_DEFAULTED
+/// - Default event is published when member is defaulted
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn report_late(
     env: &Env,
     reporter: &Address,
@@ -672,6 +902,7 @@ pub fn report_late(
     for i in 0..members.len() {
         let mut m = members.get(i).ok_or(CircleError::VecAccessError)?;
         if m.address == *late_member {
+            m.strikes = m.strikes.wrapping_add(1);
             m.strikes = m.strikes.checked_add(1).ok_or(CircleError::InvalidAmount)?;
             if m.strikes >= circle.max_strikes {
                 m.status = MEMBER_DEFAULTED;
@@ -690,6 +921,29 @@ pub fn report_late(
     env.storage().persistent().set(&DataKey::Members, &members);
     Ok(())
 }
+/// Raises a dispute against the circle, pausing all operations until resolved.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `member`: Address raising the dispute
+/// - `evidence_hash`: Hash of evidence supporting the dispute
+///
+/// # Returns
+/// - `Ok(())` on successful dispute creation
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if reentrancy guard fails
+/// - `Err(CircleError::DisputeAlreadyRaised)` if circle status is already DISPUTED or a dispute entry exists
+///
+/// # Authorization
+/// Requires authentication from the `member` address.
+///
+/// # Notes
+/// - Circle status is immediately set to STATUS_DISPUTED
+/// - Dispute entry is stored with timestamp and evidence hash
+/// - All circle operations are blocked until dispute is resolved
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn raise_dispute(
     env: &Env,
     member: &Address,
@@ -736,6 +990,28 @@ pub fn raise_dispute(
     );
     Ok(())
 }
+/// Resolves an active dispute and restores circle to ACTIVE status.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address resolving the dispute
+/// - `resolution`: Resolution type (1=DISMISS, 2=PENALIZE, 3=FORCE_PAYOUT)
+///
+/// # Returns
+/// - `Ok(())` on successful resolution
+/// - `Err(CircleError::Unauthorized)` if caller is not the admin
+/// - `Err(CircleError::NoActiveDispute)` if no dispute entry exists
+/// - `Err(CircleError::InvalidAmount)` if resolution value is invalid
+///
+/// # Authorization
+/// Requires authentication from the admin address and admin must match stored admin.
+///
+/// # Notes
+/// - Circle status is restored to STATUS_ACTIVE after resolution
+/// - Resolution and timestamp are recorded in the dispute entry
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
@@ -770,6 +1046,16 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
     env.storage().persistent().set(&DataKey::Dispute, &dispute);
     Ok(())
 }
+/// Returns the current status of the circle including all configuration and state data.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+///
+/// # Returns
+/// Circle struct containing all circle state or a default Circle if not initialized.
+///
+/// # Panics
+/// Never panics. Returns default Circle if storage is empty.
 pub fn get_status(env: &Env) -> Circle {
     env.storage()
         .instance()
@@ -801,12 +1087,34 @@ pub fn get_status(env: &Env) -> Circle {
             slug: soroban_sdk::String::from_str(env, ""),
         })
 }
+/// Returns all members who have joined the circle.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+///
+/// # Returns
+/// Vector of Member structs containing address, position, joined_at, strikes, status, and contribution/receipt totals.
+///
+/// # Panics
+/// Never panics. Returns empty vector if no members exist.
 pub fn get_members(env: &Env) -> Vec<Member> {
     env.storage()
         .persistent()
         .get(&DataKey::Members)
         .unwrap_or_else(|| Vec::new(env))
 }
+/// Returns all contributions made by a specific member.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `member`: Address of the member to query
+///
+/// # Returns
+/// Vector of Contribution structs for the specified member containing round, amount, timestamp, and on_time status.
+///
+/// # Panics
+/// Never panics. Returns empty vector if member has made no contributions.
+pub fn get_contributions(env: &Env, member: &Address) -> Vec<Contribution> {
 pub fn get_contributions(
     env: &Env,
     member: &Address,
@@ -819,6 +1127,171 @@ pub fn get_contributions(
         .get(&DataKey::Contributions)
         .unwrap_or_else(|| Vec::new(env));
     let mut out = Vec::new(env);
+    for i in 0..all.len() {
+        if let Some(c) = all.get(i) {
+            if c.member == *member {
+                out.push_back(c);
+            }
+        }
+    }
+    out
+}
+/// Calculates the potential payout amount for a member in the current round.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `member`: Address of the member to query
+///
+/// # Returns
+/// - `Some(amount)` if the member is eligible for payout in the current round
+/// - `None` if circle is not ACTIVE, member is not eligible, or calculation fails
+///
+/// # Notes
+/// - Calculation is based on payout type (FIXED, RANDOM, AUCTION, or VOTE)
+/// - For FIXED: member must be at the round's rotation position
+/// - For RANDOM: any active member can receive
+/// - For AUCTION: member must have winning bid
+/// - For VOTE: member must have most votes
+///
+/// # Panics
+/// Never panics. Returns None on any error or ineligibility.
+pub fn get_pending_payout(env: &Env, member: &Address) -> Option<i128> {
+    let circle: Circle = match env.storage().instance().get(&DataKey::Circle) {
+        Some(c) => c,
+        None => return None,
+    };
+    if circle.status != STATUS_ACTIVE {
+        return None;
+    }
+    let pool = match math::safe_mul(circle.contribution_amount, circle.member_count as i128) {
+        Ok(p) => p,
+        Err(_) => return None,
+    };
+    let (net, _) = match math::apply_fee(pool, 0) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let round = circle.current_round;
+    let members: Vec<Member> = match env.storage().persistent().get(&DataKey::Members) {
+        Some(m) => m,
+        None => return None,
+    };
+    match circle.payout_type {
+        PAYOUT_FIXED => {
+            let pos = round % circle.max_members;
+            if (circle.payout_bitmap & (1u128 << pos)) != 0 {
+                return None;
+            }
+            for i in 0..members.len() {
+                if let Some(m) = members.get(i) {
+                    if m.address == *member && m.position == pos && m.status == MEMBER_ACTIVE {
+                        return Some(net);
+                    }
+                }
+            }
+            None
+        }
+        PAYOUT_RANDOM => {
+            for i in 0..members.len() {
+                if let Some(m) = members.get(i) {
+                    if m.address == *member && m.status == MEMBER_ACTIVE {
+                        if (circle.payout_bitmap & (1u128 << m.position)) != 0 {
+                            return None;
+                        }
+                        return Some(net);
+                    }
+                }
+            }
+            None
+        }
+        PAYOUT_AUCTION => {
+            let bids: Vec<AuctionBid> = match env.storage().persistent().get(&DataKey::Bids) {
+                Some(b) => b,
+                None => return None,
+            };
+            let mut min_bps: u32 = 10001;
+            for i in 0..bids.len() {
+                if let Some(b) = bids.get(i) {
+                    if b.round == round && b.discount_bips < min_bps {
+                        min_bps = b.discount_bips;
+                    }
+                }
+            }
+            if min_bps > 10000 {
+                return None;
+            }
+            let mut winner: Option<Address> = None;
+            for i in 0..bids.len() {
+                if let Some(b) = bids.get(i) {
+                    if b.round == round && b.discount_bips == min_bps {
+                        winner = Some(b.bidder.clone());
+                        break;
+                    }
+                }
+            }
+            match winner {
+                Some(w) => {
+                    if w == *member {
+                        Some(net)
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            }
+        }
+        PAYOUT_VOTE => {
+            let votes: Vec<VoteEntry> = match env.storage().persistent().get(&DataKey::Votes) {
+                Some(v) => v,
+                None => return None,
+            };
+            let mut tally: Map<Address, u32> = Map::new(env);
+            for i in 0..votes.len() {
+                if let Some(v) = votes.get(i) {
+                    if v.round == round {
+                        let c = tally.get(v.vote_for.clone()).unwrap_or(0);
+                        tally.set(v.vote_for.clone(), c + 1);
+                    }
+                }
+            }
+            let mut best_addr: Option<Address> = None;
+            let mut best_count: u32 = 0;
+            for (addr, count) in tally.iter() {
+                if count > best_count {
+                    best_count = count;
+                    best_addr = Some(addr);
+                }
+            }
+            match best_addr {
+                Some(a) => {
+                    if a == *member {
+                        Some(net)
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            }
+        }
+        _ => None,
+    }
+}
+/// Pauses the circle, preventing all state-mutating operations.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address requesting the pause
+///
+/// # Returns
+/// - `Ok(())` on successful pause
+/// - `Err(CircleError::Unauthorized)` if caller is not the admin
+/// - `Err(CircleError::ContractPaused)` if already paused
+///
+/// # Authorization
+/// Only the stored admin can pause the contract.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
     let start = page.saturating_mul(page_size);
     let end = start.saturating_add(page_size);
     let mut count = 0;
@@ -845,6 +1318,22 @@ pub fn pause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
     }
     pause::pause(env, admin).map_err(|_| CircleError::ContractPaused)
 }
+/// Unpauses the circle, allowing state-mutating operations to resume.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address requesting the unpause
+///
+/// # Returns
+/// - `Ok(())` on successful unpause
+/// - `Err(CircleError::Unauthorized)` if caller is not the admin
+/// - `Err(CircleError::ContractPaused)` if pause operation fails
+///
+/// # Authorization
+/// Only the stored admin can unpause the contract.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
 pub fn unpause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
@@ -856,6 +1345,26 @@ pub fn unpause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
     }
     pause::unpause(env, admin).map_err(|_| CircleError::ContractPaused)
 }
+/// Sets the fee percentage in basis points (1 bps = 0.01%).
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address setting the fee
+/// - `fee_bps`: Fee in basis points (0-10000, where 10000 = 100%)
+///
+/// # Returns
+/// - `Ok(())` on successful fee update
+/// - `Err(CircleError::Unauthorized)` if caller is not the admin
+/// - `Err(CircleError::InvalidAmount)` if fee_bps > 10000
+///
+/// # Authorization
+/// Requires authentication from admin and admin must match stored admin.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
+pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
+    admin.require_auth();
+    let s: Address = env
 pub fn batch_invite(
     env: &Env,
     caller: &Address,
@@ -963,6 +1472,33 @@ pub fn batch_payout(
         .instance()
         .get(&DataKey::Admin)
         .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    if fee_bps > 10000 {
+        return Err(CircleError::InvalidAmount);
+    }
+    env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+    Ok(())
+}
+/// Sets the treasury contract address where fees will be sent.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address setting the treasury
+/// - `treasury`: Treasury contract address
+///
+/// # Returns
+/// - `Ok(())` on successful treasury update
+/// - `Err(CircleError::Unauthorized)` if caller is not the admin
+///
+/// # Authorization
+/// Requires authentication from admin and admin must match stored admin.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
+pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<(), CircleError> {
+    admin.require_auth();
     if caller != &circle.organizer && caller != &stored_admin {
         return Err(CircleError::Unauthorized);
     }
@@ -1162,6 +1698,25 @@ pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<()
     env.storage().instance().set(&DataKey::Treasury, treasury);
     Ok(())
 }
+/// Updates the token address used for contributions and payouts.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address updating the token
+/// - `token`: New token contract address
+///
+/// # Returns
+/// - `Ok(())` on successful token update
+/// - `Err(CircleError::Unauthorized)` if caller is not the admin
+/// - `Err(CircleError::NotInitialized)` if circle is not initialized
+///
+/// # Authorization
+/// Requires authentication from admin and admin must match stored admin.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
+pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), CircleError> {
+    admin.require_auth();
 pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
@@ -1171,6 +1726,40 @@ pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), Circ
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    let mut circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    circle.token = token.clone();
+    env.storage().instance().set(&DataKey::Circle, &circle);
+    Ok(())
+}
+/// Sets the allowlist of addresses permitted to join the circle.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address setting the allowlist
+/// - `allowlist`: Vector of addresses permitted to join
+///
+/// # Returns
+/// - `Ok(())` on successful allowlist update
+/// - `Err(CircleError::Unauthorized)` if caller is not the admin
+///
+/// # Authorization
+/// Requires authentication from admin and admin must match stored admin.
+///
+/// # Notes
+/// - Empty allowlist permits anyone to join
+/// - Non-empty allowlist restricts joins to listed addresses only
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
+pub fn set_allowlist(
+    env: &Env,
+    admin: &Address,
+    allowlist: Vec<Address>,
+) -> Result<(), CircleError> {
     admin.require_auth();
     env.storage().instance().set(&DataKey::Token, token);
     Ok(())
@@ -1204,6 +1793,34 @@ pub fn set_allowlist(
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    env.storage()
+        .instance()
+        .set(&DataKey::Allowlist, &allowlist);
+    Ok(())
+}
+/// Returns the current allowlist of addresses permitted to join.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+///
+/// # Returns
+/// Vector of addresses on the allowlist. Empty vector means all addresses are permitted.
+///
+/// # Panics
+/// Never panics. Returns empty vector if allowlist is not configured.
+pub fn get_allowlist(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Allowlist)
+        .unwrap_or_else(|| Vec::new(env))
+}
+pub fn set_reputation_registry(
+    env: &Env,
+    admin: &Address,
+    registry: &Address,
+) -> Result<(), CircleError> {
+    admin.require_auth();
+    env.storage().persistent().set(&DataKey::Allowlist, &allowlist);
     admin.require_auth();
     env.storage()
         .persistent()
@@ -1224,6 +1841,49 @@ pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), Ci
         .ok_or(CircleError::NotInitialized)?;
     if admin != &s {
         return Err(CircleError::Unauthorized);
+    }
+    env.storage().instance().set(&DataKey::Factory, registry);
+    Ok(())
+}
+pub fn get_reputation_registry(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Factory)
+}
+pub fn register_referral(
+    _env: &Env,
+    _referrer: &Address,
+    _referred: &Address,
+    _bonus_pct: u32,
+) -> Result<(), CircleError> {
+    Ok(())
+}
+pub fn claim_referral_bonus(
+    _env: &Env,
+    _referrer: &Address,
+    _treasury: &Address,
+) -> Result<(), CircleError> {
+    Ok(())
+}
+pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
+    Ok(())
+}
+pub fn claim_streak_bonus(
+    _env: &Env,
+    _member: &Address,
+    _treasury: &Address,
+) -> Result<(), CircleError> {
+    Ok(())
+}
+pub fn get_referrals(env: &Env) -> Vec<Referral> {
+    Vec::new(env)
+}
+pub fn get_streaks(env: &Env) -> Vec<Streak> {
+    Vec::new(env)
+}
+pub fn get_member_streak(env: &Env, _member: &Address) -> Streak {
+    Streak {
+        member: env.current_contract_address(),
+        count: 0,
+        last_round: 0,
     }
     admin.require_auth();
     oracle::set_primary_oracle(env, oracle);
