@@ -1,9 +1,9 @@
 #![cfg(test)]
 
+use crate::types::TreasuryError;
+use crate::{Treasury, TreasuryClient};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};
-use crate::{Treasury, TreasuryClient};
-use crate::types::TreasuryError;
 
 fn mint_tokens(env: &Env, token: &Address, recipient: &Address, amount: i128) {
     let token_client = soroban_sdk::token::StellarAssetClient::new(env, token);
@@ -16,7 +16,9 @@ fn setup(env: &Env) -> (TreasuryClient<'static>, Address, Address) {
     let client = TreasuryClient::new(env, &contract_id);
     let admin = Address::generate(env);
     let token_admin = Address::generate(env);
-    let token = env.register_stellar_asset_contract_v2(token_admin).address();
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
     client.init(&admin, &token);
     (client, admin, token)
 }
@@ -46,6 +48,21 @@ fn test_deposit_increases_balance() {
     client.deposit_fee(&from, &1000i128, &from);
 
     assert_eq!(client.get_balance(), 1000);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&from), 0);
+    assert_eq!(token_client.balance(&client.address), 1000);
+}
+
+#[test]
+fn test_deposit_fails_without_token_balance() {
+    let env = Env::default();
+    let (client, _admin, _token) = setup(&env);
+    let from = Address::generate(&env);
+
+    let result = client.try_deposit_fee(&from, &100i128, &from);
+    assert!(result.is_err());
+    assert_eq!(client.get_balance(), 0);
 }
 
 #[test]
@@ -106,6 +123,10 @@ fn test_withdraw_decreases_balance() {
     client.withdraw(&admin, &from, &500i128);
 
     assert_eq!(client.get_balance(), 1500);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&from), 500);
+    assert_eq!(token_client.balance(&client.address), 1500);
 }
 
 #[test]
@@ -246,6 +267,3 @@ fn test_rescue_tokens_transfers_and_updates_balance_for_managed_token() {
     let token_client = soroban_sdk::token::Client::new(&env, &token);
     assert_eq!(token_client.balance(&recipient), 250i128);
 }
-
-
-
