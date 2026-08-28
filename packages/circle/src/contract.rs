@@ -4,7 +4,10 @@ use crate::types::*;
 use common::reentrancy::ReentrancyGuard;
 use common::{math, pause};
 use reputation_registry::scoring;
-use soroban_sdk::{symbol_short, Address, BytesN, Env, Map, Vec};
+use soroban_sdk::{
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+    symbol_short, Address, BytesN, Env, IntoVal, Map, Vec,
+};
 pub fn init(
     env: &Env,
     admin: &Address,
@@ -235,6 +238,33 @@ pub fn contribute(
     scoring::record_on_time_payment(env, member, &circle.id, amount);
     Ok(())
 }
+
+fn deposit_protocol_fee(
+    env: &Env,
+    token: &Address,
+    treasury: &Address,
+    circle_id: &Address,
+    amount: i128,
+) {
+    env.authorize_as_current_contract(soroban_sdk::vec![
+        env,
+        InvokerContractAuthEntry::Contract(SubContractInvocation {
+            context: ContractContext {
+                contract: token.clone(),
+                fn_name: symbol_short!("transfer"),
+                args: soroban_sdk::vec![
+                    env,
+                    circle_id.into_val(env),
+                    treasury.into_val(env),
+                    amount.into_val(env),
+                ],
+            },
+            sub_invocations: soroban_sdk::vec![env],
+        }),
+    ]);
+    treasury::TreasuryClient::new(env, treasury).deposit_fee(circle_id, &amount, circle_id);
+}
+
 pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
@@ -251,6 +281,7 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     if caller != &circle.organizer && caller != &stored_admin {
         return Err(CircleError::Unauthorized);
     }
+    caller.require_auth();
     if circle.status != STATUS_ACTIVE {
         return Err(CircleError::NotActive);
     }
@@ -343,13 +374,13 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             }
         }
     }
-    if fee > 0 && distributed > 0 {
+    if fee > 0 {
         if let Some(treasury) = env
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::Treasury)
         {
-            token_client.transfer(&circle.id, &treasury, &fee);
+            deposit_protocol_fee(env, &circle.token, &treasury, &circle.id, fee);
         }
     }
     if distributed < net {
@@ -706,7 +737,6 @@ pub fn raise_dispute(
     Ok(())
 }
 pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<(), CircleError> {
-    admin.require_auth();
     let s: Address = env
         .storage()
         .instance()
@@ -715,6 +745,7 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    admin.require_auth();
     let mut circle: Circle = env
         .storage()
         .instance()
@@ -840,6 +871,7 @@ pub fn batch_invite(
     if caller != &circle.organizer {
         return Err(CircleError::NotOrganizer);
     }
+    caller.require_auth();
     if circle.status == STATUS_DISPUTED || circle.status == STATUS_COMPLETED {
         return Err(CircleError::NotActive);
     }
@@ -934,6 +966,7 @@ pub fn batch_payout(
     if caller != &circle.organizer && caller != &stored_admin {
         return Err(CircleError::Unauthorized);
     }
+    caller.require_auth();
     if circle.status != STATUS_ACTIVE {
         return Err(CircleError::NotActive);
     }
@@ -1025,7 +1058,9 @@ pub fn register_referral(
         bonus_pct,
         timestamp: env.ledger().timestamp(),
     });
-    env.storage().persistent().set(&DataKey::Referrals, &referrals);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Referrals, &referrals);
     env.events().publish(
         (env.current_contract_address(), symbol_short!("referral")),
         ReferralRegistered {
@@ -1105,6 +1140,7 @@ pub fn set_reputation_registry(
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    admin.require_auth();
     env.storage()
         .instance()
         .set(&DataKey::ReputationRegistry, registry);
@@ -1122,6 +1158,7 @@ pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<()
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    admin.require_auth();
     env.storage().instance().set(&DataKey::Treasury, treasury);
     Ok(())
 }
@@ -1134,6 +1171,7 @@ pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), Circ
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    admin.require_auth();
     env.storage().instance().set(&DataKey::Token, token);
     Ok(())
 }
@@ -1146,13 +1184,18 @@ pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), Circl
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    admin.require_auth();
     if fee_bps > 10_000 {
         return Err(CircleError::InvalidAmount);
     }
     env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
     Ok(())
 }
-pub fn set_allowlist(env: &Env, admin: &Address, allowlist: Vec<Address>) -> Result<(), CircleError> {
+pub fn set_allowlist(
+    env: &Env,
+    admin: &Address,
+    allowlist: Vec<Address>,
+) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
         .instance()
@@ -1161,7 +1204,10 @@ pub fn set_allowlist(env: &Env, admin: &Address, allowlist: Vec<Address>) -> Res
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
-    env.storage().persistent().set(&DataKey::Allowlist, &allowlist);
+    admin.require_auth();
+    env.storage()
+        .persistent()
+        .set(&DataKey::Allowlist, &allowlist);
     Ok(())
 }
 pub fn get_allowlist(env: &Env) -> Vec<Address> {
@@ -1179,6 +1225,7 @@ pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), Ci
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    admin.require_auth();
     oracle::set_primary_oracle(env, oracle);
     Ok(())
 }
@@ -1195,6 +1242,7 @@ pub fn set_fallback_oracle(
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
+    admin.require_auth();
     oracle::set_fallback_oracle(env, oracle);
     Ok(())
 }

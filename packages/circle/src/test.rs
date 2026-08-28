@@ -799,6 +799,7 @@ mod tests {
 
 }
 use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::Ledger as _;
 use soroban_sdk::{Address, Env, String, Vec};
 
 use crate::{Circle, CircleArgs, CircleClient, CircleError};
@@ -902,4 +903,97 @@ fn test_batch_payout_happy_path() {
     let token_client = soroban_sdk::token::Client::new(&env, &token);
     assert_eq!(token_client.balance(&member_one), 80_i128);
     assert_eq!(token_client.balance(&member_two), 120_i128);
+}
+
+#[test]
+fn test_auth_trigger_payout_and_admin_setters() {
+    let env = Env::default();
+    let (client, admin, _token) = setup_circle(&env);
+
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+    client.join(&member_one);
+    client.join(&member_two);
+
+    let stranger = Address::generate(&env);
+    let result = client.try_trigger_payout(&stranger, &0_u32);
+    assert_eq!(result, Err(Ok(CircleError::Unauthorized)));
+
+    assert_eq!(
+        client.try_set_reputation_registry(&stranger, &Address::generate(&env)),
+        Err(Ok(CircleError::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_treasury(&stranger, &Address::generate(&env)),
+        Err(Ok(CircleError::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_token(&stranger, &Address::generate(&env)),
+        Err(Ok(CircleError::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_fee_bps(&stranger, &500u32),
+        Err(Ok(CircleError::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_oracle(&stranger, &Address::generate(&env)),
+        Err(Ok(CircleError::Unauthorized))
+    );
+
+    let new_reg = Address::generate(&env);
+    assert!(client.try_set_reputation_registry(&admin, &new_reg).is_ok());
+    assert_eq!(client.get_reputation_registry(), Some(new_reg));
+}
+
+#[test]
+fn test_resolve_dispute_unauthorized() {
+    let env = Env::default();
+    let (client, _admin, _token) = setup_circle(&env);
+    let member = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    client.join(&member);
+    client.raise_dispute(&member, &soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
+
+    let result = client.try_resolve_dispute(&stranger, &1u32);
+    assert_eq!(result, Err(Ok(CircleError::Unauthorized)));
+}
+
+#[test]
+fn test_trigger_payout_transfers_tokens_and_deposits_fee() {
+    let env = Env::default();
+    let (client, admin, token) = setup_circle(&env);
+
+    let treasury_id = env.register(treasury::Treasury, ());
+    let treasury_client = treasury::TreasuryClient::new(&env, &treasury_id);
+    treasury_client.init(&admin, &token);
+
+    client.set_treasury(&admin, &treasury_id);
+    client.set_fee_bps(&admin, &500u32);
+
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+    client.join(&member_one);
+    client.join(&member_two);
+
+    mint_tokens(&env, &token, &member_one, 100);
+    mint_tokens(&env, &token, &member_two, 100);
+    client.contribute(&member_one, &100_i128, &0_u32);
+    client.contribute(&member_two, &100_i128, &0_u32);
+
+    env.ledger().set_timestamp(env.ledger().timestamp() + 60);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&client.address), 200_i128);
+
+    client.trigger_payout(&admin, &0_u32);
+
+    // pool = 200, fee_bps = 500 => fee = 10, net = 190
+    assert_eq!(treasury_client.get_balance(), 10_i128);
+    assert_eq!(token_client.balance(&treasury_id), 10_i128);
+    assert_eq!(token_client.balance(&client.address), 0_i128);
+    assert_eq!(
+        token_client.balance(&member_one) + token_client.balance(&member_two),
+        190_i128
+    );
 }

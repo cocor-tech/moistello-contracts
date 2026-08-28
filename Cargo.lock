@@ -316,6 +316,7 @@ dependencies = [
  "serde_json",
  "soroban-sdk",
  "soroban-token-sdk",
+ "treasury",
 ]
 
 [[package]]
