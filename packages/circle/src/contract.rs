@@ -401,6 +401,9 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         .unwrap_or(0u32);
     let (net, fee) =
         math::apply_fee(pool, fee_bps as i128).map_err(|_| CircleError::InvalidAmount)?;
+    if net <= 0 {
+        return Err(CircleError::ZeroPayoutAmount);
+    }
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     token_client.transfer(&circle.id, &recipient, &net);
     if fee > 0 {
