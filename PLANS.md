@@ -31,12 +31,9 @@ Backend reads contract IDs/hashes from config — not source code.
  └──────────────────────┘
 
  ┌──────────────────────┐
- │   GOVERNANCE TOKEN    │  MOI token (SEP-41 standard), mint/burn, delegation, snapshot
+ │      TREASURY         │  Protocol fee collection (0.5% per payout), admin withdrawal
  └──────────────────────┘
 
- ┌──────────────────────┐
- │      TREASURY         │  Protocol fee collection (0.5% per payout), governance withdrawal
- └──────────────────────┘
 
  ┌──────────────────────┐
  │       COMMON          │  VRF, math, access control, emergency pause, upgrade proxy
@@ -119,17 +116,6 @@ contracts/
 │   │       ├── storage.rs
 │   │       └── tests/
 │   │
-│   ├── governance-token/
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── contract.rs         # Mint, Transfer, Burn, Delegate, GetVotes
-│   │       ├── types.rs            # SEP-41 compliant token
-│   │       ├── metadata.rs         # Name, Symbol, Decimals (SEP-41 token metadata)
-│   │       ├── events.rs
-│   │       ├── errors.rs
-│   │       └── tests/
-│   │
 │   ├── treasury/
 │   │   ├── Cargo.toml
 │   │   └── src/
@@ -172,10 +158,9 @@ contracts/
 | `circle-factory` | 4 | 2 | 8 | 400 |
 | `circle` | 12 | 12 | 30 | 1,200 |
 | `reputation-registry` | 3 | 2 | 6 | 350 |
-| `governance-token` | 5 | 4 | 10 | 400 |
 | `treasury` | 3 | 2 | 5 | 250 |
 | `common` | — (library) | — | — | 300 |
-| **Total** | **27** | **22** | **59** | **~2,900** |
+| **Total** | **22** | **18** | **49** | **~2,500** |
 
 ### 1.3 Circle Contract — Core Functions
 
@@ -250,7 +235,7 @@ pub enum CircleEvent {
 .PHONY: build optimize test deploy-bindings bindings clean
 
 build:
-	@for pkg in circle-factory circle reputation-registry governance-token treasury; do \
+	@for pkg in circle-factory circle reputation-registry treasury; do \
 		echo "Building $$pkg..."; \
 		cargo build --target wasm32-unknown-unknown --release -p $$pkg; \
 	done
@@ -259,7 +244,6 @@ optimize: build
 	soroban contract optimize --wasm target/wasm32-unknown-unknown/release/circle_factory.wasm
 	soroban contract optimize --wasm target/wasm32-unknown-unknown/release/circle.wasm
 	soroban contract optimize --wasm target/wasm32-unknown-unknown/release/reputation_registry.wasm
-	soroban contract optimize --wasm target/wasm32-unknown-unknown/release/governance_token.wasm
 	soroban contract optimize --wasm target/wasm32-unknown-unknown/release/treasury.wasm
 
 test:
@@ -288,7 +272,6 @@ members = [
     "packages/circle-factory",
     "packages/circle",
     "packages/reputation-registry",
-    "packages/governance-token",
     "packages/treasury",
 ]
 
@@ -313,7 +296,7 @@ public_key = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"
 secret_key = "SDDBM2MKQSV2ZPEDKTSI3IWNEUSJU5DAWW5NSRWNKJ4FABXSYGYW72FO"
 
 [deploy_order]
-contracts = ["common", "circle-factory", "treasury", "reputation-registry", "governance-token", "circle"]
+contracts = ["common", "circle-factory", "treasury", "reputation-registry", "circle"]
 
 [circle-factory]
 init_args = { admin = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC", fee_bps = 50 }
@@ -324,9 +307,6 @@ init_args = { admin = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"
 
 [reputation-registry]
 init_args = { admin = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC" }
-
-[governance-token]
-init_args = { name = "Moistello Governance", symbol = "MOI", decimals = 7, admin = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC" }
 ```
 
 ---
@@ -395,7 +375,6 @@ moistello-backend/pkg/stellar/
     ├── circle_factory.go
     ├── circle.go
     ├── reputation.go
-    ├── governance.go
     └── treasury.go
 ```
 
@@ -743,7 +722,7 @@ impl CircleV2 { /* upgraded logic */ }
 
 // Upgrade process:
 // 1. Deploy new implementation
-// 2. Governance vote approves upgrade
+// 2. Admin approves upgrade
 // 3. Admin calls proxy.setImplementation(newAddress)
 // 4. All state preserved (in proxy storage, not implementation)
 ```

@@ -15,6 +15,7 @@ mod tests {
     #[test]
     fn test_create_swap() {
         let env = Env::default();
+        env.mock_all_auths();
         let admin = Address::generate(&env);
         let contract_id = env.register(EscrowSwap, EscrowSwapArgs::__constructor(&admin));
         let client = escrow_swap::EscrowSwapClient::new(&env, &contract_id);
@@ -22,14 +23,13 @@ mod tests {
         let responder = Address::generate(&env);
         let hash_lock = create_hash_lock(&env);
         let time_lock = env.ledger().timestamp() + 3600;
-
-        env.mock_all_auths();
         assert!(client.try_create_swap(&initiator, &responder, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).is_ok());
     }
 
     #[test]
     fn test_create_swap_invalid_amount() {
         let env = Env::default();
+        env.mock_all_auths();
         let admin = Address::generate(&env);
         let contract_id = env.register(EscrowSwap, EscrowSwapArgs::__constructor(&admin));
         let client = escrow_swap::EscrowSwapClient::new(&env, &contract_id);
@@ -37,28 +37,26 @@ mod tests {
         let responder = Address::generate(&env);
         let hash_lock = create_hash_lock(&env);
         let time_lock = env.ledger().timestamp() + 3600;
-
-        env.mock_all_auths();
         assert!(client.try_create_swap(&initiator, &responder, &0i128, &200_0000000i128, &hash_lock, &time_lock).is_err());
     }
 
     #[test]
     fn test_create_swap_self_referral() {
         let env = Env::default();
+        env.mock_all_auths();
         let admin = Address::generate(&env);
         let contract_id = env.register(EscrowSwap, EscrowSwapArgs::__constructor(&admin));
         let client = escrow_swap::EscrowSwapClient::new(&env, &contract_id);
         let initiator = Address::generate(&env);
         let hash_lock = create_hash_lock(&env);
         let time_lock = env.ledger().timestamp() + 3600;
-
-        env.mock_all_auths();
         assert!(client.try_create_swap(&initiator, &initiator, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).is_err());
     }
 
     #[test]
     fn test_get_swaps() {
         let env = Env::default();
+        env.mock_all_auths();
         let admin = Address::generate(&env);
         let contract_id = env.register(EscrowSwap, EscrowSwapArgs::__constructor(&admin));
         let client = escrow_swap::EscrowSwapClient::new(&env, &contract_id);
@@ -66,8 +64,6 @@ mod tests {
         let responder = Address::generate(&env);
         let hash_lock = create_hash_lock(&env);
         let time_lock = env.ledger().timestamp() + 3600;
-
-        env.mock_all_auths();
         let _ = client.try_create_swap(&initiator, &responder, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).unwrap();
         let swaps = client.get_swaps();
         assert_eq!(swaps.len(), 1);

@@ -1,5 +1,5 @@
-use soroban_sdk::{token, Address, Env};
-use soroban_sdk::token::TokenInterface;
+use soroban_sdk::{token, symbol_short, Address, Env};
+
 use crate::types::*;
 use common::pause;
 
@@ -14,7 +14,7 @@ pub fn init(env: &Env, admin: &Address, token: &Address) {
     env.storage().instance().set(&DataKey::Token, token);
     
     // Initialize paused state to false
-    env.storage().instance().set(&DataKey::Paused, &false);
+    env.storage().instance().set(&symbol_short!("paused"), &false);
     
     // Initialize total staked to 0
     env.storage().instance().set(&DataKey::TotalStaked, &0i128);
@@ -29,7 +29,9 @@ pub fn stake(
 ) -> Result<(), StakingError> {
     // Check if contract is paused
     pause::when_not_paused(env).map_err(|_| StakingError::ContractPaused)?;
-    
+
+    user.require_auth();
+
     // Validate amount
     if amount <= 0 {
         return Err(StakingError::InvalidAmount);
@@ -159,38 +161,57 @@ pub fn unstake(env: &Env, user: &Address) -> Result<(), StakingError> {
 pub fn claim(env: &Env, user: &Address) -> Result<(), StakingError> {
     // Check if contract is paused
     pause::when_not_paused(env).map_err(|_| StakingError::ContractPaused)?;
-    
+
     user.require_auth();
-    
+
     // Get unbonding position
     let unbonding_position: UnbondingPosition = env.storage().instance()
         .get(&DataKey::Unbonding(user.clone()))
         .ok_or(StakingError::NoUnbondingPosition)?;
-    
+
     // Check if unbonding period is complete
     let current_time = env.ledger().timestamp();
     if current_time < unbonding_position.claimable_time {
         return Err(StakingError::UnbondingNotComplete);
     }
-    
+
     // Get token address
     let token_address: Address = env.storage().instance()
         .get(&DataKey::Token)
         .ok_or(StakingError::NotInitialized)?;
-    
-    // Transfer tokens back to user
+
     let token_client = token::Client::new(env, &token_address);
+
+    // --- Preflight balance check (fix for #102) ---
+    // Verify the contract holds enough tokens before attempting the transfer.
+    // token::Client::transfer() panics on failure (Soroban host function), which
+    // would produce an opaque SDK error rather than our typed StakingError.
+    // By checking first we:
+    //   (a) surface a machine-readable error code the Go client can classify, and
+    //   (b) make the check → transfer → remove-state ordering explicit and correct.
+    let contract_balance = token_client.balance(&env.current_contract_address());
+    if contract_balance < unbonding_position.amount {
+        return Err(StakingError::InsufficientContractBalance);
+    }
+
+    // Transfer tokens back to user.
+    // In Soroban, if this call panics the entire transaction is rolled back, so
+    // the unbonding position (written below) would never be committed.
+    // We still perform the preflight above to return a typed error whenever
+    // possible, and we only remove the position AFTER this line returns —
+    // guaranteeing correct ordering and preventing silent fund loss.
     token_client.transfer(&env.current_contract_address(), user, &unbonding_position.amount);
-    
-    // Remove unbonding position
+
+    // Remove unbonding position only after the transfer has returned
+    // successfully (reaching this line means the host call did not panic).
     env.storage().instance().remove(&DataKey::Unbonding(user.clone()));
-    
+
     // Emit event
     Claimed {
         user: user.clone(),
         amount: unbonding_position.amount,
     }.publish(env);
-    
+
     Ok(())
 }
 

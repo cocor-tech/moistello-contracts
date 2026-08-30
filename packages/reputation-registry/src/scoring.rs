@@ -137,3 +137,7 @@ pub fn apply_inactivity_decay(env: &Env, member: &Address, days_inactive: u64) -
     storage::set_score(env, member, new_score);
     new_score
 }
+
+pub fn get_score(env: &Env, member: &Address) -> u32 {
+    storage::get_score(env, member)
+}

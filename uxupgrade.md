@@ -2,7 +2,7 @@
 
 ## Overview
 
-Transform Moistello from a basic savings circle platform into a fully-governed, reputation-driven economy where every action compounds into tangible user benefit. All features are on-chain, verifiable, and self-reinforcing.
+Transform Moistello from a basic savings circle platform into a reputation-driven economy where every action compounds into tangible user benefit. All features are on-chain, verifiable, and self-reinforcing.
 
 ---
 
@@ -23,13 +23,13 @@ Circle complete  ──→  +100 pts   ──→  Lower collateral
 Default          ──→  -200 pts   ──→  Higher collateral / restricted
 ```
 
-| Tier | Score | Collateral | Max Circle Size | Max Contribution | Governance Votes |
+| Tier | Score | Collateral | Max Circle Size | Max Contribution |
 |---|---|---|---|---|---|
-| 🥉 Bronze | 0–200 | 10% | 5 members | 100 USDC | 1x |
-| 🥈 Silver | 201–400 | 5% | 10 members | 500 USDC | 1x |
-| 🥇 Gold | 401–600 | 3% | 20 members | 2,000 USDC | 2x |
-| 💎 Platinum | 601–800 | 1% | 50 members | 10,000 USDC | 3x |
-| 👑 Diamond | 801–1000 | 0% | 100 members | 50,000 USDC | 5x |
+| 🥉 Bronze | 0–200 | 10% | 5 members | 100 USDC |
+| 🥈 Silver | 201–400 | 5% | 10 members | 500 USDC |
+| 🥇 Gold | 401–600 | 3% | 20 members | 2,000 USDC |
+| 💎 Platinum | 601–800 | 1% | 50 members | 10,000 USDC |
+| 👑 Diamond | 801–1000 | 0% | 100 members | 50,000 USDC |
 
 ### Implementation — Smart Contract Changes
 
@@ -128,160 +128,6 @@ pub fn apply_inactivity_decay(env: &Env, member: &Address) -> u32 {
 ```
 
 ---
-
-## 2. Governance System — MOI Token Voting on Protocol Upgrades
-
-### Current State
-- Governance token contract exists (mint, transfer, burn, delegate)
-- Upgrade proxy exists (`common/upgrade.rs`)
-- But voting is NOT wired to upgrades
-- No proposal creation mechanism
-
-### Target State
-Full on-chain governance lifecycle:
-
-```
-Token Holder stakes MOI
-        ↓
-Creates Proposal (with timelock)
-        ↓
-Voting Period (7 days, quorum: 20% of supply)
-        ↓
-Votes counted (weighted by token balance + delegation)
-        ↓
-Passed? ──No──→ Staked MOI returned
-        │
-       Yes
-        ↓
-Timelock Period (48 hours — security delay)
-        ↓
-Executor calls upgrade proxy with new implementation
-        ↓
-Contract upgraded. State preserved. Proposal archived.
-```
-
-### Implementation — New Contract
-
-**File:** `governance/src/lib.rs` (new contract in existing governance-token package)
-
-```rust
-#[contractimpl]
-impl Governance {
-    // ── Proposal Lifecycle ──
-
-    /// Create a new governance proposal. Stakes MOI tokens as deposit.
-    /// deposit_amount: MOI tokens locked until proposal resolves
-    /// action: encoded contract call (target, method, args)
-    /// description: human-readable proposal text (IPFS hash for long text)
-    pub fn create_proposal(
-        env: Env,
-        proposer: Address,
-        deposit_amount: i128,
-        action: ProposalAction,
-        description: BytesN<32>,
-    ) -> Result<u64, GovernanceError>;
-
-    /// Cast a vote on an active proposal
-    /// vote_power = token_balance + delegated_balance
-    pub fn cast_vote(
-        env: Env,
-        voter: Address,
-        proposal_id: u64,
-        vote: VoteType, // For, Against, Abstain
-    ) -> Result<(), GovernanceError>;
-
-    /// Execute a passed proposal after timelock expires
-    /// Can be called by anyone — permissionless execution
-    pub fn execute_proposal(
-        env: Env,
-        proposal_id: u64,
-    ) -> Result<(), GovernanceError>;
-
-    /// Cancel own proposal before voting starts (refunds deposit)
-    pub fn cancel_proposal(
-        env: Env,
-        proposal_id: u64,
-    ) -> Result<(), GovernanceError>;
-
-    // ── Configuration (Governable) ──
-
-    /// Update governance parameters (itself governable)
-    pub fn update_config(
-        env: Env,
-        new_config: GovernanceConfig,
-    ) -> Result<(), GovernanceError>;
-
-    // ── Queries ──
-
-    pub fn get_proposal(env: Env, id: u64) -> Proposal;
-    pub fn get_proposals(env: Env, status: ProposalStatus) -> Vec<Proposal>;
-    pub fn get_vote(env: Env, proposal_id: u64, voter: Address) -> VoteRecord;
-    pub fn get_vote_power(env: Env, voter: Address) -> i128;
-    pub fn get_config(env: Env) -> GovernanceConfig;
-}
-```
-
-**File:** `governance/src/types.rs`
-
-```rust
-#[contracttype]
-pub struct Proposal {
-    pub id: u64,
-    pub proposer: Address,
-    pub deposit_amount: i128,        // MOI staked
-    pub action: ProposalAction,
-    pub description: BytesN<32>,
-    pub status: ProposalStatus,      // Active, Passed, Failed, Executed, Cancelled
-    pub created_at: u64,
-    pub voting_ends_at: u64,
-    pub timelock_ends_at: u64,
-    pub votes_for: i128,
-    pub votes_against: i128,
-    pub votes_abstain: i128,
-}
-
-#[contracttype]
-pub struct ProposalAction {
-    pub target_contract: Address,    // Which contract to upgrade/modify
-    pub method: Symbol,              // Method to call
-    pub args: Vec<Val>,              // Arguments (encoded Soroban values)
-}
-
-#[contracttype]
-pub struct GovernanceConfig {
-    pub proposal_deposit: i128,      // MOI required to create proposal
-    pub voting_period_seconds: u64,  // 604800 = 7 days
-    pub timelock_seconds: u64,       // 172800 = 48 hours
-    pub quorum_bps: u32,             // 2000 = 20% of total supply must vote
-    pub pass_threshold_bps: u32,     // 5000 = 50%+ of votes must be For
-    pub min_proposal_deposit: i128,  // Floor for deposit
-}
-
-#[contracttype]
-pub enum ProposalStatus { Active, Passed, Failed, Executed, Cancelled }
-
-#[contracttype]
-pub enum VoteType { For, Against, Abstain }
-
-#[contracttype]
-pub struct VoteRecord {
-    pub voter: Address,
-    pub vote: VoteType,
-    pub vote_power: i128,
-    pub timestamp: u64,
-}
-```
-
-### Upgradable Parameters (themselves governable)
-- Proposal deposit amount
-- Voting period length
-- Timelock duration
-- Quorum percentage
-- Pass threshold percentage
-- All MoiScore tier thresholds
-- All collateral percentages
-- All circle size limits
-- Platform fee (currently 0.5%)
 
 ---
 
@@ -415,16 +261,11 @@ AFTER 25 COMPLETED CIRCLES + 100 STREAK
 ### Phase D — Frontend (2 days)
 - [ ] Add "Your Journey" page showing MoiScore progression with step indicators
 - [ ] Show tier benefits card (what you unlock at each level)
-- [ ] Add governance voting UI to /governance route
 - [ ] Show "Next Tier" progress bar on dashboard and reputation page
-- [ ] Add proposal creation form with action builder
-- [ ] Add proposal listing with live vote counts
 
 ### Phase E — Binding Integration + Testing (2 days)
-- [ ] Generate Go bindings for new governance contract
 - [ ] Integration tests: create proposal → vote → execute
 - [ ] Integration tests: score progression → collateral reduction → larger circle
-- [ ] End-to-end governance test on testnet
 
 **Total: ~10 days enterprise implementation**
 
@@ -434,11 +275,7 @@ AFTER 25 COMPLETED CIRCLES + 100 STREAK
 
 | Risk | Mitigation |
 |---|---|
-| Whale domination of governance | Quorum + pass threshold prevent minority rule. Delegation spreads power. |
-| Flash loan attacks on voting | Vote power snapshot at proposal creation time, not at vote time |
-| Timelock bypass via upgrade | Timelock is immutable per proposal. Cannot be shortened once voting starts. |
 | Collateral evasion via score manipulation | Score decay penalizes inactivity. Score from on-chain verifiable actions only. |
-| Proposal spam | Deposit requirement + minimum MoiScore to propose |
 
 ---
 

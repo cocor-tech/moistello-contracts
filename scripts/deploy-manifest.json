@@ -1,0 +1,34 @@
+{
+  "network": "testnet",
+  "admin_identity": "moistello-deployer",
+  "contracts": [
+    {
+      "name": "circle",
+      "wasm": "target/wasm32v1-none/release/circle.optimized.wasm",
+      "install_only": true,
+      "init_args": "",
+      "dependencies": []
+    },
+    {
+      "name": "circle_factory",
+      "wasm": "target/wasm32v1-none/release/circle_factory.optimized.wasm",
+      "install_only": false,
+      "init_args": "--admin {ADMIN_PUBLIC} --circle_wasm_hash {CIRCLE_WASM_HASH}",
+      "dependencies": ["circle"]
+    },
+    {
+      "name": "reputation_registry",
+      "wasm": "target/wasm32v1-none/release/reputation_registry.optimized.wasm",
+      "install_only": false,
+      "init_args": "--admin {ADMIN_PUBLIC}",
+      "dependencies": []
+    },
+    {
+      "name": "treasury",
+      "wasm": "target/wasm32v1-none/release/treasury.optimized.wasm",
+      "install_only": false,
+      "init_args": "--admin {ADMIN_PUBLIC}",
+      "dependencies": []
+    }
+  ]
+}
