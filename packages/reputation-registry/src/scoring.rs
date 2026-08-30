@@ -76,10 +76,19 @@ pub fn qualifies_for_circle(env: &Env, member: &Address, min_score: u32, require
 }
 
 /// Record an on-time payment. Returns the new MoiScore.
-/// Base: +10 points. Streak bonus: +5 per consecutive (max +50). Volume: +1 per 100 USDC (max +20). Cap: 1000.
-pub fn record_on_time_payment(env: &Env, member: &Address, circle_id: &Address, amount: i128) -> u32 {
+pub fn record_on_time_payment(env: &Env, member: &Address, circle_id: &Address, amount: i128, round: u32) -> u32 {
     let current = storage::get_score(env, member);
-    let streak = storage::get_streak(env, member, circle_id);
+    let mut streak = storage::get_streak(env, member, circle_id);
+    let last_round = storage::get_last_round(env, member, circle_id);
+
+    if last_round == 0 || round == last_round + 1 {
+        storage::increment_streak(env, member, circle_id);
+        streak += 1;
+    } else {
+        env.storage().persistent().set(&crate::types::DataKey::Streak(member.clone(), circle_id.clone()), &1u32);
+        streak = 1;
+    }
+    storage::set_last_round(env, member, circle_id, round);
 
     let base: u32 = 10;
     let streak_bonus: u32 = if streak <= 10 { streak * 5 } else { 50 };
@@ -89,8 +98,6 @@ pub fn record_on_time_payment(env: &Env, member: &Address, circle_id: &Address, 
     let new_score = current.saturating_add(base).saturating_add(streak_bonus).saturating_add(volume_bonus);
     let capped = if new_score > 1000 { 1000 } else { new_score };
 
-    // Increment streak
-    storage::increment_streak(env, member, circle_id);
     // Update score
     storage::set_score(env, member, capped);
     // Log activity
