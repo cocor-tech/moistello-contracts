@@ -563,7 +563,6 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         PayoutExecuted {
             recipient,
             round,
-            amount: net,
             amount: distributed,
             fee,
             payout_type,
@@ -1545,14 +1544,13 @@ pub fn batch_invite(
     env.storage()
         .instance()
         .set(&DataKey::Circle, &stored_circle);
-    for mi in 0..members.len() {
-        let member = members.get(mi).ok_or(CircleError::VecAccessError)?;
-        let pos = members_vec.get(mi).map(|m| m.position).unwrap_or(0);
+    for mi in 0..members_vec.len() {
+        let member = members_vec.get(mi).ok_or(CircleError::VecAccessError)?;
         env.events().publish(
             (env.current_contract_address(), symbol_short!("joined")),
             MemberJoined {
-                member: member.clone(),
-                position: pos,
+                member: member.address.clone(),
+                position: member.position,
             },
         );
     }

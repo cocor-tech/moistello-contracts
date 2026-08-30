@@ -12,21 +12,21 @@ pub fn set_score(env: &Env, member: &Address, score: u32) {
     env.storage().persistent().set(&DataKey::MemberScore(member.clone()), &score);
 }
 
-/// Get the current streak count for a member
-pub fn get_streak(env: &Env, member: &Address) -> u32 {
-    env.storage().persistent().get(&DataKey::Streak(member.clone()))
+/// Get the current streak count for a member in a circle
+pub fn get_streak(env: &Env, member: &Address, circle_id: &Address) -> u32 {
+    env.storage().persistent().get(&DataKey::Streak(member.clone(), circle_id.clone()))
         .unwrap_or(0u32)
 }
 
 /// Increment the streak count
-pub fn increment_streak(env: &Env, member: &Address) {
-    let current = get_streak(env, member);
-    env.storage().persistent().set(&DataKey::Streak(member.clone()), &(current + 1));
+pub fn increment_streak(env: &Env, member: &Address, circle_id: &Address) {
+    let current = get_streak(env, member, circle_id);
+    env.storage().persistent().set(&DataKey::Streak(member.clone(), circle_id.clone()), &(current + 1));
 }
 
 /// Reset streak to 0
-pub fn reset_streak(env: &Env, member: &Address) {
-    env.storage().persistent().set(&DataKey::Streak(member.clone()), &0u32);
+pub fn reset_streak(env: &Env, member: &Address, circle_id: &Address) {
+    env.storage().persistent().set(&DataKey::Streak(member.clone(), circle_id.clone()), &0u32);
 }
 
 /// Get number of completed circles
