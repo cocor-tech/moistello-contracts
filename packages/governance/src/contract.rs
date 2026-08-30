@@ -487,8 +487,26 @@ pub fn get_vote(env: &Env, proposal_id: u64, voter: &Address) -> Option<VoteReco
 }
 
 /// Flat vote power (see `cast_vote` doc comment).
-pub fn get_vote_power(_env: &Env, _voter: &Address) -> i128 {
-    1
+pub fn get_vote_power(env: &Env, voter: &Address) -> i128 {
+    if let Some(staking_addr) = env.storage().instance().get::<_, Address>(&DataKey::StakingContract) {
+        env.invoke_contract(&staking_addr, &soroban_sdk::Symbol::new(env, "get_voting_power"), soroban_sdk::vec![env, voter.to_val()])
+    } else {
+        1
+    }
+}
+
+pub fn set_staking_contract(env: &Env, admin: &Address, staking: &Address) -> Result<(), GovernanceError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(GovernanceError::NotInitialized)?;
+    if admin != &s {
+        return Err(GovernanceError::Unauthorized);
+    }
+    admin.require_auth();
+    env.storage().instance().set(&DataKey::StakingContract, staking);
+    Ok(())
 }
 
 pub fn get_config(env: &Env) -> Result<GovernanceConfig, GovernanceError> {

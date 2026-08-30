@@ -85,6 +85,7 @@ pub enum DataKey{
     Deposit(u64),
     PendingConfig,
     ProposalsByStatus(ProposalStatus),
+    StakingContract,
 }
 
 #[contracterror]
