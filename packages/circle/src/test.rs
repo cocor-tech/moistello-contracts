@@ -46,6 +46,45 @@ mod tests {
         }
     }
 
+    // ── Bonus test helpers ────────────────────────────────────────────────────
+
+    /// Deploy a 2-member active circle and return (env, client, admin, token_id, treasury)
+    fn setup_active_circle_with_token(
+        env: &Env,
+    ) -> (circle::CircleClient, Address, Address, Address, Address) {
+        let mut config = create_config(env);
+        config.max_members = 2u32;
+        let admin = config.organizer.clone();
+        let factory = Address::generate(env);
+        let contract_id =
+            env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(env, &contract_id);
+
+        // Deploy a mock SEP-41 token using the stellar asset contract helper
+        let token_admin = Address::generate(env);
+        let token_id = env.register_stellar_asset_contract(token_admin.clone());
+        let token_client = TokenClient::new(env, &token_id);
+
+        // Use a separate address as the treasury (holds bonus funds)
+        let treasury = Address::generate(env);
+
+        // Mint a large supply to the treasury so it can fund bonuses
+        token_client.mint(&treasury, &1_000_000_000_0000i128);
+
+        env.mock_all_auths();
+
+        // Wire token + treasury into the circle contract
+        client.set_token(&admin, &token_id);
+        client.set_treasury(&admin, &treasury);
+
+        // Activate the circle (needs max_members joined)
+        let m1 = Address::generate(env);
+        let m2 = Address::generate(env);
+        client.join(&m1);
+        client.join(&m2);
+
+        (client, admin, token_id, treasury, m1)
+    }
     #[test]
     fn test_initialize() {
         let env = Env::default();
