@@ -1,24 +1,24 @@
 #!/bin/bash
 set -e
 
-echo "=== Generating Go Bindings ==="
+echo "=== Generating JS/TS Bindings ==="
 
-# Read contract IDs from deploy output or config
-if [ ! -f "deploy/testnet.toml" ]; then
-    echo "ERROR: deploy/testnet.toml not found. Run deploy first."
-    exit 1
+WASM_DIR="target/wasm32v1-none/release"
+OUTPUT_DIR="bindings"
+
+mkdir -p "$OUTPUT_DIR"
+
+# Check if wasm files exist, if not, build them
+if [ ! -f "$WASM_DIR/circle.wasm" ]; then
+    echo "WASM files not found. Building..."
+    cargo build --target wasm32v1-none --release
 fi
 
-BINDINGS_DIR="bindings"
+for wasm_path in "$WASM_DIR"/*.wasm; do
+    [ -e "$wasm_path" ] || continue
+    name=$(basename "$wasm_path" .wasm)
+    echo "Generating bindings for $name..."
+    stellar contract bindings --wasm "$wasm_path" --output-dir "$OUTPUT_DIR/$name" --overwrite
+done
 
-echo "Generating bindings to: $BINDINGS_DIR/"
-
-# For each contract, generate Go bindings
-# In a production setup, this would use soroban-cli or a custom tool
-# to read the contract spec and generate typed Go clients.
-
-echo "Bindings generation requires soroban-cli >= 22.0"
-echo "Run: soroban contract bindings --wasm <contract.wasm> --output-dir bindings/"
-
-# Placeholder for now — actual generation depends on soroban-cli version
-echo "See PLANS.md Phase 1 for manual binding generation steps."
+echo "=== Bindings generated successfully ==="

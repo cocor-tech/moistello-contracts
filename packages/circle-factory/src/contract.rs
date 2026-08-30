@@ -57,10 +57,11 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
     let count: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
     let mut salt = [0u8; 32];
     salt[28..32].copy_from_slice(&count.to_be_bytes());
-    let cid = env.deployer().with_current_contract(BytesN::from_array(env, &salt)).deploy_v2(wh, ());
+    let cid = env.deployer().with_current_contract(BytesN::from_array(env, &salt)).deploy_v2(wh, (config.organizer.clone(), env.current_contract_address(), config.clone()));
     let now = env.ledger().timestamp();
     let mut circles: Vec<CircleEntry> = env.storage().persistent().get(&DataKey::CircleList).unwrap_or_else(|| Vec::new(env));
     circles.push_back(CircleEntry { circle_id: cid.clone(), name: config.name.clone(), organizer: config.organizer.clone(), deployed_at: now, status: 0 });
+    env.storage().persistent().set(&DataKey::CircleConfig(cid.clone()), config);
     env.storage().persistent().set(&DataKey::CircleList, &circles);
     let c: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
     env.storage().instance().set(&DataKey::CircleCount, &c.checked_add(1).ok_or(FactoryError::InvalidConfig)?);
@@ -77,6 +78,13 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
 ///
 /// # Panics
 /// Never panics. Returns empty registry if no circles have been deployed.
+pub fn get_circle_config(env: &Env, cid: &Address) -> Result<CircleConfig, FactoryError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CircleConfig(cid.clone()))
+        .ok_or(FactoryError::InvalidConfig)
+}
+
 pub fn get_circles(env: &Env) -> CircleRegistry { CircleRegistry { circles: env.storage().persistent().get(&DataKey::CircleList).unwrap_or_else(|| Vec::new(env)) } }
 /// Returns the total count of circles deployed by this factory.
 ///
