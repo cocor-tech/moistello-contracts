@@ -77,9 +77,9 @@ pub fn qualifies_for_circle(env: &Env, member: &Address, min_score: u32, require
 
 /// Record an on-time payment. Returns the new MoiScore.
 /// Base: +10 points. Streak bonus: +5 per consecutive (max +50). Volume: +1 per 100 USDC (max +20). Cap: 1000.
-pub fn record_on_time_payment(env: &Env, member: &Address, _circle_id: &Address, amount: i128) -> u32 {
+pub fn record_on_time_payment(env: &Env, member: &Address, circle_id: &Address, amount: i128) -> u32 {
     let current = storage::get_score(env, member);
-    let streak = storage::get_streak(env, member);
+    let streak = storage::get_streak(env, member, circle_id);
 
     let base: u32 = 10;
     let streak_bonus: u32 = if streak <= 10 { streak * 5 } else { 50 };
@@ -90,7 +90,7 @@ pub fn record_on_time_payment(env: &Env, member: &Address, _circle_id: &Address,
     let capped = if new_score > 1000 { 1000 } else { new_score };
 
     // Increment streak
-    storage::increment_streak(env, member);
+    storage::increment_streak(env, member, circle_id);
     // Update score
     storage::set_score(env, member, capped);
     // Log activity
@@ -113,13 +113,12 @@ pub fn record_circle_completion(env: &Env, member: &Address) -> u32 {
     capped
 }
 
-/// Record a default (missed payment/circle). -200 points. Floor at 0. Resets streak.
+/// Record a default (missed payment/circle). -200 points. Floor at 0.
 pub fn record_default(env: &Env, member: &Address) -> u32 {
     let current = storage::get_score(env, member);
     let penalty: u32 = 200;
     let new_score = if current > penalty { current - penalty } else { 0 };
 
-    storage::reset_streak(env, member);
     storage::increment_defaults(env, member);
     storage::set_score(env, member, new_score);
     storage::add_activity(env, member, ACTIVITY_DEFAULT, 0);
