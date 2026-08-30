@@ -84,6 +84,7 @@ pub enum DataKey{
     Vote(u64,Address),
     Deposit(u64),
     PendingConfig,
+    ProposalsByStatus(ProposalStatus),
 }
 
 #[contracterror]
