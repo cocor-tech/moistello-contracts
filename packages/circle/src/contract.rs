@@ -1137,11 +1137,38 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
         .persistent()
         .get(&DataKey::Dispute)
         .ok_or(CircleError::NoActiveDispute)?;
-    if resolution > RESOLVE_FORCE_PAYOUT {
+    if resolution > 4 {
         return Err(CircleError::InvalidAmount);
     }
     match resolution {
-        RESOLVE_DISMISS | RESOLVE_PENALIZE | RESOLVE_FORCE_PAYOUT => circle.status = STATUS_ACTIVE,
+        RESOLVE_DISMISS | RESOLVE_PENALIZE | RESOLVE_FORCE_PAYOUT => {
+            circle.status = STATUS_ACTIVE;
+        }
+        4 => {
+            circle.status = STATUS_CANCELLED;
+            // Refund all members' contributions
+            let token_address = circle.token.clone();
+            let token_client = soroban_sdk::token::Client::new(env, &token_address);
+            let mut members: Vec<Member> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Members)
+                .unwrap_or_else(|| Vec::new(env));
+            for i in 0..members.len() {
+                if let Some(mut m) = members.get(i) {
+                    if m.total_contributions > 0 {
+                        token_client.transfer(
+                            &env.current_contract_address(),
+                            &m.address,
+                            &m.total_contributions,
+                        );
+                        m.total_contributions = 0;
+                        members.set(i, m);
+                    }
+                }
+            }
+            env.storage().persistent().set(&DataKey::Members, &members);
+        }
         _ => return Err(CircleError::InvalidAmount),
     }
     dispute.resolved_at = env.ledger().timestamp();

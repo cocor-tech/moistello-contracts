@@ -198,26 +198,14 @@ pub fn rescue_tokens(
 
 /// Pauses the treasury, preventing deposits and withdrawals.
 pub fn pause(env: &Env, a: &Address) -> Result<(), TreasuryError> {
-    let s: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .ok_or(TreasuryError::NotInitialized)?;
-    if a != &s {
-        return Err(TreasuryError::Unauthorized);
-    }
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;
+    common::access::require_self_or_admin(env, a, &s).map_err(|_| TreasuryError::Unauthorized)?;
     pause::pause(env, a).map_err(|_| TreasuryError::ContractPaused)
 }
 
 /// Unpauses the treasury, allowing deposits and withdrawals to resume.
 pub fn unpause(env: &Env, a: &Address) -> Result<(), TreasuryError> {
-    let s: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .ok_or(TreasuryError::NotInitialized)?;
-    if a != &s {
-        return Err(TreasuryError::Unauthorized);
-    }
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;
+    common::access::require_self_or_admin(env, a, &s).map_err(|_| TreasuryError::Unauthorized)?;
     pause::unpause(env, a).map_err(|_| TreasuryError::ContractPaused)
 }
