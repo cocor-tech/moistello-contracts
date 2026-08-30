@@ -1475,33 +1475,6 @@ pub fn batch_payout(
         .instance()
         .get(&DataKey::Admin)
         .ok_or(CircleError::NotInitialized)?;
-    if admin != &s {
-        return Err(CircleError::Unauthorized);
-    }
-    if fee_bps > 10000 {
-        return Err(CircleError::InvalidAmount);
-    }
-    env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
-    Ok(())
-}
-/// Sets the treasury contract address where fees will be sent.
-///
-/// # Parameters
-/// - `env`: Contract execution environment
-/// - `admin`: Admin address setting the treasury
-/// - `treasury`: Treasury contract address
-///
-/// # Returns
-/// - `Ok(())` on successful treasury update
-/// - `Err(CircleError::Unauthorized)` if caller is not the admin
-///
-/// # Authorization
-/// Requires authentication from admin and admin must match stored admin.
-///
-/// # Panics
-/// Never panics. All errors are returned as typed CircleError variants.
-pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<(), CircleError> {
-    admin.require_auth();
     if caller != &circle.organizer && caller != &stored_admin {
         return Err(CircleError::Unauthorized);
     }
@@ -1515,6 +1488,14 @@ pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<()
     if recipients.len() == 0 || recipients.len() > 10 || recipients.len() != amounts.len() {
         return Err(CircleError::InvalidAmount);
     }
+
+    // Get fee_bps from storage (#256)
+    let fee_bps: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::FeeBps)
+        .unwrap_or(0);
+
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     let now = env.ledger().timestamp();
     let mut payouts: Vec<PayoutRecipient> = env
@@ -1527,25 +1508,47 @@ pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<()
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
+    
     for i in 0..recipients.len() {
         let recipient = recipients.get(i).ok_or(CircleError::VecAccessError)?;
         let amount = amounts.get(i).ok_or(CircleError::VecAccessError)?;
         if amount <= 0 {
             return Err(CircleError::InvalidAmount);
         }
-        token_client.transfer(&circle.id, &recipient, &amount);
+
+        // Calculate fee (#256)
+        let fee = if fee_bps > 0 {
+            (amount * (fee_bps as i128)) / 10000
+        } else {
+            0
+        };
+        let net_amount = amount - fee;
+
+        // Transfer net amount to recipient
+        token_client.transfer(&circle.id, &recipient, &net_amount);
+
+        // Transfer fee to treasury if fee > 0
+        if fee > 0 {
+            let treasury: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Treasury)
+                .ok_or(CircleError::NotInitialized)?;
+            token_client.transfer(&circle.id, &treasury, &fee);
+        }
+
         payouts.push_back(PayoutRecipient {
             recipient: recipient.clone(),
             round,
-            amount,
-            fee: 0,
+            amount: net_amount,
+            fee,
             payout_type: circle.payout_type,
             timestamp: now,
         });
         for j in 0..members.len() {
             let mut member = members.get(j).ok_or(CircleError::VecAccessError)?;
             if member.address == recipient {
-                member.total_received = math::safe_add(member.total_received, amount)
+                member.total_received = math::safe_add(member.total_received, net_amount)
                     .map_err(|_| CircleError::InvalidAmount)?;
                 members.set(j, member);
                 break;
