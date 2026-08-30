@@ -4,7 +4,10 @@ use crate::types::*;
 use common::reentrancy::ReentrancyGuard;
 use common::{math, pause};
 use reputation_registry::scoring;
-use soroban_sdk::{symbol_short, Address, BytesN, Env, Map, Vec};
+use soroban_sdk::{
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+    symbol_short, Address, BytesN, Env, IntoVal, Map, Vec,
+};
 
 /// Initializes a new circle contract with the provided configuration.
 ///
@@ -22,10 +25,6 @@ use soroban_sdk::{symbol_short, Address, BytesN, Env, Map, Vec};
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
-use soroban_sdk::{
-    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    symbol_short, Address, BytesN, Env, IntoVal, Map, Vec,
-};
 pub fn init(
     env: &Env,
     admin: &Address,
@@ -577,14 +576,11 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
                 }
             }
         }
-        let members: Vec<Member> = env
         let final_members: Vec<Member> = env
             .storage()
             .persistent()
             .get(&DataKey::Members)
             .ok_or(CircleError::NotInitialized)?;
-        for i in 0..members.len() {
-            let m = members.get(i).ok_or(CircleError::NotInitialized)?;
         for i in 0..final_members.len() {
             let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
             if m.status == MEMBER_ACTIVE {
@@ -1365,9 +1361,6 @@ pub fn unpause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
-pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
-    admin.require_auth();
-    let s: Address = env
 pub fn batch_invite(
     env: &Env,
     caller: &Address,
@@ -1721,8 +1714,6 @@ pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<()
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
-pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), CircleError> {
-    admin.require_auth();
 pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
