@@ -121,16 +121,13 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
         .instance()
         .get(&DataKey::Circle)
         .ok_or(CircleError::NotInitialized)?;
-    if circle.status == STATUS_DISPUTED || circle.status == STATUS_COMPLETED {
+    if circle.status != STATUS_PENDING {
         return Err(CircleError::NotActive);
     }
     let score = scoring::get_score(env, member);
     if score < circle.min_moi_score {
         return Err(CircleError::InsufficientMoiScore);
     }
-    let allowlist: Vec<Address> = env
-        .storage()
-        .instance()
     let allowlist: Vec<Address> = env
         .storage()
         .persistent()
@@ -147,10 +144,6 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
         if !permitted {
             return Err(CircleError::AllowlistNotPermitted);
         }
-    }
-    let score = scoring::get_score(env, member);
-    if score < circle.min_moi_score {
-        return Err(CircleError::InsufficientMoiScore);
     }
     let mut members: Vec<Member> = env
         .storage()
@@ -271,11 +264,22 @@ pub fn contribute(
         .persistent()
         .get(&DataKey::Contributions)
         .unwrap_or_else(|| Vec::new(env));
-    for i in 0..contributions.len() {
-        let c = contributions.get(i).ok_or(CircleError::VecAccessError)?;
-        if c.member == *member && c.round == round {
-            return Err(CircleError::AlreadyContributed);
-        }
+    let mut contribution_map: Map<(Address, u32), bool> = env
+        .storage()
+        .persistent()
+        .get(&symbol_short!("contribs"))
+        .unwrap_or_else(|| {
+            let mut m = Map::new(env);
+            for i in 0..contributions.len() {
+                if let Some(c) = contributions.get(i) {
+                    m.set((c.member.clone(), c.round), true);
+                }
+            }
+            env.storage().persistent().set(&symbol_short!("contribs"), &m);
+            m
+        });
+    if contribution_map.get((member.clone(), round)).unwrap_or(false) {
+        return Err(CircleError::AlreadyContributed);
     }
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     token_client.transfer(member, &circle.id, &amount);
@@ -297,6 +301,10 @@ pub fn contribute(
     env.storage()
         .persistent()
         .set(&DataKey::Contributions, &contributions);
+    contribution_map.set((member.clone(), round), true);
+    env.storage()
+        .persistent()
+        .set(&symbol_short!("contribs"), &contribution_map);
     env.events().publish(
         (env.current_contract_address(), symbol_short!("contrib")),
         ContributionRecorded {
@@ -555,7 +563,6 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         PayoutExecuted {
             recipient,
             round,
-            amount: net,
             amount: distributed,
             fee,
             payout_type,
@@ -920,6 +927,77 @@ pub fn report_late(
     env.storage().persistent().set(&DataKey::Members, &members);
     Ok(())
 }
+/// Cancels a pending circle before it starts and refunds any collected collateral.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `caller`: Address of the organizer requesting cancellation
+///
+/// # Returns
+/// - `Ok(())` on successful cancellation
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::NotActive)` if circle is not in pending status or reentrancy guard fails
+/// - `Err(CircleError::NotOrganizer)` if caller is not the circle organizer
+///
+/// # Authorization
+/// Requires authentication from the organizer `caller`.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
+pub fn cancel_circle(env: &Env, caller: &Address) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    caller.require_auth();
+
+    let mut circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+
+    if *caller != circle.organizer {
+        return Err(CircleError::NotOrganizer);
+    }
+
+    if circle.status != STATUS_PENDING {
+        return Err(CircleError::NotActive);
+    }
+
+    let members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .ok_or(CircleError::NotInitialized)?;
+
+    if circle.collateral_amount > 0 {
+        let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+        for i in 0..members.len() {
+            let m = members.get(i).ok_or(CircleError::VecAccessError)?;
+            if m.status == MEMBER_ACTIVE {
+                token_client.transfer(&circle.id, &m.address, &circle.collateral_amount);
+            }
+        }
+    }
+
+    circle.status = STATUS_CANCELLED;
+    env.storage().instance().set(&DataKey::Circle, &circle);
+
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("cancel")),
+        CircleCancelled {
+            circle_id: circle.id.clone(),
+            cancelled_by: caller.clone(),
+            cancelled_at: env.ledger().timestamp(),
+        },
+    );
+
+    Ok(())
+}
+
+pub fn cancel(env: &Env, caller: &Address) -> Result<(), CircleError> {
+    cancel_circle(env, caller)
+}
+
 /// Raises a dispute against the circle, pausing all operations until resolved.
 ///
 /// # Parameters
@@ -959,6 +1037,28 @@ pub fn raise_dispute(
     if circle.status == STATUS_DISPUTED {
         return Err(CircleError::DisputeAlreadyRaised);
     }
+    if circle.status != STATUS_ACTIVE {
+        return Err(CircleError::NotActive);
+    }
+    let members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .ok_or(CircleError::NotInitialized)?;
+    let mut found = false;
+    for i in 0..members.len() {
+        let m = members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.address == *member {
+            if m.status != MEMBER_ACTIVE {
+                return Err(CircleError::InvalidMemberStatus);
+            }
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Err(CircleError::NotMember);
+    }
     if env
         .storage()
         .persistent()
@@ -988,6 +1088,14 @@ pub fn raise_dispute(
         },
     );
     Ok(())
+}
+
+pub fn dispute(
+    env: &Env,
+    member: &Address,
+    evidence_hash: &BytesN<32>,
+) -> Result<(), CircleError> {
+    raise_dispute(env, member, evidence_hash)
 }
 /// Resolves an active dispute and restores circle to ACTIVE status.
 ///
@@ -1436,14 +1544,13 @@ pub fn batch_invite(
     env.storage()
         .instance()
         .set(&DataKey::Circle, &stored_circle);
-    for mi in 0..members.len() {
-        let member = members.get(mi).ok_or(CircleError::VecAccessError)?;
-        let pos = members_vec.get(mi).map(|m| m.position).unwrap_or(0);
+    for mi in 0..members_vec.len() {
+        let member = members_vec.get(mi).ok_or(CircleError::VecAccessError)?;
         env.events().publish(
             (env.current_contract_address(), symbol_short!("joined")),
             MemberJoined {
-                member: member.clone(),
-                position: pos,
+                member: member.address.clone(),
+                position: member.position,
             },
         );
     }
@@ -1732,6 +1839,23 @@ pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), Circ
     env.storage().instance().set(&DataKey::Circle, &circle);
     Ok(())
 }
+pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    admin.require_auth();
+    if fee_bps > 10_000 {
+        return Err(CircleError::InvalidAmount);
+    }
+    env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+    Ok(())
+}
+
 /// Sets the allowlist of addresses permitted to join the circle.
 ///
 /// # Parameters
@@ -1757,11 +1881,6 @@ pub fn set_allowlist(
     admin: &Address,
     allowlist: Vec<Address>,
 ) -> Result<(), CircleError> {
-    admin.require_auth();
-    env.storage().instance().set(&DataKey::Token, token);
-    Ok(())
-}
-pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
         .instance()
@@ -1771,30 +1890,12 @@ pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), Circl
         return Err(CircleError::Unauthorized);
     }
     admin.require_auth();
-    if fee_bps > 10_000 {
-        return Err(CircleError::InvalidAmount);
-    }
-    env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
-    Ok(())
-}
-pub fn set_allowlist(
-    env: &Env,
-    admin: &Address,
-    allowlist: Vec<Address>,
-) -> Result<(), CircleError> {
-    let s: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .ok_or(CircleError::NotInitialized)?;
-    if admin != &s {
-        return Err(CircleError::Unauthorized);
-    }
     env.storage()
-        .instance()
+        .persistent()
         .set(&DataKey::Allowlist, &allowlist);
     Ok(())
 }
+
 /// Returns the current allowlist of addresses permitted to join.
 ///
 /// # Parameters
@@ -1807,29 +1908,11 @@ pub fn set_allowlist(
 /// Never panics. Returns empty vector if allowlist is not configured.
 pub fn get_allowlist(env: &Env) -> Vec<Address> {
     env.storage()
-        .instance()
-        .get(&DataKey::Allowlist)
-        .unwrap_or_else(|| Vec::new(env))
-}
-pub fn set_reputation_registry(
-    env: &Env,
-    admin: &Address,
-    registry: &Address,
-) -> Result<(), CircleError> {
-    admin.require_auth();
-    env.storage().persistent().set(&DataKey::Allowlist, &allowlist);
-    admin.require_auth();
-    env.storage()
-        .persistent()
-        .set(&DataKey::Allowlist, &allowlist);
-    Ok(())
-}
-pub fn get_allowlist(env: &Env) -> Vec<Address> {
-    env.storage()
         .persistent()
         .get(&DataKey::Allowlist)
         .unwrap_or_else(|| Vec::new(env))
 }
+
 pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
@@ -1839,12 +1922,11 @@ pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), Ci
     if admin != &s {
         return Err(CircleError::Unauthorized);
     }
-    env.storage().instance().set(&DataKey::Factory, registry);
+    admin.require_auth();
+    oracle::set_primary_oracle(env, oracle);
     Ok(())
 }
-pub fn get_reputation_registry(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::Factory)
-}
+
 pub fn register_referral(
     _env: &Env,
     _referrer: &Address,
@@ -1853,6 +1935,7 @@ pub fn register_referral(
 ) -> Result<(), CircleError> {
     Ok(())
 }
+
 pub fn claim_referral_bonus(
     _env: &Env,
     _referrer: &Address,
@@ -1860,9 +1943,11 @@ pub fn claim_referral_bonus(
 ) -> Result<(), CircleError> {
     Ok(())
 }
+
 pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
     Ok(())
 }
+
 pub fn claim_streak_bonus(
     _env: &Env,
     _member: &Address,
@@ -1870,22 +1955,24 @@ pub fn claim_streak_bonus(
 ) -> Result<(), CircleError> {
     Ok(())
 }
+
 pub fn get_referrals(env: &Env) -> Vec<Referral> {
     Vec::new(env)
 }
+
 pub fn get_streaks(env: &Env) -> Vec<Streak> {
     Vec::new(env)
 }
-pub fn get_member_streak(env: &Env, _member: &Address) -> Streak {
+
+pub fn get_member_streak(_env: &Env, member: &Address) -> Streak {
     Streak {
-        member: env.current_contract_address(),
-        count: 0,
+        member: member.clone(),
+        current_streak: 0,
+        longest_streak: 0,
         last_round: 0,
     }
-    admin.require_auth();
-    oracle::set_primary_oracle(env, oracle);
-    Ok(())
 }
+
 pub fn set_fallback_oracle(
     env: &Env,
     admin: &Address,
@@ -1903,9 +1990,11 @@ pub fn set_fallback_oracle(
     oracle::set_fallback_oracle(env, oracle);
     Ok(())
 }
+
 pub fn get_oracle(env: &Env) -> Option<Address> {
     oracle::get_primary_oracle(env)
 }
+
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
 }
