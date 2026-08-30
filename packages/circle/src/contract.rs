@@ -516,7 +516,7 @@ pub fn register_referral(env: &Env, referrer: &Address, referred: &Address, bonu
     Ok(())
 }
 
-pub fn claim_referral_bonus(env: &Env, referrer: &Address, _treasury: &Address) -> Result<(), CircleError> {
+pub fn claim_referral_bonus(env: &Env, referrer: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     referrer.require_auth();
@@ -545,6 +545,15 @@ pub fn claim_referral_bonus(env: &Env, referrer: &Address, _treasury: &Address) 
         return Err(CircleError::InvalidAmount);
     }
     env.storage().persistent().set(&DataKey::Referrals, &referrals);
+
+    // Transfer bonus tokens from treasury to referrer via SEP-41 token contract.
+    // The treasury address must have pre-authorised this contract (or mock_all_auths
+    // must be active in tests) for the transfer call to succeed.
+    let treasury: Address = env.storage().instance().get(&DataKey::Treasury).ok_or(CircleError::TreasuryNotConfigured)?;
+    let token_addr: Address = env.storage().instance().get(&DataKey::Token).ok_or(CircleError::TokenNotConfigured)?;
+    let token = soroban_sdk::token::Client::new(env, &token_addr);
+    token.transfer(&treasury, referrer, &bonus_total);
+
     ReferralBonusPaid { referrer: referrer.clone(), amount: bonus_total }.publish(env);
     Ok(())
 }
@@ -578,7 +587,7 @@ pub fn update_streak(env: &Env, member: &Address, round: u32) -> Result<(), Circ
     Ok(())
 }
 
-pub fn claim_streak_bonus(env: &Env, member: &Address, _treasury: &Address) -> Result<(), CircleError> {
+pub fn claim_streak_bonus(env: &Env, member: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     member.require_auth();
@@ -600,6 +609,15 @@ pub fn claim_streak_bonus(env: &Env, member: &Address, _treasury: &Address) -> R
     }
     let bonus = math::safe_mul(circle.contribution_amount, streak_val as i128).map_err(|_| CircleError::InvalidAmount)?;
     let bonus_div = math::safe_div(bonus, 100).map_err(|_| CircleError::InvalidAmount)?;
+
+    // Transfer bonus tokens from treasury to member via SEP-41 token contract.
+    // The treasury address must have pre-authorised this contract (or mock_all_auths
+    // must be active in tests) for the transfer call to succeed.
+    let treasury: Address = env.storage().instance().get(&DataKey::Treasury).ok_or(CircleError::TreasuryNotConfigured)?;
+    let token_addr: Address = env.storage().instance().get(&DataKey::Token).ok_or(CircleError::TokenNotConfigured)?;
+    let token = soroban_sdk::token::Client::new(env, &token_addr);
+    token.transfer(&treasury, member, &bonus_div);
+
     StreakBonusPaid { member: member.clone(), amount: bonus_div, streak: streak_val }.publish(env);
     Ok(())
 }

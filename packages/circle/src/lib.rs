@@ -22,9 +22,9 @@ pub use types::{PayoutType, CircleStatus, MemberStatus, DisputeResolution, Circl
     pub fn pause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::pause_circle(&env,&admin)}
     pub fn unpause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::unpause_circle(&env,&admin)}
     pub fn register_referral(env:Env,referrer:Address,referred:Address,bonus_pct:u32)->Result<(),types::CircleError>{contract::register_referral(&env,&referrer,&referred,bonus_pct)}
-    pub fn claim_referral_bonus(env:Env,referrer:Address,treasury:Address)->Result<(),types::CircleError>{contract::claim_referral_bonus(&env,&referrer,&treasury)}
+    pub fn claim_referral_bonus(env:Env,referrer:Address)->Result<(),types::CircleError>{contract::claim_referral_bonus(&env,&referrer)}
     pub fn update_streak(env:Env,member:Address,round:u32)->Result<(),types::CircleError>{contract::update_streak(&env,&member,round)}
-    pub fn claim_streak_bonus(env:Env,member:Address,treasury:Address)->Result<(),types::CircleError>{contract::claim_streak_bonus(&env,&member,&treasury)}
+    pub fn claim_streak_bonus(env:Env,member:Address)->Result<(),types::CircleError>{contract::claim_streak_bonus(&env,&member)}
     pub fn get_referrals(env:Env)->soroban_sdk::Vec<types::Referral>{contract::get_referrals(&env)}
     pub fn get_streaks(env:Env)->soroban_sdk::Vec<types::Streak>{contract::get_streaks(&env)}
     pub fn get_member_streak(env:Env,member:Address)->types::Streak{contract::get_member_streak(&env,&member)}
