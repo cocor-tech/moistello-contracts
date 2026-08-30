@@ -17,6 +17,7 @@ use soroban_sdk::{contract,contractimpl,Address,BytesN,Env,Vec};
     pub fn get_proposals(env:Env,status:types::ProposalStatus,limit:u32)->Vec<types::Proposal>{contract::get_proposals(&env,status,limit)}
     pub fn get_vote(env:Env,proposal_id:u64,voter:Address)->Option<types::VoteRecord>{contract::get_vote(&env,proposal_id,&voter)}
     pub fn get_vote_power(env:Env,voter:Address)->i128{contract::get_vote_power(&env,&voter)}
+    pub fn set_staking_contract(env:Env,admin:Address,staking:Address)->Result<(),types::GovernanceError>{contract::set_staking_contract(&env,&admin,&staking)}
     pub fn get_config(env:Env)->Result<types::GovernanceConfig,types::GovernanceError>{contract::get_config(&env)}
     pub fn pause(env:Env,admin:Address)->Result<(),types::GovernanceError>{contract::pause(&env,&admin)}
     pub fn unpause(env:Env,admin:Address)->Result<(),types::GovernanceError>{contract::unpause(&env,&admin)}

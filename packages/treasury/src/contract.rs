@@ -96,6 +96,7 @@ pub fn withdraw(
     amount: i128,
 ) -> Result<(), TreasuryError> {
     pause::when_not_paused(env).map_err(|_| TreasuryError::ContractPaused)?;
+    let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| TreasuryError::Unauthorized)?;
     require_admin(env, admin)?;
     if amount <= 0 {
         return Err(TreasuryError::InvalidAmount);
@@ -159,6 +160,7 @@ pub fn rescue_tokens(
     amount: i128,
 ) -> Result<(), TreasuryError> {
     require_admin(env, admin)?;
+    let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| TreasuryError::Unauthorized)?;
     if !pause::is_paused(env) {
         return Err(TreasuryError::ContractNotPaused);
     }
