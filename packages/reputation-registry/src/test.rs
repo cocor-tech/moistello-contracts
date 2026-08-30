@@ -178,11 +178,11 @@ fn test_pause_blocks_record() {
     let (client, admin) = setup(&env);
     let user = Address::generate(&env);
 
-    client.pause(&admin);
+    client.pause_registry(&admin);
     let result = client.try_record_activity(&user, &ACTIVITY_JOIN, &100);
     assert_eq!(result, Err(Ok(ReputationError::ContractPaused)));
 
-    client.unpause(&admin);
+    client.unpause_registry(&admin);
     assert!(client.try_record_activity(&user, &ACTIVITY_JOIN, &100).is_ok());
 }
 
@@ -192,7 +192,7 @@ fn test_pause_unauthorized() {
     let (client, _admin) = setup(&env);
     let stranger = Address::generate(&env);
 
-    let result = client.try_pause(&stranger);
+    let result = client.try_pause_registry(&stranger);
     assert!(result.is_err());
 }
 
@@ -202,10 +202,10 @@ fn test_pause_blocks_get_score() {
     let (client, admin) = setup(&env);
     let user = Address::generate(&env);
 
-    client.pause(&admin);
+    client.pause_registry(&admin);
     let result = client.try_get_score(&user);
     assert_eq!(result, Err(Ok(ReputationError::ContractPaused)));
 
-    client.unpause(&admin);
+    client.unpause_registry(&admin);
     assert!(client.try_get_score(&user).is_ok());
 }

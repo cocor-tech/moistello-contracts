@@ -31,7 +31,7 @@ pub struct CircleCompleted{pub total_payouts:i128}
 #[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum PayoutType{Random=0,Fixed=1,Auction=2,Vote=3}
 #[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum CircleStatus{Pending=0,Active=1,Completed=2,Cancelled=3,Disputed=4}
 #[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum MemberStatus{Active=0,Exited=1,Defaulted=2}
-#[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum DisputeResolution{Dismiss=1,Penalize=2,ForcePayout=3}
+#[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum DisputeResolution{Dismiss=1,Penalize=2,ForcePayout=3,Refund=4}
 #[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum CircleFrequency{Daily=0,Weekly=1,Biweekly=2,Monthly=3}
 #[contracttype]#[derive(Clone,Debug)]pub struct Referral{pub referrer:Address,pub referred:Address,pub bonus_pct:u32,pub timestamp:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct Streak{pub member:Address,pub current_streak:u32,pub longest_streak:u32,pub last_round:u32}
