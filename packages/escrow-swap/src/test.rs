@@ -12,6 +12,10 @@ mod tests {
         env.crypto().sha256(&secret).into()
     }
 
+    fn setup_token(env: &Env, admin: &Address) -> Address {
+        env.register_stellar_asset_contract(admin.clone())
+    }
+
     #[test]
     fn test_create_swap() {
         let env = Env::default();
@@ -19,11 +23,20 @@ mod tests {
         let admin = Address::generate(&env);
         let contract_id = env.register(EscrowSwap, EscrowSwapArgs::__constructor(&admin));
         let client = escrow_swap::EscrowSwapClient::new(&env, &contract_id);
+        
+        let token_a = setup_token(&env, &admin);
+        let token_b = setup_token(&env, &admin);
+        let token_a_client = soroban_sdk::token::Client::new(&env, &token_a);
+        
         let initiator = Address::generate(&env);
         let responder = Address::generate(&env);
+        
+        let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_a);
+        token_a_admin.mint(&initiator, &100_0000000i128);
+
         let hash_lock = create_hash_lock(&env);
         let time_lock = env.ledger().timestamp() + 3600;
-        assert!(client.try_create_swap(&initiator, &responder, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).is_ok());
+        assert!(client.try_create_swap(&initiator, &responder, &token_a, &token_b, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).is_ok());
     }
 
     #[test]
@@ -33,11 +46,15 @@ mod tests {
         let admin = Address::generate(&env);
         let contract_id = env.register(EscrowSwap, EscrowSwapArgs::__constructor(&admin));
         let client = escrow_swap::EscrowSwapClient::new(&env, &contract_id);
+        
+        let token_a = setup_token(&env, &admin);
+        let token_b = setup_token(&env, &admin);
+
         let initiator = Address::generate(&env);
         let responder = Address::generate(&env);
         let hash_lock = create_hash_lock(&env);
         let time_lock = env.ledger().timestamp() + 3600;
-        assert!(client.try_create_swap(&initiator, &responder, &0i128, &200_0000000i128, &hash_lock, &time_lock).is_err());
+        assert!(client.try_create_swap(&initiator, &responder, &token_a, &token_b, &0i128, &200_0000000i128, &hash_lock, &time_lock).is_err());
     }
 
     #[test]
@@ -47,10 +64,14 @@ mod tests {
         let admin = Address::generate(&env);
         let contract_id = env.register(EscrowSwap, EscrowSwapArgs::__constructor(&admin));
         let client = escrow_swap::EscrowSwapClient::new(&env, &contract_id);
+        
+        let token_a = setup_token(&env, &admin);
+        let token_b = setup_token(&env, &admin);
+
         let initiator = Address::generate(&env);
         let hash_lock = create_hash_lock(&env);
         let time_lock = env.ledger().timestamp() + 3600;
-        assert!(client.try_create_swap(&initiator, &initiator, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).is_err());
+        assert!(client.try_create_swap(&initiator, &initiator, &token_a, &token_b, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).is_err());
     }
 
     #[test]
@@ -60,11 +81,19 @@ mod tests {
         let admin = Address::generate(&env);
         let contract_id = env.register(EscrowSwap, EscrowSwapArgs::__constructor(&admin));
         let client = escrow_swap::EscrowSwapClient::new(&env, &contract_id);
+        
+        let token_a = setup_token(&env, &admin);
+        let token_b = setup_token(&env, &admin);
+
         let initiator = Address::generate(&env);
         let responder = Address::generate(&env);
+        
+        let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_a);
+        token_a_admin.mint(&initiator, &100_0000000i128);
+
         let hash_lock = create_hash_lock(&env);
         let time_lock = env.ledger().timestamp() + 3600;
-        let _ = client.try_create_swap(&initiator, &responder, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).unwrap();
+        let _ = client.try_create_swap(&initiator, &responder, &token_a, &token_b, &100_0000000i128, &200_0000000i128, &hash_lock, &time_lock).unwrap();
         let swaps = client.get_swaps();
         assert_eq!(swaps.len(), 1);
     }
