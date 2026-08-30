@@ -264,11 +264,22 @@ pub fn contribute(
         .persistent()
         .get(&DataKey::Contributions)
         .unwrap_or_else(|| Vec::new(env));
-    for i in 0..contributions.len() {
-        let c = contributions.get(i).ok_or(CircleError::VecAccessError)?;
-        if c.member == *member && c.round == round {
-            return Err(CircleError::AlreadyContributed);
-        }
+    let mut contribution_map: Map<(Address, u32), bool> = env
+        .storage()
+        .persistent()
+        .get(&symbol_short!("contribs"))
+        .unwrap_or_else(|| {
+            let mut m = Map::new(env);
+            for i in 0..contributions.len() {
+                if let Some(c) = contributions.get(i) {
+                    m.set((c.member.clone(), c.round), true);
+                }
+            }
+            env.storage().persistent().set(&symbol_short!("contribs"), &m);
+            m
+        });
+    if contribution_map.get((member.clone(), round)).unwrap_or(false) {
+        return Err(CircleError::AlreadyContributed);
     }
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     token_client.transfer(member, &circle.id, &amount);
@@ -290,6 +301,10 @@ pub fn contribute(
     env.storage()
         .persistent()
         .set(&DataKey::Contributions, &contributions);
+    contribution_map.set((member.clone(), round), true);
+    env.storage()
+        .persistent()
+        .set(&symbol_short!("contribs"), &contribution_map);
     env.events().publish(
         (env.current_contract_address(), symbol_short!("contrib")),
         ContributionRecorded {
