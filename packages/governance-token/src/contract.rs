@@ -102,7 +102,12 @@ pub fn approve(
     expiration_ledger: u32,
 ) -> Result<(), TokenError> {
     owner.require_auth();
+    // Reject negative amounts and zero amounts (#257)
+    // Zero-approval wastes storage; use it only to revoke allowances
     if amount < 0 {
+        return Err(TokenError::InvalidAmount);
+    }
+    if amount == 0 && expiration_ledger > 0 {
         return Err(TokenError::InvalidAmount);
     }
     let mut allowances: Map<(Address, Address), AllowanceData> = env.storage().persistent().get(&ALLOWANCES_KEY).ok_or(TokenError::NotInitialized)?;
