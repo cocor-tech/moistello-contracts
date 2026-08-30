@@ -53,17 +53,18 @@ fn test_init_stores_admin_and_config() {
     client.init(&admin, &300i128, &wh);
 
     assert_eq!(client.get_circle_count(), 0);
-    let fc = client.get_fee_config().unwrap();
+    let fc = client.get_fee_config();
     assert_eq!(fc.fee_bps, 300);
 }
 
 #[test]
-fn test_get_fee_config_returns_none_when_uninitialized() {
+fn test_get_fee_config_returns_default_when_uninitialized() {
     let env = Env::default();
     let contract_id = env.register(CircleFactory, ());
     let client = CircleFactoryClient::new(&env, &contract_id);
 
-    assert_eq!(client.get_fee_config(), None);
+    let fc = client.get_fee_config();
+    assert_eq!(fc.fee_bps, 0);
 }
 
 #[test]
@@ -126,12 +127,6 @@ fn test_deploy_circle_emits_event() {
     let organizer = Address::generate(&env);
 
     client.deploy_circle(&sample_config(&env, &organizer));
-
-    // let events = env.events().all();
-    // let last
-    // let (_id, topics, _data)
-    // let topic0
-    // assert_eq
 }
 
 #[test]
@@ -149,7 +144,7 @@ fn test_set_fee_config_updates() {
 
     client.set_fee_config(&admin, &750i128);
 
-    let fc = client.get_fee_config().unwrap();
+    let fc = client.get_fee_config();
     assert_eq!(fc.fee_bps, 750);
 }
 

@@ -174,7 +174,6 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
         total_contributions: 0,
         total_received: 0,
     });
-    circle.member_count = circle.member_count.wrapping_add(1);
     circle.member_count = circle
         .member_count
         .checked_add(1)
@@ -287,7 +286,6 @@ pub fn contribute(
     let on_time = now
         <= circle
             .started_at
-            .wrapping_add(circle.contribution_deadline_seconds);
             .checked_add(circle.contribution_deadline_seconds)
             .ok_or(CircleError::InvalidAmount)?;
     contributions.push_back(Contribution {
@@ -1221,7 +1219,6 @@ pub fn get_members(env: &Env) -> Vec<Member> {
 ///
 /// # Panics
 /// Never panics. Returns empty vector if member has made no contributions.
-pub fn get_contributions(env: &Env, member: &Address) -> Vec<Contribution> {
 pub fn get_contributions(
     env: &Env,
     member: &Address,
@@ -1234,10 +1231,16 @@ pub fn get_contributions(
         .get(&DataKey::Contributions)
         .unwrap_or_else(|| Vec::new(env));
     let mut out = Vec::new(env);
+    let start = page.saturating_mul(page_size);
+    let end = start.saturating_add(page_size);
+    let mut count = 0u32;
     for i in 0..all.len() {
         if let Some(c) = all.get(i) {
             if c.member == *member {
-                out.push_back(c);
+                if count >= start && count < end {
+                    out.push_back(c);
+                }
+                count += 1;
             }
         }
     }
@@ -1399,21 +1402,6 @@ pub fn get_pending_payout(env: &Env, member: &Address) -> Option<i128> {
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
-    let start = page.saturating_mul(page_size);
-    let end = start.saturating_add(page_size);
-    let mut count = 0;
-    for i in 0..all.len() {
-        if let Some(c) = all.get(i) {
-            if c.member == *member {
-                if count >= start && count < end {
-                    out.push_back(c);
-                }
-                count += 1;
-            }
-        }
-    }
-    out
-}
 pub fn pause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
@@ -1716,7 +1704,6 @@ pub fn register_referral(
 pub fn claim_referral_bonus(
     env: &Env,
     referrer: &Address,
-    _treasury: &Address,
 ) -> Result<(), CircleError> {
     let token_address: Address = env
         .storage()
@@ -1737,7 +1724,6 @@ pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), C
 pub fn claim_streak_bonus(
     env: &Env,
     member: &Address,
-    _treasury: &Address,
 ) -> Result<(), CircleError> {
     let token_address: Address = env
         .storage()
@@ -1925,52 +1911,6 @@ pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), Ci
     admin.require_auth();
     oracle::set_primary_oracle(env, oracle);
     Ok(())
-}
-
-pub fn register_referral(
-    _env: &Env,
-    _referrer: &Address,
-    _referred: &Address,
-    _bonus_pct: u32,
-) -> Result<(), CircleError> {
-    Ok(())
-}
-
-pub fn claim_referral_bonus(
-    _env: &Env,
-    _referrer: &Address,
-    _treasury: &Address,
-) -> Result<(), CircleError> {
-    Ok(())
-}
-
-pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
-    Ok(())
-}
-
-pub fn claim_streak_bonus(
-    _env: &Env,
-    _member: &Address,
-    _treasury: &Address,
-) -> Result<(), CircleError> {
-    Ok(())
-}
-
-pub fn get_referrals(env: &Env) -> Vec<Referral> {
-    Vec::new(env)
-}
-
-pub fn get_streaks(env: &Env) -> Vec<Streak> {
-    Vec::new(env)
-}
-
-pub fn get_member_streak(_env: &Env, member: &Address) -> Streak {
-    Streak {
-        member: member.clone(),
-        current_streak: 0,
-        longest_streak: 0,
-        last_round: 0,
-    }
 }
 
 pub fn set_fallback_oracle(

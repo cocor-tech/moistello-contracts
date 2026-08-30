@@ -62,14 +62,11 @@ mod tests {
 
         // Deploy a mock SEP-41 token using the stellar asset contract helper
         let token_admin = Address::generate(env);
-        let token_id = env.register_stellar_asset_contract(token_admin.clone());
-        let token_client = TokenClient::new(env, &token_id);
+        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_id = token_contract.address();
 
         // Use a separate address as the treasury (holds bonus funds)
         let treasury = Address::generate(env);
-
-        // Mint a large supply to the treasury so it can fund bonuses
-        token_client.mint(&treasury, &1_000_000_000_0000i128);
 
         env.mock_all_auths();
 

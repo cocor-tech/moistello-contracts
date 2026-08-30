@@ -81,7 +81,7 @@ fn test_large_circle_100_members_50_rounds() {
 
     // 5. Verify all members have contribution records
     let first_member = members.get(0).unwrap();
-    let contributions = client.get_contributions(&first_member);
+    let contributions = client.get_contributions(&first_member, &0, &100);
     assert_eq!(contributions.len(), 50); // 50 contributions
 }
 
@@ -210,7 +210,7 @@ fn test_storage_scaling_50_members_100_rounds() {
 
     // Verify contribution storage: 50 members * 100 rounds = 5000 contribution records
     let first_member = members.get(0).unwrap();
-    let contributions = client.get_contributions(&first_member);
+    let contributions = client.get_contributions(&first_member, &0, &100);
     assert_eq!(contributions.len(), 100);
 }
 

@@ -24,11 +24,6 @@ pub fn increment_streak(env: &Env, member: &Address, circle_id: &Address) {
     env.storage().persistent().set(&DataKey::Streak(member.clone(), circle_id.clone()), &(current + 1));
 }
 
-/// Reset streak to 0
-pub fn reset_streak(env: &Env, member: &Address, circle_id: &Address) {
-    env.storage().persistent().set(&DataKey::Streak(member.clone(), circle_id.clone()), &0u32);
-}
-
 /// Get number of completed circles
 pub fn get_completions(env: &Env, member: &Address) -> u32 {
     env.storage().persistent().get(&DataKey::Completions(member.clone()))
