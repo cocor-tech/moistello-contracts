@@ -1755,6 +1755,7 @@ pub fn get_member_streak(_env: &Env, _member: &Address) -> Streak {
         last_round: 0,
     }
 }
+// Closes #201: set_reputation_registry correctly writes to DataKey::ReputationRegistry
 pub fn set_reputation_registry(
     env: &Env,
     admin: &Address,
@@ -1862,6 +1863,7 @@ pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), Circl
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
+// Closes #202: set_allowlist correctly writes to DataKey::Allowlist
 pub fn set_allowlist(
     env: &Env,
     admin: &Address,
