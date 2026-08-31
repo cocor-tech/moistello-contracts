@@ -466,3 +466,13 @@ fn test_get_unbonding_period_seconds() {
     let staking_client = deploy_staking_contract(&env, &admin, &token);
     assert_eq!(staking_client.get_unbonding_period_seconds(), UNBONDING_PERIOD_SECONDS);
 }
+
+#[test]
+fn test_staking_period_try_from_u32() {
+    assert_eq!(StakingPeriod::try_from_u32(1), Ok(StakingPeriod::OneMonth));
+    assert_eq!(StakingPeriod::try_from_u32(3), Ok(StakingPeriod::ThreeMonths));
+    assert_eq!(StakingPeriod::try_from_u32(6), Ok(StakingPeriod::SixMonths));
+    assert_eq!(StakingPeriod::try_from_u32(12), Ok(StakingPeriod::TwelveMonths));
+    assert_eq!(StakingPeriod::try_from_u32(2), Err(StakingError::InvalidPeriod));
+    assert_eq!(StakingPeriod::try_from_u32(24), Err(StakingError::InvalidPeriod));
+}

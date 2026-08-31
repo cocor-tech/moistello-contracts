@@ -244,6 +244,11 @@ pub fn set_admin(env: &Env, admin: &Address, new_admin: &Address) -> Result<(), 
     admin.require_auth();
     require_admin(env, admin)?;
     env.storage().instance().set(&ADMIN_KEY, new_admin);
+    AdminChanged {
+        old_admin: admin.clone(),
+        new_admin: new_admin.clone(),
+    }
+    .publish(env);
     Ok(())
 }
 

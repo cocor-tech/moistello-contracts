@@ -43,8 +43,7 @@ pub fn stake(
     }
     
     // Validate and convert period
-    let period = StakingPeriod::from_u32(period_months)
-        .ok_or(StakingError::InvalidPeriod)?;
+    let period = StakingPeriod::try_from_u32(period_months)?;
     
     // Check if user already has an active stake
     if env.storage().instance().has(&DataKey::Stake(user.clone())) {
