@@ -30,6 +30,7 @@ pub enum TokenError {
     ContractPaused = 10,
     Underflow = 11,
     Frozen = 12,
+    AlreadyInitialized = 13,
 }
 
 #[contractevent]

@@ -49,7 +49,7 @@ mod tests {
             &String::from_str(&env, "TK2"),
             &7u32,
         );
-        assert!(result.is_err());
+        assert_eq!(result, Err(Ok(crate::types::TokenError::AlreadyInitialized)));
     }
 
     #[test]
