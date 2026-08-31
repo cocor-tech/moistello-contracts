@@ -1,6 +1,8 @@
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Val, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::token::Client as TokenClient;
 
 #[contracttype]
 pub enum DataKey {
@@ -168,5 +170,78 @@ impl GovernanceContract {
                 panic!("Proposal execution failed; retry count incremented");
             }
         }
+    }
+}
+
+
+#[contracttype]
+pub enum DataKey {
+    GovernanceToken,
+    Deposit(u64),
+    Proposer(u64),
+    ProposalStatus(u64),
+}
+
+#[contract]
+pub struct GovernanceContract;
+
+#[contractimpl]
+impl GovernanceContract {
+    pub fn cancel_proposal(env: Env, proposer: Address, proposal_id: u64) {
+        proposer.require_auth();
+
+        let stored_proposer: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proposer(proposal_id))
+            .unwrap_or_else(|| panic!("Proposal not found"));
+
+        if proposer != stored_proposer {
+            panic!("Only the proposer can cancel this proposal");
+        }
+
+        let status: Symbol = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposalStatus(proposal_id))
+            .unwrap_or_else(|| panic!("Proposal status not found"));
+
+        if status != Symbol::new(&env, "Active") {
+            panic!("Proposal is not active and cannot be cancelled");
+        }
+
+        let deposit_amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Deposit(proposal_id))
+            .unwrap_or(0);
+
+        if deposit_amount > 0 {
+            let token: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::GovernanceToken)
+                .unwrap_or_else(|| panic!("Governance token not configured"));
+            
+            let token_client = TokenClient::new(&env, &token);
+
+            // FIX: Actually transfer deposited tokens back from contract to proposer upon cancellation
+            token_client.transfer(
+                &env.current_contract_address(),
+                &proposer,
+                &deposit_amount,
+            );
+        }
+
+        env.storage().persistent().remove(&DataKey::Deposit(proposal_id));
+        env.storage().persistent().set(
+            &DataKey::ProposalStatus(proposal_id),
+            &Symbol::new(&env, "Cancelled"),
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "ProposalCancelled"), proposal_id),
+            (proposer, deposit_amount),
+        );
     }
 }
