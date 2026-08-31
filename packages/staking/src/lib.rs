@@ -74,6 +74,11 @@ impl Staking {
     pub fn update_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), types::StakingError> {
         contract::update_admin(&env, &current_admin, &new_admin)
     }
+
+    /// Returns the unbonding period duration in seconds (14 days).
+    pub fn get_unbonding_period_seconds(env: Env) -> u64 {
+        contract::get_unbonding_period_seconds(&env)
+    }
 }
 
 #[cfg(test)]

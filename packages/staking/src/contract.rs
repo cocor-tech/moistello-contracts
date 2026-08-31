@@ -365,3 +365,8 @@ pub fn update_admin(env: &Env, current_admin: &Address, new_admin: &Address) -> 
     env.storage().instance().set(&DataKey::Admin, new_admin);
     Ok(())
 }
+
+/// Returns the unbonding period duration in seconds (14 days).
+pub fn get_unbonding_period_seconds(_env: &Env) -> u64 {
+    UNBONDING_PERIOD_SECONDS
+}

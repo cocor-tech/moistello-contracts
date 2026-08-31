@@ -209,3 +209,34 @@ fn test_pause_blocks_get_score() {
     client.unpause_registry(&admin);
     assert!(client.try_get_score(&user).is_ok());
 }
+
+#[test]
+fn test_storage_increment_saturating() {
+    let env = Env::default();
+    let contract_id = env.register(ReputationRegistry, ());
+    let member = Address::generate(&env);
+    let circle_id = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&crate::types::DataKey::Streak(member.clone(), circle_id.clone()), &u32::MAX);
+        crate::storage::increment_streak(&env, &member, &circle_id);
+        assert_eq!(crate::storage::get_streak(&env, &member, &circle_id), u32::MAX);
+
+        env.storage().persistent().set(&crate::types::DataKey::Completions(member.clone()), &u32::MAX);
+        crate::storage::increment_completions(&env, &member);
+        assert_eq!(crate::storage::get_completions(&env, &member), u32::MAX);
+
+        env.storage().persistent().set(&crate::types::DataKey::Defaults(member.clone()), &u32::MAX);
+        crate::storage::increment_defaults(&env, &member);
+        assert_eq!(crate::storage::get_defaults(&env, &member), u32::MAX);
+    });
+}
+
+#[test]
+#[should_panic(expected = "amount must be non-negative")]
+fn test_record_on_time_payment_negative_amount_panics() {
+    let env = Env::default();
+    let member = Address::generate(&env);
+    let circle_id = Address::generate(&env);
+    crate::scoring::record_on_time_payment(&env, &member, &circle_id, -100_0000000i128, 1);
+}
