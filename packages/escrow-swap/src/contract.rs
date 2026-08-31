@@ -16,6 +16,32 @@ pub fn init(env: &Env, admin: &Address) -> Result<(), EscrowError> {
     Ok(())
 }
 
+/// Creates a new escrow swap between two parties.
+/// 
+/// # Arguments
+/// * `env` - The contract environment
+/// * `initiator` - The address creating the swap
+/// * `responder` - The address expected to accept the swap
+/// * `token_a` - The token address deposited by the initiator
+/// * `token_b` - The token address to be deposited by the responder
+/// * `initiator_amount` - Amount of token_a to deposit (must be positive)
+/// * `responder_amount` - Amount of token_b the responder must deposit (must be positive)
+/// * `hash_lock` - SHA-256 hash of the secret that will be required to accept the swap
+/// * `time_lock` - Unix timestamp deadline for accepting the swap (must be in the future)
+/// 
+/// # Returns
+/// * `Ok(u64)` with the new swap ID if successful
+/// * `Err(EscrowError)` if any validation fails
+/// 
+/// # Validation
+/// * initiator and responder must be different addresses
+/// * initiator_amount and responder_amount must be positive
+/// * time_lock must be strictly greater than current timestamp (deadline is exclusive for creation)
+/// * The contract must not be paused
+/// 
+/// # Deadline Semantics
+/// The deadline for creation is exclusive: `time_lock <= now` is rejected.
+/// This means the swap must have a future deadline at creation time.
 pub fn create_swap(
     env: &Env,
     initiator: &Address,
@@ -80,6 +106,28 @@ pub fn create_swap(
     Ok(next_id)
 }
 
+/// Accepts a pending swap by providing the secret that matches the hash lock.
+/// 
+/// # Arguments
+/// * `env` - The contract environment
+/// * `id` - The swap ID to accept
+/// * `responder` - The address of the responder accepting the swap (must match the swap's responder)
+/// * `secret` - The secret that produces the hash lock when hashed with SHA-256
+/// 
+/// # Returns
+/// * `Ok(())` if the swap was successfully accepted
+/// * `Err(EscrowError)` if any validation fails
+/// 
+/// # Validation
+/// * The swap must be in PENDING status
+/// * The caller must be the swap's responder
+/// * The provided secret must match the swap's hash lock
+/// * The current timestamp must be strictly before the swap's time_lock (deadline is inclusive)
+/// * The contract must not be paused
+/// 
+/// # Deadline Semantics
+/// The deadline is inclusive: acceptance is rejected if `now >= time_lock`.
+/// This means the swap cannot be accepted at or after the exact deadline timestamp.
 pub fn accept_swap(env: &Env, id: u64, responder: &Address, secret: BytesN<32>) -> Result<(), EscrowError> {
     pause::when_not_paused(env).map_err(|_| EscrowError::ContractPaused)?;
     let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
@@ -103,7 +151,7 @@ pub fn accept_swap(env: &Env, id: u64, responder: &Address, secret: BytesN<32>) 
                 return Err(EscrowError::HashLockMismatch);
             }
             let now = env.ledger().timestamp();
-            if now > s.time_lock {
+            if now >= s.time_lock {
                 return Err(EscrowError::TimeLockExpired);
             }
 
