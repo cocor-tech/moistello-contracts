@@ -1,10 +1,16 @@
 
 use soroban_sdk::{contracttype, Address, String};
 
+/// Canonical CircleConfig shared across the workspace.
+///
+/// This is the single source of truth for circle creation parameters.
+/// `circle` and `circle-factory` re-export this type (see their
+/// `types.rs`) instead of defining duplicates. See #320.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct CircleConfig {
     pub organizer: Address,
+    pub token: Address,
     pub name: String,
     pub contribution_amount: i128,
     pub max_members: u32,
@@ -17,5 +23,4 @@ pub struct CircleConfig {
     pub grace_period_seconds: u64,
     pub max_strikes: u32,
     pub slug: String,
-    pub fee_bps: u32,
 }
