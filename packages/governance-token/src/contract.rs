@@ -16,7 +16,7 @@ pub fn initialize(
     decimals: u32,
 ) -> Result<(), TokenError> {
     if env.storage().instance().has(&ADMIN_KEY) {
-        return Err(TokenError::NotInitialized);
+        return Err(TokenError::AlreadyInitialized);
     }
     env.storage().instance().set(&ADMIN_KEY, admin);
     env.storage().instance().set(&META_KEY, &TokenMetadata {
