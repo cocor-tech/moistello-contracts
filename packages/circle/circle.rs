@@ -1,3 +1,5 @@
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Vec, Symbol};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 
@@ -78,5 +80,60 @@ impl CircleContract {
                 creator.clone(),
             );
         }
+    }
+}
+
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Contribution {
+    pub amount: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+pub enum DataKey {
+    Contribution(Address),
+}
+
+#[contract]
+pub struct CircleContract;
+
+#[contractimpl]
+impl CircleContract {
+    pub fn contribute(env: Env, member: Address, amount: i128) {
+        member.require_auth();
+
+        if amount <= 0 {
+            panic!("Contribution amount must be greater than zero");
+        }
+
+        let timestamp = env.ledger().timestamp();
+
+        // FIX/FEATURE: Store contribution with ledger timestamp for time-weighted calculations
+        let contribution = Contribution { amount, timestamp };
+        env.storage().persistent().set(&DataKey::Contribution(member.clone()), &contribution);
+    }
+
+    pub fn calculate_time_weighted_share(env: Env, member: Address) -> i128 {
+        let contribution: Contribution = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contribution(member.clone()))
+            .unwrap_or(Contribution { amount: 0, timestamp: 0 });
+
+        if contribution.amount == 0 {
+            return 0;
+        }
+
+        let current_time = env.ledger().timestamp();
+        if current_time <= contribution.timestamp {
+            return contribution.amount; // Default to base amount if within same ledger timestamp
+        }
+
+        let time_held = (current_time - contribution.timestamp) as i128;
+        
+        // Time-weighted score calculation: amount * time_held (seconds)
+        contribution.amount * time_held
     }
 }
