@@ -149,3 +149,5 @@ pub struct VotingPowerQueried {
     pub user: Address,
     pub voting_power: i128,
 }
+
+// aligned staking reward type definitions
