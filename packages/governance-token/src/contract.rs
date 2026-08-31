@@ -64,7 +64,7 @@ pub fn transfer_from(
     if amount <= 0 {
         return Err(TokenError::InvalidAmount);
     }
-    let allowances: Map<(Address, Address), AllowanceData> = env.storage().persistent().get(&ALLOWANCES_KEY).ok_or(TokenError::NotInitialized)?;
+    let mut allowances: Map<(Address, Address), AllowanceData> = env.storage().persistent().get(&ALLOWANCES_KEY).ok_or(TokenError::NotInitialized)?;
     let key = (from.clone(), spender.clone());
     let allowance: AllowanceData = allowances.get(key.clone()).ok_or(TokenError::Unauthorized)?;
     let current_ledger: u32 = env.ledger().sequence();
@@ -74,13 +74,12 @@ pub fn transfer_from(
     if allowance.amount < amount {
         return Err(TokenError::AllowanceExceeded);
     }
-    let mut allowances_mut = allowances;
     let new_allowance = allowance.amount.checked_sub(amount).ok_or(TokenError::Underflow)?;
-    allowances_mut.set(key, AllowanceData {
+    allowances.set(key, AllowanceData {
         amount: new_allowance,
         expiration_ledger: allowance.expiration_ledger,
     });
-    env.storage().persistent().set(&ALLOWANCES_KEY, &allowances_mut);
+    env.storage().persistent().set(&ALLOWANCES_KEY, &allowances);
     let mut balances: Map<Address, i128> = env.storage().persistent().get(&BALANCES_KEY).ok_or(TokenError::NotInitialized)?;
     let from_balance: i128 = balances.get(from.clone()).unwrap_or(0);
     if from_balance < amount {
