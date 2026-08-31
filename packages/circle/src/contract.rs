@@ -1,6 +1,9 @@
 use crate::oracle;
 use crate::payout;
 use crate::types::*;
+// Reentrancy protection comes from the shared common module — there is intentionally
+// no local reentrancy.rs in this package. See packages/common/src/reentrancy.rs for
+// the canonical implementation and the rationale for centralisation.
 use common::reentrancy::ReentrancyGuard;
 use common::{math, pause};
 use reputation_registry::scoring;
