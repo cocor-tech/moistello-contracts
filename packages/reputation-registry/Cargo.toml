@@ -9,9 +9,15 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 soroban-sdk = { workspace = true }
 common = { path = "../common" }
+# Optional serde support for off-chain JSON serialisation.  Enable via:
+#   reputation-registry = { ..., features = ["serde"] }
+# All message/response types use camelCase to match the rest of the
+# Moistello ecosystem (see circle/src/types.rs convention).
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
 
 [features]
 testutils = ["soroban-sdk/testutils"]
+serde = ["dep:serde"]
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
