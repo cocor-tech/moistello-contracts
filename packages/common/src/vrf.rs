@@ -215,11 +215,23 @@ pub fn verify_vrf(
 /// # Errors
 /// * `VrfError::NotInitialized` if `init_vrf` has not been called
 pub fn shuffle_positions(env: &Env, n: u32) -> Result<Vec<u32>, VrfError> {
+    // Build the identity permutation [0, 1, ..., n-1], then apply Fisher-Yates
+    // using VRF evaluations so every position is swapped exactly once. This
+    // produces a uniform random permutation with no duplicates or collisions
+    // (the naive modulus approach could push the same position twice).
     let mut shuffled = Vec::new(env);
     for i in 0..n {
+        shuffled.push_back(i);
+    }
+    let mut i = n;
+    while i > 1 {
+        i = i.saturating_sub(1);
         let vrf_val = evaluate_vrf(env, i)?;
-        let pos = vrf_val % n;
-        shuffled.push_back(pos);
+        let j = vrf_val % (i + 1);
+        let a = shuffled.get(i).unwrap_or(0u32);
+        let b = shuffled.get(j).unwrap_or(0u32);
+        shuffled.set(i, b);
+        shuffled.set(j, a);
     }
     Ok(shuffled)
 }
