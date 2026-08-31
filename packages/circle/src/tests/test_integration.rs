@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, BytesN, Env, String, Vec};
+use soroban_sdk::{Address, Env, String};
 
 /// Integration test: factory deploys circle -> members join -> contribute -> trigger payout -> fee sent to treasury
 /// This test is currently a stub due to circular dependencies between contracts in the test environment.
