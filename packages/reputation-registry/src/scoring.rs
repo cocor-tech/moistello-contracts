@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Address, Symbol, symbol_short};
+use soroban_sdk::{Env, Address};
 use crate::storage;
 use crate::types::{TIER_BRONZE, TIER_SILVER, TIER_GOLD, TIER_PLATINUM, TIER_DIAMOND, ACTIVITY_CONTRIBUTE, ACTIVITY_COMPLETE, ACTIVITY_DEFAULT};
 
@@ -7,24 +7,16 @@ const SCORE_GOLD: u32 = 401;
 const SCORE_PLATINUM: u32 = 601;
 const SCORE_DIAMOND: u32 = 801;
 
-/// Returns the tier for a given MoiScore
+/// Returns the numeric tier constant for a given MoiScore value.
+///
+/// Compare the result with the `TIER_*` constants from `types`:
+/// `TIER_BRONZE`, `TIER_SILVER`, `TIER_GOLD`, `TIER_PLATINUM`, `TIER_DIAMOND`.
 pub fn get_tier(score: u32) -> u32 {
     if score >= SCORE_DIAMOND { TIER_DIAMOND }
     else if score >= SCORE_PLATINUM { TIER_PLATINUM }
     else if score >= SCORE_GOLD { TIER_GOLD }
     else if score >= SCORE_SILVER { TIER_SILVER }
     else { TIER_BRONZE }
-}
-
-/// Returns the tier name as a Symbol for event emissions
-pub fn get_tier_name(score: u32) -> Symbol {
-    match get_tier(score) {
-        TIER_DIAMOND => symbol_short!("Diamond"),
-        TIER_PLATINUM => symbol_short!("Platinum"),
-        TIER_GOLD => symbol_short!("Gold"),
-        TIER_SILVER => symbol_short!("Silver"),
-        _ => symbol_short!("Bronze"),
-    }
 }
 
 /// Calculate collateral requirement in basis points based on MoiScore tier.
