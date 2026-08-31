@@ -1,3 +1,10 @@
+//! Treasury contract — all public handler functions follow the **uniform
+//! Soroban-native `&Env`-based API pattern**: every function takes `env: &Env`
+//! as its first parameter and returns `Result<_, TreasuryError>` (or a plain
+//! value for pure reads).  There are no `ExecCtx`, `QueryCtx`, or
+//! `MessageInfo` parameters; those belong to CosmWasm and must never appear
+//! here.  All mutation functions perform access-control checks first, before
+//! touching storage.
 use soroban_sdk::{symbol_short, token, Address, Env, Vec};
 
 use crate::types::*;
@@ -26,7 +33,7 @@ fn token_client<'a>(env: &'a Env) -> Result<token::Client<'a>, TreasuryError> {
 }
 
 /// Initializes the treasury contract with an admin and token address.
-pub fn init(env: &Env, admin: &Address, token: &Address) {
+pub fn init(env: &Env, admin: &Address, token: &Address) -> Result<(), TreasuryError> {
     admin.require_auth();
     env.storage().instance().set(&DataKey::Admin, admin);
     env.storage().instance().set(&DataKey::Token, token);
@@ -37,6 +44,7 @@ pub fn init(env: &Env, admin: &Address, token: &Address) {
     env.storage()
         .persistent()
         .set(&DataKey::Withdrawals, &Vec::<Withdrawal>::new(env));
+    Ok(())
 }
 
 /// Deposits fees from a circle into the treasury.

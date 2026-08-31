@@ -14,10 +14,10 @@ use soroban_sdk::{contract,contractimpl,Address,Env};
     pub fn get_moi_score(env:Env,member:Address)->u32{crate::storage::get_score(&env,&member)}
     pub fn get_moi_tier(env:Env,member:Address)->u32{scoring::get_tier(crate::storage::get_score(&env,&member))}
 
-    pub fn record_on_time_payment(env:Env,member:Address,circle_id:Address,amount:i128)->Result<u32,types::ReputationError>{
+    pub fn record_on_time_payment(env:Env,member:Address,circle_id:Address,amount:i128,round:u32)->Result<u32,types::ReputationError>{
         common::pause::when_not_paused(&env).map_err(|_|types::ReputationError::ContractPaused)?;
         member.require_auth();
-        Ok(scoring::record_on_time_payment(&env,&member,&circle_id,amount))
+        Ok(scoring::record_on_time_payment(&env,&member,&circle_id,amount,round))
     }
     pub fn record_circle_completion(env:Env,member:Address)->Result<u32,types::ReputationError>{
         common::pause::when_not_paused(&env).map_err(|_|types::ReputationError::ContractPaused)?;

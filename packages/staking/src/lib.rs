@@ -50,15 +50,16 @@ impl Staking {
         contract::get_total_staked(&env)
     }
 
-    /// Returns the raw staked amount for `user`. Returns `0` when the user
-    /// has no active stake (e.g. not staked, or currently in the unbonding
-    /// period after calling `unstake`).
+    /// Returns only the raw staked token amount for a user (0 if none).
+    /// Convenience alternative to get_stake() for callers that don't need
+    /// the full StakePosition.
     pub fn get_stake_amount(env: Env, user: Address) -> i128 {
         contract::get_stake_amount(&env, &user)
     }
 
-    /// Returns the list of all addresses that currently have an active stake.
-    pub fn get_all_stakers(env: Env) -> Vec<Address> {
+    /// Returns the list of all addresses that currently hold an active stake.
+    /// Maintained automatically by stake() / unstake().
+    pub fn get_all_stakers(env: Env) -> soroban_sdk::Vec<Address> {
         contract::get_all_stakers(&env)
     }
 

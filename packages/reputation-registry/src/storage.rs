@@ -61,3 +61,12 @@ pub fn add_activity(env: &Env, member: &Address, activity_type: u32, impact: u32
     });
     env.storage().persistent().set(&DataKey::MemberLog(member.clone()), &activities);
 }
+
+pub fn get_last_round(env: &Env, member: &Address, circle_id: &Address) -> u32 {
+    env.storage().persistent().get(&DataKey::LastRound(member.clone(), circle_id.clone()))
+        .unwrap_or(0u32)
+}
+
+pub fn set_last_round(env: &Env, member: &Address, circle_id: &Address, round: u32) {
+    env.storage().persistent().set(&DataKey::LastRound(member.clone(), circle_id.clone()), &round);
+}

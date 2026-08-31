@@ -1,4 +1,8 @@
 #![cfg_attr(not(test), no_std)]
+// Deny unused imports at the crate level so stale imports (e.g. a previously
+// re-exported `load_round_details` from payout.rs) are caught at compile time
+// rather than silently emitting warnings that can be overlooked.
+#![deny(unused_imports)]
 mod types; mod contract; mod payout; mod oracle; #[cfg(test)] mod test; #[cfg(test)] mod tests;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 

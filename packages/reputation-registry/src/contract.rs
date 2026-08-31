@@ -12,6 +12,9 @@ pub fn init(env: &Env, admin: &Address) -> Result<(), ReputationError> {
 
 pub fn record(env: &Env, user: &Address, t: u32, impact: u32) -> Result<(), ReputationError> {
     pause::when_not_paused(env).map_err(|_| ReputationError::ContractPaused)?;
+    // Trust Model (Issue #221): This function relies entirely on cross-contract calls from 
+    // trusted circle contracts for data integrity. user.require_auth() prevents arbitrary 
+    // invocation, but does not prevent inflation if called by an unverified circle contract.
     user.require_auth();
     if t > ACTIVITY_PAYOUT_RECEIVED {
         return Err(ReputationError::InvalidActivityType);

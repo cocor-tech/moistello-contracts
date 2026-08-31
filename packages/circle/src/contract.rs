@@ -1,6 +1,12 @@
 use crate::oracle;
+// `payout` is imported as a module-level path. `load_round_details` is an
+// internal helper used only within payout.rs and must NOT be re-exported here;
+// doing so would create an unused import (fixes #271).
 use crate::payout;
 use crate::types::*;
+// Reentrancy protection comes from the shared common module — there is intentionally
+// no local reentrancy.rs in this package. See packages/common/src/reentrancy.rs for
+// the canonical implementation and the rationale for centralisation.
 use common::reentrancy::ReentrancyGuard;
 use common::{math, pause};
 use reputation_registry::scoring;
@@ -312,7 +318,7 @@ pub fn contribute(
             on_time,
         },
     );
-    scoring::record_on_time_payment(env, member, &circle.id, amount);
+    scoring::record_on_time_payment(env, member, &circle.id, amount, round);
     Ok(())
 }
 /// Triggers payout for the current round based on the circle's payout type.
@@ -409,18 +415,7 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     if net <= 0 {
         return Err(CircleError::ZeroPayoutAmount);
     }
-    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
-    token_client.transfer(&circle.id, &recipient, &net);
-    if fee > 0 {
-        if let Some(treasury) = env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::Treasury)
-        {
-            token_client.transfer(&circle.id, &treasury, &fee);
-        }
-    }
-    let now = env.ledger().timestamp();
+    // Fetch yield rate for observability; zero if no oracle configured.
     let _yield_rate_bps = oracle::get_yield_rate(env, round)?;
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     let now = env.ledger().timestamp();
@@ -456,27 +451,11 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         payout_type,
         timestamp: now,
     });
-    circle.current_round = circle.current_round.wrapping_add(1);
-    circle.total_payouts =
-        math::safe_add(circle.total_payouts, net).map_err(|_| CircleError::InvalidAmount)?;
-    circle.total_fees =
-        math::safe_add(circle.total_fees, fee).map_err(|_| CircleError::InvalidAmount)?;
-    if circle.current_round >= circle.total_rounds {
-        circle.status = STATUS_COMPLETED;
-    }
     let mut members: Vec<Member> = env
         .storage()
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
-    for i in 0..members.len() {
-        let mut m = members.get(i).ok_or(CircleError::VecAccessError)?;
-        if m.address == recipient {
-            m.total_received =
-                math::safe_add(m.total_received, net).map_err(|_| CircleError::InvalidAmount)?;
-            members.set(i, m);
-        }
-    }
     let mut distributed: i128 = 0;
     let net_u = net as u128;
     for i in 0..members.len() {
@@ -719,6 +698,7 @@ pub fn vote_payout(
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
     let mut is_member = false;
+    let mut is_vote_for_member = false;
     for i in 0..members.len() {
         let m = members.get(i).ok_or(CircleError::VecAccessError)?;
         if m.address == *voter {
@@ -727,8 +707,13 @@ pub fn vote_payout(
             }
             is_member = true;
         }
+        if m.address == *vote_for {
+            if m.status == MEMBER_ACTIVE {
+                is_vote_for_member = true;
+            }
+        }
     }
-    if !is_member {
+    if !is_member || !is_vote_for_member {
         return Err(CircleError::NotMember);
     }
     let mut votes: Vec<VoteEntry> = env

@@ -2,7 +2,15 @@ use soroban_sdk::{Env, Symbol, contracterror, symbol_short};
 
 const REENTRANCY_KEY: Symbol = symbol_short!("reent");
 
-/// ReentrancyGuard prevents recursive calls to the same function.
+/// # Canonical Reentrancy Guard — use this, not a local copy
+///
+/// `ReentrancyGuard` is the **single, authoritative** reentrancy protection
+/// implementation for all Moistello contracts. Every contract that needs
+/// reentrancy protection must import this from `common::reentrancy` rather
+/// than maintaining its own local copy. This prevents security fixes from
+/// silently diverging between contracts.
+///
+/// ## How it works
 ///
 /// Uses **temporary** storage (not instance/persistent) so that if a
 /// transaction panics or runs out of gas after acquiring the lock, the
@@ -10,10 +18,25 @@ const REENTRANCY_KEY: Symbol = symbol_short!("reent");
 /// permanent contract lock. A short TTL (2 ledgers) is set explicitly
 /// so the contract is usable again within seconds.
 ///
-/// Usage:
-///   let guard = ReentrancyGuard::new(&env)?;
-///   // ... mutating logic ...
-///   drop(guard); // or let it go out of scope
+/// ## Usage
+/// ```rust
+/// use common::reentrancy::ReentrancyGuard;
+///
+/// pub fn my_mutating_fn(env: &Env) -> Result<(), MyError> {
+///     let _guard = ReentrancyGuard::new(env).map_err(|_| MyError::ReentrantCall)?;
+///     // ... mutating logic ...
+///     Ok(())
+///     // _guard dropped here — lock released automatically
+/// }
+/// ```
+///
+/// ## Why not a local copy?
+///
+/// A local `reentrancy.rs` per-contract creates a maintenance hazard: if
+/// this module receives a security fix (e.g., a TTL adjustment or storage
+/// key collision fix), every copy must be updated independently. Any missed
+/// update leaves a contract vulnerable. The common module ensures one fix
+/// protects all contracts.
 pub struct ReentrancyGuard {
     env: Env,
 }

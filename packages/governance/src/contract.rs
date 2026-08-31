@@ -1,3 +1,10 @@
+//! Governance contract — all public handler functions follow the **uniform
+//! Soroban-native `&Env`-based API pattern**: every function takes `env: &Env`
+//! as its first parameter and returns `Result<_, GovernanceError>` (or a plain
+//! value for pure reads).  There are no `ExecCtx`, `QueryCtx`, or
+//! `MessageInfo` parameters; those belong to CosmWasm and must never appear
+//! here.  All mutation functions perform access-control checks first, before
+//! touching storage.
 use soroban_sdk::{Address, BytesN, Env, Val, Vec};
 use crate::types::*;
 use common::{math, pause};

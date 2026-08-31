@@ -61,10 +61,9 @@ pub enum DataKey {
     Unbonding(Address),
     /// Total staked amount across all users
     TotalStaked,
-    /// Vec<Address> — ordered list of all currently-active stakers.
-    /// Stored in persistent storage (grows with user count).
-    /// Maintained by stake() (add) and unstake() (remove).
-    StakersList,
+    /// Ordered list of addresses with an active stake position.
+    /// Updated on stake() and unstake(). Used by get_all_stakers().
+    StakerList,
 }
 
 /// User's active staking position
