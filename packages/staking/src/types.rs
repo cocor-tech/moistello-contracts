@@ -61,6 +61,9 @@ pub enum DataKey {
     Unbonding(Address),
     /// Total staked amount across all users
     TotalStaked,
+    /// Ordered list of addresses with an active stake position.
+    /// Updated on stake() and unstake(). Used by get_all_stakers().
+    StakerList,
 }
 
 /// User's active staking position

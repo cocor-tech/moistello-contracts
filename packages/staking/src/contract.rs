@@ -1,4 +1,4 @@
-use soroban_sdk::{token, symbol_short, Address, Env};
+use soroban_sdk::{token, symbol_short, Address, Env, Vec};
 
 use crate::types::*;
 use common::pause;
@@ -18,6 +18,11 @@ pub fn init(env: &Env, admin: &Address, token: &Address) {
     
     // Initialize total staked to 0
     env.storage().instance().set(&DataKey::TotalStaked, &0i128);
+
+    // Initialize empty staker registry used by get_all_stakers()
+    env.storage()
+        .persistent()
+        .set(&DataKey::StakerList, &Vec::<Address>::new(env));
 }
 
 /// Stake MOI tokens to increase governance voting power
@@ -87,6 +92,17 @@ pub fn stake(
         .checked_add(amount)
         .ok_or(StakingError::Overflow)?;
     env.storage().instance().set(&DataKey::TotalStaked, &new_total);
+
+    // Register user in the staker list (used by get_all_stakers)
+    let mut stakers: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::StakerList)
+        .unwrap_or_else(|| Vec::new(env));
+    stakers.push_back(user.clone());
+    env.storage()
+        .persistent()
+        .set(&DataKey::StakerList, &stakers);
     
     // Emit event
     Staked {
@@ -138,6 +154,22 @@ pub fn unstake(env: &Env, user: &Address) -> Result<(), StakingError> {
     // Remove stake position
     env.storage().instance().remove(&DataKey::Stake(user.clone()));
     
+    // Remove user from staker list
+    let stakers: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::StakerList)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut updated: Vec<Address> = Vec::new(env);
+    for s in stakers.iter() {
+        if s != *user {
+            updated.push_back(s);
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::StakerList, &updated);
+
     // Update total staked
     let total_staked: i128 = env.storage().instance()
         .get(&DataKey::TotalStaked)
@@ -252,6 +284,33 @@ pub fn get_voting_power(env: &Env, user: &Address) -> i128 {
 /// Get user's stake position
 pub fn get_stake(env: &Env, user: &Address) -> Option<StakePosition> {
     env.storage().instance().get(&DataKey::Stake(user.clone()))
+}
+
+/// Get the raw staked token amount for a user.
+///
+/// Returns `0` if the user has no active stake. This is a convenience query
+/// for clients that only need the amount and not the full `StakePosition`.
+pub fn get_stake_amount(env: &Env, user: &Address) -> i128 {
+    env.storage()
+        .instance()
+        .get::<DataKey, StakePosition>(&DataKey::Stake(user.clone()))
+        .map(|pos| pos.amount)
+        .unwrap_or(0)
+}
+
+/// Return the list of all addresses that currently hold an active stake.
+///
+/// The list is maintained in persistent storage: an address is added when
+/// `stake()` is called and removed when `unstake()` is called.  Addresses
+/// in the unbonding period are therefore not included.
+///
+/// Off-chain callers can use this to iterate over active stakers, e.g. for
+/// governance snapshot builds or leaderboard queries.
+pub fn get_all_stakers(env: &Env) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::StakerList)
+        .unwrap_or_else(|| Vec::new(env))
 }
 
 /// Get user's unbonding position
