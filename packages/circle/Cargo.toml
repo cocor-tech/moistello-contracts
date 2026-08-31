@@ -24,3 +24,6 @@ rand = "0.8"
 path = '../reputation-registry'
 
 
+
+[lints]
+workspace = true

@@ -17,6 +17,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.91"
 
+[workspace.lints.rust]
+unused_imports = "deny"
+dead_code = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
 [workspace.dependencies]
 soroban-sdk = "26.0.0"
 soroban-token-sdk = "26.0.0"
