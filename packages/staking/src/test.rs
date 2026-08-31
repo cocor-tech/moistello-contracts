@@ -459,3 +459,188 @@ fn test_staking_period_from_u32() {
     assert_eq!(StakingPeriod::from_u32(2), None);
     assert_eq!(StakingPeriod::from_u32(24), None);
 }
+
+// ── Tests for get_stake_amount ────────────────────────────────────────────────
+
+/// Happy path: staking sets the correct amount readable via get_stake_amount.
+#[test]
+fn test_get_stake_amount_happy_path() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let amount = 200_0000000i128; // 200 tokens
+    client.stake(&user, &amount, &3);
+
+    assert_eq!(client.get_stake_amount(&user), amount);
+}
+
+/// No stake → get_stake_amount returns 0 (not an error).
+#[test]
+fn test_get_stake_amount_no_stake_returns_zero() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    assert_eq!(client.get_stake_amount(&user), 0);
+}
+
+/// After unstake the stake entry is removed; get_stake_amount must return 0.
+#[test]
+fn test_get_stake_amount_after_unstake_returns_zero() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    client.stake(&user, &100_0000000, &1);
+    assert_eq!(client.get_stake_amount(&user), 100_0000000);
+
+    client.unstake(&user);
+    assert_eq!(client.get_stake_amount(&user), 0);
+}
+
+/// Staking with all valid period variants returns the correct raw amount.
+#[test]
+fn test_get_stake_amount_all_periods() {
+    for period in [1u32, 3, 6, 12] {
+        let (env, admin, user, token) = setup_test_env();
+        let client = deploy_staking_contract(&env, &admin, &token);
+
+        let amount = 50_0000000i128;
+        client.stake(&user, &amount, &period);
+        // get_stake_amount returns the raw token amount regardless of multiplier
+        assert_eq!(client.get_stake_amount(&user), amount);
+    }
+}
+
+/// After the full lifecycle (stake → unstake → claim) get_stake_amount is 0.
+#[test]
+fn test_get_stake_amount_after_full_lifecycle() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    client.stake(&user, &100_0000000, &1);
+    client.unstake(&user);
+    env.ledger().set_timestamp(env.ledger().timestamp() + UNBONDING_PERIOD_SECONDS + 1);
+    client.claim(&user);
+
+    assert_eq!(client.get_stake_amount(&user), 0);
+}
+
+// ── Tests for get_all_stakers ─────────────────────────────────────────────────
+
+/// No stakers yet → get_all_stakers returns an empty list.
+#[test]
+fn test_get_all_stakers_empty() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let stakers = client.get_all_stakers();
+    assert_eq!(stakers.len(), 0);
+}
+
+/// One user stakes → get_all_stakers contains exactly that user.
+#[test]
+fn test_get_all_stakers_single_user() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    client.stake(&user, &100_0000000, &1);
+
+    let stakers = client.get_all_stakers();
+    assert_eq!(stakers.len(), 1);
+    assert_eq!(stakers.get(0).unwrap(), user);
+}
+
+/// Multiple users stake → all appear in get_all_stakers.
+#[test]
+fn test_get_all_stakers_multiple_users() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    let token_admin = StellarAssetClient::new(&env, &token);
+    token_admin.mint(&user1, &1_000_0000000);
+    token_admin.mint(&user2, &1_000_0000000);
+    token_admin.mint(&user3, &1_000_0000000);
+
+    client.stake(&user1, &100_0000000, &1);
+    client.stake(&user2, &200_0000000, &3);
+    client.stake(&user3, &300_0000000, &6);
+
+    let stakers = client.get_all_stakers();
+    assert_eq!(stakers.len(), 3);
+
+    // All three addresses must be present (order: insertion order)
+    let has_user1 = stakers.iter().any(|a| a == user1);
+    let has_user2 = stakers.iter().any(|a| a == user2);
+    let has_user3 = stakers.iter().any(|a| a == user3);
+    assert!(has_user1, "user1 not found in stakers list");
+    assert!(has_user2, "user2 not found in stakers list");
+    assert!(has_user3, "user3 not found in stakers list");
+}
+
+/// After unstake the user is removed from get_all_stakers.
+#[test]
+fn test_get_all_stakers_after_unstake_removes_entry() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    client.stake(&user, &100_0000000, &1);
+    assert_eq!(client.get_all_stakers().len(), 1);
+
+    client.unstake(&user);
+    assert_eq!(client.get_all_stakers().len(), 0);
+}
+
+/// Mixed scenario: some users unstake, others remain — list stays accurate.
+#[test]
+fn test_get_all_stakers_partial_unstake() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    let token_admin = StellarAssetClient::new(&env, &token);
+    token_admin.mint(&user1, &1_000_0000000);
+    token_admin.mint(&user2, &1_000_0000000);
+    token_admin.mint(&user3, &1_000_0000000);
+
+    client.stake(&user1, &100_0000000, &1);
+    client.stake(&user2, &100_0000000, &1);
+    client.stake(&user3, &100_0000000, &1);
+
+    // user2 unstakes
+    client.unstake(&user2);
+
+    let stakers = client.get_all_stakers();
+    assert_eq!(stakers.len(), 2);
+    assert!(stakers.iter().any(|a| a == user1), "user1 should still be in list");
+    assert!(!stakers.iter().any(|a| a == user2), "user2 should be removed");
+    assert!(stakers.iter().any(|a| a == user3), "user3 should still be in list");
+}
+
+/// Re-staking after full lifecycle adds the user back to the list.
+#[test]
+fn test_get_all_stakers_restake_after_full_lifecycle() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    // First stake cycle
+    client.stake(&user, &100_0000000, &1);
+    client.unstake(&user);
+    env.ledger().set_timestamp(env.ledger().timestamp() + UNBONDING_PERIOD_SECONDS + 1);
+    client.claim(&user);
+
+    // List should be empty after full cycle
+    assert_eq!(client.get_all_stakers().len(), 0);
+
+    // Re-stake
+    client.stake(&user, &50_0000000, &3);
+
+    let stakers = client.get_all_stakers();
+    assert_eq!(stakers.len(), 1);
+    assert_eq!(stakers.get(0).unwrap(), user);
+}
