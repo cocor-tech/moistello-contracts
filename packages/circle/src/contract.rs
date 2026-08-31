@@ -312,7 +312,7 @@ pub fn contribute(
             on_time,
         },
     );
-    scoring::record_on_time_payment(env, member, &circle.id, amount);
+    scoring::record_on_time_payment(env, member, &circle.id, amount, round);
     Ok(())
 }
 /// Triggers payout for the current round based on the circle's payout type.
@@ -719,6 +719,7 @@ pub fn vote_payout(
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
     let mut is_member = false;
+    let mut is_vote_for_member = false;
     for i in 0..members.len() {
         let m = members.get(i).ok_or(CircleError::VecAccessError)?;
         if m.address == *voter {
@@ -727,8 +728,13 @@ pub fn vote_payout(
             }
             is_member = true;
         }
+        if m.address == *vote_for {
+            if m.status == MEMBER_ACTIVE {
+                is_vote_for_member = true;
+            }
+        }
     }
-    if !is_member {
+    if !is_member || !is_vote_for_member {
         return Err(CircleError::NotMember);
     }
     let mut votes: Vec<VoteEntry> = env

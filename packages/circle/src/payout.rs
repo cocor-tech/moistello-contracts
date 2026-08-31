@@ -42,11 +42,11 @@ pub fn resolve_fixed(env:&Env,circle:&Circle,round:u32)->Result<Address,CircleEr
 pub fn resolve_auction(env:&Env,circle:&Circle,round:u32)->Result<(Address,u32),CircleError>{
     let bids:Vec<AuctionBid>=env.storage().persistent().get(&DataKey::Bids).unwrap_or_else(||Vec::new(env));
     let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
-    let mut min_bps:u32=10000;
+    let mut max_bps:u32=0;
     let mut winner:Option<AuctionBid>=None;
     for i in 0..bids.len(){
         let b=bids.get(i).ok_or(CircleError::NotInitialized)?;
-        if b.round==round&&b.discount_bips<=min_bps{min_bps=b.discount_bips;winner=Some(b);}
+        if b.round==round&&b.discount_bips>=max_bps{max_bps=b.discount_bips;winner=Some(b);}
     }
     let winner_bid=winner.ok_or(CircleError::VoteQuorumNotMet)?;
     for i in 0..members.len(){
