@@ -25,7 +25,6 @@ pub enum TokenError {
     Overflow = 5,
     AllowanceExpired = 6,
     AllowanceExceeded = 7,
-    NegativeAllowance = 8,
     NotAdmin = 9,
     ContractPaused = 10,
     Underflow = 11,
