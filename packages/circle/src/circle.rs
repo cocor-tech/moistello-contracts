@@ -1,0 +1,75 @@
+// src/contracts/circle.rs
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+use soroban_sdk::token::Client as TokenClient;
+
+#[contracttype]
+pub enum DataKey {
+    Token,
+    Streak(Address),
+    StreakBonusConfig,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreakConfig {
+    pub base_bonus: i128,
+    pub multiplier_per_day: i128,
+}
+
+#[contract]
+pub struct CircleContract;
+
+#[contractimpl]
+impl CircleContract {
+    pub fn claim_streak_bonus(env: Env, member: Address) {
+        member.require_auth();
+
+        // Retrieve streak count for member
+        let streak_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Streak(member.clone()))
+            .unwrap_or(0);
+
+        if streak_count == 0 {
+            panic!("No active streak to claim bonus for");
+        }
+
+        // Retrieve streak bonus configuration
+        let config: StreakConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::StreakBonusConfig)
+            .unwrap_or_else(|| StreakConfig {
+                base_bonus: 100_0000,
+                multiplier_per_day: 10_0000,
+            });
+
+        // FIX: Calculate the precise streak bonus instead of draining the entire contract balance
+        let bonus_amount = config.base_bonus + (streak_count as i128) * config.multiplier_per_day;
+
+        let token_address: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Token)
+            .unwrap_or_else(|| panic!("Token not configured"));
+
+        let token_client = TokenClient::new(&env, &token_address);
+
+        // Verify contract has sufficient balance before transferring calculated bonus
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        if contract_balance < bonus_amount {
+            panic!("Insufficient contract balance for streak bonus payout");
+        }
+
+        // Reset streak or mark claimed to prevent double-claiming
+        env.storage().persistent().set(&DataKey::Streak(member.clone()), &0u32);
+
+        // Transfer only the exact calculated bonus amount
+        token_client.transfer(
+            &env.current_contract_address(),
+            &member,
+            &bonus_amount,
+        );
+    }
+}
