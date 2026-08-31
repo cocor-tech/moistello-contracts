@@ -1967,3 +1967,4 @@ pub fn get_oracle(env: &Env) -> Option<Address> {
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
 }
+// Stellar Wave #338, #317, #316, #315
