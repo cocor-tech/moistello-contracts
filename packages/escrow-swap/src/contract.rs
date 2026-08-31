@@ -248,3 +248,43 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), EscrowError> {
     }
     pause::unpause(env, admin).map_err(|_| EscrowError::ContractPaused)
 }
+
+pub fn expire_swap(env: &Env, id: u64) -> Result<(), EscrowError> {
+    pause::when_not_paused(env).map_err(|_| EscrowError::ContractPaused)?;
+    let mut swaps: Vec<SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).ok_or(EscrowError::NotInitialized)?;
+    let mut found = false;
+
+    for i in 0..swaps.len() {
+        let mut s = swaps.get(i).ok_or(EscrowError::VecAccessError)?;
+        if s.id == id {
+            if s.status == STATUS_COMPLETED || s.status == STATUS_CANCELLED {
+                return Err(EscrowError::SwapNotActive);
+            }
+            let current_time = env.ledger().timestamp();
+            if current_time < s.time_lock {
+                return Err(EscrowError::SwapNotExpired);
+            }
+            let previous_status = s.status;
+            s.status = STATUS_CANCELLED;
+            swaps.set(i, s.clone());
+            found = true;
+
+            let token_a_client = TokenClient::new(env, &s.token_a);
+            token_a_client.transfer(&env.current_contract_address(), &s.initiator, &s.initiator_amount);
+
+            if previous_status == STATUS_ACTIVE {
+                let token_b_client = TokenClient::new(env, &s.token_b);
+                token_b_client.transfer(&env.current_contract_address(), &s.responder, &s.responder_amount);
+            }
+
+            SwapCancelled { id }.publish(env);
+            break;
+        }
+    }
+
+    if !found {
+        return Err(EscrowError::SwapNotFound);
+    }
+    env.storage().persistent().set(&DataKey::SwapRequests, &swaps);
+    Ok(())
+}
