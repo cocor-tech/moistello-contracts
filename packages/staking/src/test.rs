@@ -459,3 +459,10 @@ fn test_staking_period_from_u32() {
     assert_eq!(StakingPeriod::from_u32(2), None);
     assert_eq!(StakingPeriod::from_u32(24), None);
 }
+
+#[test]
+fn test_get_unbonding_period_seconds() {
+    let (env, admin, _, token) = setup_test_env();
+    let staking_client = deploy_staking_contract(&env, &admin, &token);
+    assert_eq!(staking_client.get_unbonding_period_seconds(), UNBONDING_PERIOD_SECONDS);
+}

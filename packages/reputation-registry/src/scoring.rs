@@ -69,6 +69,8 @@ pub fn qualifies_for_circle(env: &Env, member: &Address, min_score: u32, require
 
 /// Record an on-time payment. Returns the new MoiScore.
 pub fn record_on_time_payment(env: &Env, member: &Address, circle_id: &Address, amount: i128, round: u32) -> u32 {
+    assert!(amount >= 0, "amount must be non-negative");
+    let safe_amount = amount.max(0);
     let current = storage::get_score(env, member);
     let mut streak = storage::get_streak(env, member, circle_id);
     let last_round = storage::get_last_round(env, member, circle_id);
@@ -84,7 +86,7 @@ pub fn record_on_time_payment(env: &Env, member: &Address, circle_id: &Address, 
 
     let base: u32 = 10;
     let streak_bonus: u32 = if streak <= 10 { streak * 5 } else { 50 };
-    let volume_bonus_raw = (amount / 100_0000000) as u32; // 1 point per 100 USDC
+    let volume_bonus_raw = (safe_amount / 100_0000000) as u32; // 1 point per 100 USDC
     let volume_bonus: u32 = if volume_bonus_raw > 20 { 20 } else { volume_bonus_raw };
 
     let new_score = current.saturating_add(base).saturating_add(streak_bonus).saturating_add(volume_bonus);
