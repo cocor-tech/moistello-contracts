@@ -1,6 +1,6 @@
-// src/contracts/governance.rs
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
 use soroban_sdk::token::Client as TokenClient;
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Val, Vec};
 
 #[contracttype]
 pub enum DataKey {
@@ -85,5 +85,88 @@ impl GovernanceContract {
         env.storage().persistent().set(&DataKey::ProposalStatus(proposal_id), &Symbol::new(&env, "Cancelled"));
 
         env.events().publish((Symbol::new(&env, "ProposalCancelled"), proposal_id), proposer);
+    }
+}
+
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalExecution {
+    pub target: Address,
+    pub function: Symbol,
+    pub args: Vec<Val>,
+    pub retry_count: u32,
+    pub max_retries: u32,
+}
+
+#[contracttype]
+pub enum DataKey {
+    ProposalStatus(u64),
+    ProposalExecutionData(u64),
+}
+
+#[contract]
+pub struct GovernanceContract;
+
+#[contractimpl]
+impl GovernanceContract {
+    pub fn execute_proposal(env: Env, proposal_id: u64) {
+        let status: Symbol = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposalStatus(proposal_id))
+            .unwrap_or_else(|| panic!("Proposal not found"));
+
+        if status != Symbol::new(&env, "Queued") {
+            panic!("Proposal is not in Queued status");
+        }
+
+        let mut exec_data: ProposalExecution = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposalExecutionData(proposal_id))
+            .unwrap_or_else(|| panic!("Execution data not found"));
+
+        if exec_data.retry_count >= exec_data.max_retries {
+            env.storage().persistent().set(
+                &DataKey::ProposalStatus(proposal_id),
+                &Symbol::new(&env, "Failed"),
+            );
+            panic!("Max retry limit reached; proposal marked as Failed");
+        }
+
+        exec_data.retry_count += 1;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProposalExecutionData(proposal_id), &exec_data);
+
+        // FIX: Utilize try_invoke_contract to catch execution errors, update retry count, and transition to Failed upon limit exhaustion
+        let result: Result<Val, _> = env.try_invoke_contract(
+            &exec_data.target,
+            &exec_data.function,
+            exec_data.args,
+        );
+
+        match result {
+            Ok(_val) => {
+                env.storage().persistent().set(
+                    &DataKey::ProposalStatus(proposal_id),
+                    &Symbol::new(&env, "Executed"),
+                );
+                env.events().publish(
+                    (Symbol::new(&env, "ProposalExecuted"), proposal_id),
+                    exec_data.target,
+                );
+            }
+            Err(_) => {
+                if exec_data.retry_count >= exec_data.max_retries {
+                    env.storage().persistent().set(
+                        &DataKey::ProposalStatus(proposal_id),
+                        &Symbol::new(&env, "Failed"),
+                    );
+                }
+                panic!("Proposal execution failed; retry count incremented");
+            }
+        }
     }
 }
