@@ -43,6 +43,10 @@ pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Res
 
 pub fn upgrade_contract(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) -> Result<(), UpgradeError> {
     admin.require_auth();
+    let zero_hash = BytesN::from_array(env, &[0u8; 32]);
+    if new_wasm_hash == &zero_hash {
+        return Err(UpgradeError::InvalidWasmHash);
+    }
     env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
     ContractUpgraded { by: admin.clone(), new_wasm_hash: new_wasm_hash.clone() }.publish(env);
     Ok(())

@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use proptest::prelude::*;
+use soroban_sdk::Env;
 
 use crate::math::{apply_fee, calculate_penalty, calculate_percentage, convert_shares, MathError};
 
@@ -89,4 +90,50 @@ fn convert_shares_overflow_on_huge_inputs() {
     // member_shares * pool_amount overflows i128 → must return Overflow, not panic.
     let result = convert_shares(i128::MAX, 1, i128::MAX);
     assert_eq!(result, Err(MathError::Overflow));
+}
+
+#[soroban_sdk::contract]
+pub struct DummyContract;
+
+#[soroban_sdk::contractimpl]
+impl DummyContract {
+    pub fn dummy(_env: Env) {}
+}
+
+#[test]
+fn test_upgrade_contract_zero_hash_fails() {
+    use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
+    use crate::upgrade::{upgrade_contract, UpgradeError};
+
+    let env = Env::default();
+    let dummy_contract = env.register(DummyContract, ());
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+    env.as_contract(&dummy_contract, || {
+        let res = upgrade_contract(&env, &admin, &zero_hash);
+        assert_eq!(res, Err(UpgradeError::InvalidWasmHash));
+    });
+}
+
+#[test]
+fn test_vrf_hash_chain_only_mode() {
+    use soroban_sdk::{BytesN, Env};
+    use crate::vrf::{init_vrf, evaluate_vrf, verify_vrf};
+
+    let env = Env::default();
+    let dummy_contract = env.register(DummyContract, ());
+    env.mock_all_auths();
+
+    env.as_contract(&dummy_contract, || {
+        // init with None admin key
+        assert!(init_vrf(&env, None).is_ok());
+
+        let val = evaluate_vrf(&env, 42).expect("evaluate_vrf should succeed");
+        let sig = BytesN::from_array(&env, &[0u8; 64]);
+
+        // verify_vrf returns false in hash-chain-only mode (no admin key configured)
+        assert!(!verify_vrf(&env, 42, val, 0, &sig));
+    });
 }

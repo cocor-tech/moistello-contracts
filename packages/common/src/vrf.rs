@@ -82,9 +82,11 @@ pub struct VrfEvaluated {
 /// hash) and stores it alongside the optional admin key.
 ///
 /// When `admin_key` is `Some(key)`, VRF outputs can be verified via
+/// When `admin_key` is `Some(key)`, VRF outputs can be verified via
 /// `verify_vrf()` using Ed25519 signature checks. When `admin_key` is `None`,
 /// the VRF operates in hash-chain-only mode — outputs are deterministic and
-/// verifiable by recomputation, but no Ed25519 signature check is available.
+/// publicly verifiable by recomputation, but signature verification (`verify_vrf`)
+/// will return `false` as no admin key is configured.
 ///
 /// # Arguments
 /// * `env` - Soroban environment
@@ -93,7 +95,7 @@ pub struct VrfEvaluated {
 /// # Errors
 /// * `VrfError::AlreadyInitialized` if called more than once
 pub fn init_vrf(env: &Env, admin_key: Option<&BytesN<32>>) -> Result<(), VrfError> {
-    if env.storage().instance().has(&ADMIN_KEY) {
+    if env.storage().instance().has(&SALT_KEY) {
         return Err(VrfError::AlreadyInitialized);
     }
     let salt: BytesN<32> = env.prng().gen();

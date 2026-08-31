@@ -43,8 +43,7 @@ pub fn stake(
     }
     
     // Validate and convert period
-    let period = StakingPeriod::from_u32(period_months)
-        .ok_or(StakingError::InvalidPeriod)?;
+    let period = StakingPeriod::try_from_u32(period_months)?;
     
     // Check if user already has an active stake
     if env.storage().instance().has(&DataKey::Stake(user.clone())) {
@@ -364,4 +363,9 @@ pub fn update_admin(env: &Env, current_admin: &Address, new_admin: &Address) -> 
     current_admin.require_auth();
     env.storage().instance().set(&DataKey::Admin, new_admin);
     Ok(())
+}
+
+/// Returns the unbonding period duration in seconds (14 days).
+pub fn get_unbonding_period_seconds(_env: &Env) -> u64 {
+    UNBONDING_PERIOD_SECONDS
 }

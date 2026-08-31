@@ -43,6 +43,11 @@ impl StakingPeriod {
             _ => None,
         }
     }
+
+    /// Validates the period value and returns StakingError::InvalidPeriod if invalid (must be 1, 3, 6, or 12 months)
+    pub fn try_from_u32(value: u32) -> Result<Self, StakingError> {
+        Self::from_u32(value).ok_or(StakingError::InvalidPeriod)
+    }
 }
 
 /// Unbonding period in seconds (14 days)
