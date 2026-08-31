@@ -1,4 +1,7 @@
 use crate::oracle;
+// `payout` is imported as a module-level path. `load_round_details` is an
+// internal helper used only within payout.rs and must NOT be re-exported here;
+// doing so would create an unused import (fixes #271).
 use crate::payout;
 use crate::types::*;
 use common::reentrancy::ReentrancyGuard;
