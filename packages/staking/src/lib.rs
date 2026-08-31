@@ -6,7 +6,7 @@ mod contract;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
 
 #[contract]
 pub struct Staking;
@@ -48,6 +48,18 @@ impl Staking {
 
     pub fn get_total_staked(env: Env) -> i128 {
         contract::get_total_staked(&env)
+    }
+
+    /// Returns the raw staked amount for `user`. Returns `0` when the user
+    /// has no active stake (e.g. not staked, or currently in the unbonding
+    /// period after calling `unstake`).
+    pub fn get_stake_amount(env: Env, user: Address) -> i128 {
+        contract::get_stake_amount(&env, &user)
+    }
+
+    /// Returns the list of all addresses that currently have an active stake.
+    pub fn get_all_stakers(env: Env) -> Vec<Address> {
+        contract::get_all_stakers(&env)
     }
 
     pub fn pause(env: Env, admin: Address) -> Result<(), types::StakingError> {
