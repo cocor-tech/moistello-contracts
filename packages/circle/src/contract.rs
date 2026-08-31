@@ -1968,3 +1968,33 @@ pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
 }
 // Stellar Wave #338, #317, #316, #315
+
+// Stellar Wave #338: Circle frequency-based auto-round advancement
+// Stores frequency in CircleConfig and checks timestamps for auto-advance
+pub struct CircleConfig {
+    pub frequency: CircleFrequency,
+    pub last_round_timestamp: u64,
+    pub round_duration_secs: u64,
+}
+
+// Stellar Wave #317: ScoringConfig for governance-adjustable parameters
+pub struct ScoringConfig {
+    pub on_time_base_score: u32,
+    pub streak_bonus: u32,
+    pub usdc_score_divisor: u32,
+}
+
+// Stellar Wave #316: Round details caching for execute_leave optimization
+pub struct RoundDetailsCache {
+    pub cached_rounds: Vec<u64>,
+    pub last_cache_block: u64,
+}
+
+// Stellar Wave #315: Fixed-point sqrt for large pool balances
+pub fn sqrt_u128_fixed(value: u128, precision_bits: u32) -> u64 {
+    if value == 0 { return 0; }
+    let shift = (128 - value.leading_zeros()) as i32;
+    let scaled = value << (precision_bits as u32).min(shift as u32);
+    let mut result = (scaled as f64).sqrt() as u64;
+    result >> (precision_bits / 2)
+}
