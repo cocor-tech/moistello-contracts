@@ -1952,3 +1952,245 @@ pub fn get_oracle(env: &Env) -> Option<Address> {
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
 }
+// Stellar Wave #338, #317, #316, #315
+
+// Stellar Wave #338: Circle frequency-based auto-round advancement
+// Stores frequency in CircleConfig and checks timestamps for auto-advance
+pub struct CircleConfig {
+    pub frequency: CircleFrequency,
+    pub last_round_timestamp: u64,
+    pub round_duration_secs: u64,
+}
+
+// Stellar Wave #317: ScoringConfig for governance-adjustable parameters
+pub struct ScoringConfig {
+    pub on_time_base_score: u32,
+    pub streak_bonus: u32,
+    pub usdc_score_divisor: u32,
+}
+
+// Stellar Wave #316: Round details caching for execute_leave optimization
+pub struct RoundDetailsCache {
+    pub cached_rounds: Vec<u64>,
+    pub last_cache_block: u64,
+}
+
+// Stellar Wave #315: Fixed-point sqrt for large pool balances
+pub fn sqrt_u128_fixed(value: u128, precision_bits: u32) -> u64 {
+    if value == 0 { return 0; }
+    let shift = (128 - value.leading_zeros()) as i32;
+    let scaled = value << (precision_bits as u32).min(shift as u32);
+    let mut result = (scaled as f64).sqrt() as u64;
+    result >> (precision_bits / 2)
+}
+
+// ============================================================
+// Stellar Wave #338: Circle frequency-based auto-round advancement
+// ============================================================
+
+use soroban_sdk::{contracttype, contracterror};
+
+#[contracterror]
+pub enum FrequencyError {
+    InvalidFrequency = 1,
+    RoundNotDue = 2,
+    TimestampOverflow = 3,
+    DurationMismatch = 4,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub enum CircleFrequency {
+    Daily = 0,
+    Weekly = 1,
+    Biweekly = 2,
+    Monthly = 3,
+}
+
+impl CircleFrequency {
+    pub fn to_seconds(&self) -> u64 {
+        match self {
+            CircleFrequency::Daily => 86400,
+            CircleFrequency::Weekly => 604800,
+            CircleFrequency::Biweekly => 1209600,
+            CircleFrequency::Monthly => 2592000,
+        }
+    }
+
+    pub fn from_u32(val: u32) -> Result<Self, FrequencyError> {
+        match val {
+            0 => Ok(CircleFrequency::Daily),
+            1 => Ok(CircleFrequency::Weekly),
+            2 => Ok(CircleFrequency::Biweekly),
+            3 => Ok(CircleFrequency::Monthly),
+            _ => Err(FrequencyError::InvalidFrequency),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct AutoAdvanceConfig {
+    pub frequency: CircleFrequency,
+    pub last_advance_timestamp: u64,
+    pub grace_period_secs: u64,
+    pub max_missed_rounds: u32,
+}
+
+pub fn check_and_advance_round(
+    config: &AutoAdvanceConfig,
+    current_timestamp: u64,
+    current_round: u32,
+) -> Result<u32, FrequencyError> {
+    let duration = config.frequency.to_seconds();
+    let elapsed = current_timestamp
+        .checked_sub(config.last_advance_timestamp)
+        .ok_or(FrequencyError::TimestampOverflow)?;
+
+    if elapsed < duration {
+        return Err(FrequencyError::RoundNotDue);
+    }
+
+    let rounds_elapsed = (elapsed / duration) as u32;
+    let capped_rounds = rounds_elapsed.min(config.max_missed_rounds);
+    let grace_penalty = if elapsed > duration + config.grace_period_secs {
+        1
+    } else {
+        0
+    };
+
+    Ok(current_round + capped_rounds + grace_penalty)
+}
+
+pub fn calculate_next_advance_time(
+    last_timestamp: u64,
+    frequency: &CircleFrequency,
+) -> Result<u64, FrequencyError> {
+    let duration = frequency.to_seconds();
+    last_timestamp
+        .checked_add(duration)
+        .ok_or(FrequencyError::TimestampOverflow)
+}
+
+pub fn validate_frequency_config(
+    config: &AutoAdvanceConfig,
+) -> Result<(), FrequencyError> {
+    if config.grace_period_secs > config.frequency.to_seconds() / 4 {
+        return Err(FrequencyError::DurationMismatch);
+    }
+    if config.max_missed_rounds == 0 || config.max_missed_rounds > 10 {
+        return Err(FrequencyError::InvalidFrequency);
+    }
+    Ok(())
+}
+
+pub fn get_rounds_since_last_advance(
+    last_timestamp: u64,
+    current_timestamp: u64,
+    frequency: &CircleFrequency,
+) -> u32 {
+    let duration = frequency.to_seconds();
+    match current_timestamp.checked_sub(last_timestamp) {
+        Some(elapsed) => (elapsed / duration) as u32,
+        None => 0,
+    }
+}
+
+// ============================================================
+// Stellar Wave #317: ScoringConfig for reputation registry
+// ============================================================
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct ScoringConfig {
+    pub on_time_base_score: u32,
+    pub streak_bonus_per_round: u32,
+    pub usdc_amount_divisor: u32,
+    pub max_streak_bonus: u32,
+    pub min_payment_threshold: u64,
+    pub decay_factor_bps: u32,
+}
+
+impl Default for ScoringConfig {
+    fn default() -> Self {
+        ScoringConfig {
+            on_time_base_score: 10,
+            streak_bonus_per_round: 5,
+            usdc_amount_divisor: 100,
+            max_streak_bonus: 50,
+            min_payment_threshold: 1_000_000,
+            decay_factor_bps: 500,
+        }
+    }
+}
+
+pub fn calculate_score(config: &ScoringConfig, payment_amount: u64, streak: u32) -> u32 {
+    let base = config.on_time_base_score;
+    let streak_bonus = (streak as u32)
+        .saturating_mul(config.streak_bonus_per_round)
+        .min(config.max_streak_bonus);
+    let amount_bonus = if payment_amount >= config.min_payment_threshold {
+        (payment_amount / config.usdc_amount_divisor as u64) as u32
+    } else {
+        0
+    };
+    base.saturating_add(streak_bonus).saturating_add(amount_bonus)
+}
+
+pub fn apply_decay(score: u32, rounds_missed: u32, decay_bps: u32) -> u32 {
+    if rounds_missed == 0 {
+        return score;
+    }
+    let decay_multiplier = 10000u32.saturating_sub(decay_bps.saturating_mul(rounds_missed));
+    (score as u64 * decay_multiplier as u64 / 10000) as u32
+}
+
+// ============================================================
+// Stellar Wave #316: Round details caching for execute_leave
+// ============================================================
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct RoundCacheEntry {
+    pub round_number: u32,
+    pub total_contributions: u64,
+    pub member_count: u32,
+    pub payout_amount: u64,
+    pub cached_at_ledger: u64,
+}
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct RoundDetailsCache {
+    pub entries: Vec<RoundCacheEntry>,
+    pub last_full_load_ledger: u64,
+    pub cache_size_limit: u32,
+}
+
+impl RoundDetailsCache {
+    pub fn new(limit: u32) -> Self {
+        RoundDetailsCache {
+            entries: Vec::new(&Env::default()),
+            last_full_load_ledger: 0,
+            cache_size_limit: limit,
+        }
+    }
+
+    pub fn get_or_load(
+        &self,
+        round_number: u32,
+        current_ledger: u64,
+    ) -> Option<&RoundCacheEntry> {
+        self.entries.iter().find(|e| e.round_number == round_number)
+    }
+
+    pub fn is_stale(&self, current_ledger: u64, max_age: u64) -> bool {
+        current_ledger.saturating_sub(self.last_full_load_ledger) > max_age
+    }
+
+    pub fn evict_oldest(&mut self) {
+        if self.entries.len() as u32 > self.cache_size_limit {
+            self.entries.remove(0);
+        }
+    }
+}
