@@ -81,3 +81,10 @@ pub struct Freeze {
 pub struct Unfreeze {
     pub account: Address,
 }
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdminChanged {
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
