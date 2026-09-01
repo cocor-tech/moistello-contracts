@@ -30,6 +30,7 @@ pub enum TokenError {
     ContractPaused = 10,
     Underflow = 11,
     Frozen = 12,
+    AlreadyInitialized = 13,
 }
 
 #[contractevent]
@@ -80,4 +81,11 @@ pub struct Freeze {
 #[derive(Clone, Debug)]
 pub struct Unfreeze {
     pub account: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdminChanged {
+    pub old_admin: Address,
+    pub new_admin: Address,
 }

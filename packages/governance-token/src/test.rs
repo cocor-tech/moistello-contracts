@@ -49,7 +49,7 @@ mod tests {
             &String::from_str(&env, "TK2"),
             &7u32,
         );
-        assert!(result.is_err());
+        assert_eq!(result, Err(Ok(crate::types::TokenError::AlreadyInitialized)));
     }
 
     #[test]
@@ -366,3 +366,5 @@ mod tests {
         assert_eq!(client.total_supply(), 9_400_0000000i128);
     }
 }
+
+// governance token pause and max supply checks unit test assertions

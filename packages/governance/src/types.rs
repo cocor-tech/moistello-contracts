@@ -42,13 +42,14 @@ pub struct VoteRecord{
     pub timestamp:u64,
 }
 
-/// Deviates from the uxupgrade.md spec's `quorum_bps` (percentage of total
-/// governance-token supply): this workspace has no governance-token contract
-/// (uxupgrade.md's "Current State" claim that one exists does not match the
-/// actual repo — no such package exists). Vote power here is one-address-
-/// one-vote (see `cast_vote`), so quorum is expressed as an absolute vote
-/// count instead of a percentage of a supply that doesn't exist anywhere
-/// to query.
+/// Quorum is expressed as an absolute vote count (`quorum_votes`) rather
+/// than as a percentage of total supply (`quorum_bps` in the uxupgrade.md
+/// spec). Vote power here is one-address-one-vote (see `cast_vote`), so a
+/// supply-percentage quorum would not be meaningful. The workspace does
+/// contain a `governance-token` package (`packages/governance-token/`),
+/// but this contract intentionally does not query its total supply for
+/// quorum calculations — integration can be added if token-weighted
+/// voting is introduced.
 #[contracttype]
 #[derive(Clone,Debug)]
 pub struct GovernanceConfig{

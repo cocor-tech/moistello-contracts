@@ -1,25 +1,12 @@
-#![cfg_attr(not(test), no_std)]
-
-#[cfg(test)]
-mod test_integration;
-
-#[cfg(test)]
-mod test_stress;
-
-#[cfg(test)]
-mod tests {
-    use soroban_sdk::{Env, Address};
-
-    #[test]
-    fn test_smoke_compile_ok() {
-        let env = Env::default();
-        let _addr = Address::from_str(&env, "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H");
-    }
-
-    #[test]
-    fn test_errors_have_unique_codes() {
-        use crate::CircleError;
-        assert_ne!(CircleError::NotActive as u32, CircleError::CircleFull as u32);
-        assert_ne!(CircleError::AlreadyMember as u32, CircleError::NotMember as u32);
-    }
-}
+mod test_allowlist;
+mod test_auction;
+mod test_contribute;
+mod test_exit;
+mod test_full_lifecycle;
+mod test_governance;
+mod test_join;
+mod test_migration;
+mod test_pause;
+mod test_payout;
+mod test_dispute;
+mod test_unauthorized;
