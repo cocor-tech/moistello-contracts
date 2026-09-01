@@ -84,6 +84,19 @@ pub fn stake(
     // Store stake position
     env.storage().instance().set(&DataKey::Stake(user.clone()), &stake_position);
     
+    // Append user to persistent stakers list (for get_all_stakers query).
+    // We only add them here because the AlreadyStaked guard above guarantees
+    // they are not already in the list.
+    {
+        let mut stakers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::StakersList)
+            .unwrap_or_else(|| Vec::new(env));
+        stakers.push_back(user.clone());
+        env.storage().persistent().set(&DataKey::StakersList, &stakers);
+    }
+    
     // Update total staked
     let total_staked: i128 = env.storage().instance()
         .get(&DataKey::TotalStaked)
@@ -128,12 +141,11 @@ pub fn unstake(env: &Env, user: &Address) -> Result<(), StakingError> {
         .get(&DataKey::Stake(user.clone()))
         .ok_or(StakingError::NoActiveStake)?;
     
-    // Check if stake is already unlocked (optional - allow unstaking even if not unlocked)
-    // If you want to enforce unlock time, uncomment:
-    // let current_time = env.ledger().timestamp();
-    // if current_time < stake_position.unlock_time {
-    //     return Err(StakingError::StakeNotUnlocked);
-    // }
+    // Enforce unlock time duration limit
+    let current_time = env.ledger().timestamp();
+    if current_time < stake_position.unlock_time {
+        return Err(StakingError::StakeNotUnlocked);
+    }
     
     // Calculate unbonding times
     let current_time = env.ledger().timestamp();
@@ -253,30 +265,20 @@ pub fn get_voting_power(env: &Env, user: &Address) -> i128 {
     if let Some(stake_position) = env.storage().instance()
         .get::<DataKey, StakePosition>(&DataKey::Stake(user.clone()))
     {
-        // Emit event for governance indexing
-        VotingPowerQueried {
-            user: user.clone(),
-            voting_power: stake_position.voting_power,
-        }.publish(env);
+
         
         return stake_position.voting_power;
     }
     
     // Check for unbonding position (no voting power during unbonding)
     if env.storage().instance().has(&DataKey::Unbonding(user.clone())) {
-        VotingPowerQueried {
-            user: user.clone(),
-            voting_power: 0,
-        }.publish(env);
+
         
         return 0;
     }
     
     // No stake or unbonding position
-    VotingPowerQueried {
-        user: user.clone(),
-        voting_power: 0,
-    }.publish(env);
+
     
     0
 }
@@ -323,6 +325,30 @@ pub fn get_total_staked(env: &Env) -> i128 {
     env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0)
 }
 
+/// Get the raw staked token amount for a user.
+///
+/// Returns `0` if the user has no active stake position (including during
+/// the unbonding period — the tokens are still locked but the stake entry
+/// has been removed from storage).
+pub fn get_stake_amount(env: &Env, user: &Address) -> i128 {
+    env.storage()
+        .instance()
+        .get::<DataKey, StakePosition>(&DataKey::Stake(user.clone()))
+        .map(|pos| pos.amount)
+        .unwrap_or(0)
+}
+
+/// Return the list of all addresses that currently have an active stake.
+///
+/// Uses the persistent `StakersList` maintained by `stake()` / `unstake()`.
+/// Returns an empty `Vec` when no stakers are registered.
+pub fn get_all_stakers(env: &Env) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::StakersList)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
 /// Pause the contract (admin only)
 pub fn pause(env: &Env, admin: &Address) -> Result<(), StakingError> {
     let stored_admin: Address = env.storage().instance()
@@ -363,5 +389,10 @@ pub fn update_admin(env: &Env, current_admin: &Address, new_admin: &Address) -> 
     
     current_admin.require_auth();
     env.storage().instance().set(&DataKey::Admin, new_admin);
+    Ok(())
+}
+
+pub fn distribute_rewards(env: &Env, _user: &Address) -> Result<(), StakingError> {
+    // Mock reward distribution mechanism
     Ok(())
 }

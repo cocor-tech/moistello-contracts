@@ -127,11 +127,21 @@ pub fn record_default(env: &Env, member: &Address) -> u32 {
 
 /// Apply inactivity decay. -5 points per 30 days of inactivity. Floor at 0.
 pub fn apply_inactivity_decay(env: &Env, member: &Address, days_inactive: u64) -> u32 {
-    let current = storage::get_score(env, member);
+    let current = if let Some(s) = env.storage().persistent().get::<_, crate::types::MoiScore>(&crate::types::DataKey::Score(member.clone())) {
+        s.score
+    } else {
+        storage::get_score(env, member)
+    };
     let months = days_inactive / 30;
-    let decay: u32 = ((months as u64).saturating_mul(5)) as u32;
+    let decay: u32 = u32::try_from(months.saturating_mul(5)).unwrap_or(u32::MAX);
     let new_score = if current > decay { current - decay } else { 0 };
 
+    if let Some(mut s) = env.storage().persistent().get::<_, crate::types::MoiScore>(&crate::types::DataKey::Score(member.clone())) {
+        s.score = new_score;
+        s.tier = get_tier(new_score);
+        s.updated_at = env.ledger().timestamp();
+        env.storage().persistent().set(&crate::types::DataKey::Score(member.clone()), &s);
+    }
     storage::set_score(env, member, new_score);
     new_score
 }

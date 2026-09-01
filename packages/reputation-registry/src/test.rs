@@ -209,3 +209,18 @@ fn test_pause_blocks_get_score() {
     client.unpause_registry(&admin);
     assert!(client.try_get_score(&user).is_ok());
 }
+
+#[test]
+fn test_inactivity_decay_large_months() {
+    let env = Env::default();
+    let (client, _admin) = setup(&env);
+    let user = Address::generate(&env);
+
+    client.record_activity(&user, &ACTIVITY_JOIN, &500);
+    assert_eq!(client.get_score(&user).score, 500);
+
+    // Pass an extremely large number of days that would cause u32 truncation if cast carelessly
+    let new_score = client.apply_inactivity_decay(&user, &30_000_000_000u64);
+    assert_eq!(new_score, 0);
+    assert_eq!(client.get_score(&user).score, 0);
+}

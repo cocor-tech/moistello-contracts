@@ -21,7 +21,7 @@ pub fn get_streak(env: &Env, member: &Address, circle_id: &Address) -> u32 {
 /// Increment the streak count
 pub fn increment_streak(env: &Env, member: &Address, circle_id: &Address) {
     let current = get_streak(env, member, circle_id);
-    env.storage().persistent().set(&DataKey::Streak(member.clone(), circle_id.clone()), &(current + 1));
+    env.storage().persistent().set(&DataKey::Streak(member.clone(), circle_id.clone()), &current.saturating_add(1));
 }
 
 /// Get number of completed circles
@@ -33,7 +33,7 @@ pub fn get_completions(env: &Env, member: &Address) -> u32 {
 /// Increment completions
 pub fn increment_completions(env: &Env, member: &Address) {
     let current = get_completions(env, member);
-    env.storage().persistent().set(&DataKey::Completions(member.clone()), &(current + 1));
+    env.storage().persistent().set(&DataKey::Completions(member.clone()), &current.saturating_add(1));
 }
 
 /// Get number of defaults
@@ -45,7 +45,7 @@ pub fn get_defaults(env: &Env, member: &Address) -> u32 {
 /// Increment defaults
 pub fn increment_defaults(env: &Env, member: &Address) {
     let current = get_defaults(env, member);
-    env.storage().persistent().set(&DataKey::Defaults(member.clone()), &(current + 1));
+    env.storage().persistent().set(&DataKey::Defaults(member.clone()), &current.saturating_add(1));
 }
 
 /// Add an activity record
