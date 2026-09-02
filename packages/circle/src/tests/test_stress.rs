@@ -31,6 +31,7 @@ fn test_large_circle_100_members_50_rounds() {
         grace_period_seconds: 86400u64,
         max_strikes: 3u32,
         slug: String::from_str(&env, "stress-test"),
+        payout_cooldown_seconds: 0u64,
     };
 
     let admin = organizer.clone();
@@ -111,6 +112,7 @@ fn test_large_circle_random_payout() {
         grace_period_seconds: 86400u64,
         max_strikes: 3u32,
         slug: String::from_str(&env, "random-stress"),
+        payout_cooldown_seconds: 0u64,
     };
 
     let admin = organizer.clone();
@@ -173,6 +175,7 @@ fn test_storage_scaling_50_members_100_rounds() {
         grace_period_seconds: 86400u64,
         max_strikes: 3u32,
         slug: String::from_str(&env, "long-run"),
+        payout_cooldown_seconds: 0u64,
     };
 
     let admin = organizer.clone();
@@ -239,6 +242,7 @@ fn test_max_member_boundary_enforcement() {
         grace_period_seconds: 86400u64,
         max_strikes: 3u32,
         slug: String::from_str(&env, "max-test"),
+        payout_cooldown_seconds: 0u64,
     };
 
     let admin = organizer.clone();
