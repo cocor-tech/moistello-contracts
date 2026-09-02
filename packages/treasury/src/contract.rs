@@ -176,10 +176,6 @@ pub fn rescue_tokens(
         return Err(TreasuryError::InvalidAmount);
     }
 
-    if !env.has_contract(token) {
-        return Err(TreasuryError::InvalidAmount);
-    }
-
     let treasury_token: Address = env
         .storage()
         .instance()

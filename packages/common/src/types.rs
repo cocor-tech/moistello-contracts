@@ -23,4 +23,8 @@ pub struct CircleConfig {
     pub grace_period_seconds: u64,
     pub max_strikes: u32,
     pub slug: String,
+    /// Minimum number of seconds that must elapse between consecutive
+    /// `trigger_payout` calls. Set to 0 to disable the cooldown guard.
+    /// Fixes #115.
+    pub payout_cooldown_seconds: u64,
 }

@@ -616,6 +616,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "last_payout_timestamp"
+                            },
+                            "val": {
+                              "u64": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "max_members"
                             },
                             "val": {
@@ -668,6 +676,14 @@
                             },
                             "val": {
                               "u128": "0"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "payout_cooldown_seconds"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {

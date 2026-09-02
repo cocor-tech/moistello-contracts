@@ -42,7 +42,9 @@ mod tests {
             grace_period_seconds: 86400u64,
             max_strikes: 3u32,
             slug: String::from_str(env, "test-circle"),
-
+            // Default to 0 (no cooldown) so existing tests are unaffected.
+            // Tests for #115 set this explicitly.
+            payout_cooldown_seconds: 0u64,
         }
     }
 
@@ -415,9 +417,8 @@ mod tests {
         let member = Address::generate(&env);
         let evidence = BytesN::from_array(&env, &[0u8; 32]);
         let result = client.try_raise_dispute(&member, &evidence);
-        // Circle is PENDING (not full) — but raise_dispute only checks for DISPUTED/COMPLETED status
-        // So any member (even non-member) can raise a dispute on any circle
-        assert!(result.is_ok());
+        // Circle is PENDING (not full) — raise_dispute requires STATUS_ACTIVE.
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
     }
 
     #[test]
@@ -664,15 +665,19 @@ mod tests {
     fn test_raise_dispute_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
+        // Both members must join to activate the circle before a dispute can be raised.
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
 
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_ok());
         assert_eq!(client.get_status().status, 4u32);
@@ -682,15 +687,18 @@ mod tests {
     fn test_raise_dispute_duplicate() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
 
         client.try_raise_dispute(&member, &evidence_hash).unwrap().unwrap();
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_err());
@@ -700,15 +708,18 @@ mod tests {
     fn test_resolve_dispute_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
         client.try_raise_dispute(&member, &evidence_hash).unwrap().unwrap();
 
         assert!(client.try_resolve_dispute(&admin, &1u32).is_ok()); // RESOLVE_DISMISS = 1
@@ -861,6 +872,8 @@ fn create_config(env: &Env, token: &Address) -> crate::types::CircleConfig {
         grace_period_seconds: 0,
         max_strikes: 3,
         slug: String::from_str(env, "test-circle"),
+        // Default to 0 (no cooldown) so existing tests are unaffected.
+        payout_cooldown_seconds: 0,
     }
 }
 
@@ -984,11 +997,16 @@ fn test_auth_trigger_payout_and_admin_setters() {
 #[test]
 fn test_resolve_dispute_unauthorized() {
     let env = Env::default();
-    let (client, _admin, _token) = setup_circle(&env);
+    let (client, _admin, token) = setup_circle(&env);
     let member = Address::generate(&env);
+    let other = Address::generate(&env);
     let stranger = Address::generate(&env);
 
+    // Circle requires 2 members to become ACTIVE before a dispute can be raised.
+    mint_tokens(&env, &token, &member, 10_000);
+    mint_tokens(&env, &token, &other, 10_000);
     client.join(&member);
+    client.join(&other);
     client.raise_dispute(&member, &soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
 
     let result = client.try_resolve_dispute(&stranger, &1u32);
@@ -1031,5 +1049,256 @@ fn test_trigger_payout_transfers_tokens_and_deposits_fee() {
     assert_eq!(
         token_client.balance(&member_one) + token_client.balance(&member_two),
         190_i128
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests for issue #115 — payout_cooldown_seconds
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Helper: build a 2-member FIXED circle with `cooldown` seconds configured,
+/// join both members, contribute for round 0, and return the setup.
+fn setup_cooldown_circle<'a>(
+    env: &'a Env,
+    cooldown: u64,
+) -> (CircleClient<'a>, Address, Address) {
+    env.mock_all_auths();
+    let token_admin = Address::generate(env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let mut config = create_config(env, &token);
+    config.payout_cooldown_seconds = cooldown;
+    config.max_members = 2;
+    config.payout_type = crate::types::PAYOUT_FIXED;
+    config.total_rounds = 2;
+    let admin = config.organizer.clone();
+    let factory = Address::generate(env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+    let client = CircleClient::new(env, &contract_id);
+    let m1 = Address::generate(env);
+    let m2 = Address::generate(env);
+    mint_tokens(env, &token, &m1, 10_000);
+    mint_tokens(env, &token, &m2, 10_000);
+    client.join(&m1);
+    client.join(&m2);
+    client.contribute(&m1, &100_i128, &0_u32);
+    client.contribute(&m2, &100_i128, &0_u32);
+    (client, admin, token)
+}
+
+/// #115 — happy path: first payout succeeds even with a cooldown configured
+/// because `last_payout_timestamp` starts at 0 (never paid).
+#[test]
+fn test_payout_cooldown_first_payout_always_allowed() {
+    let env = Env::default();
+    // Set ledger timestamp well after t=0 so the cooldown check could fire if
+    // it is incorrectly applied to the first payout.
+    env.ledger().set_timestamp(1_000_000);
+    let (client, admin, _token) = setup_cooldown_circle(&env, 86_400 /* 1 day */);
+    // First payout must succeed — cooldown guard only activates after the first.
+    assert!(
+        client.try_trigger_payout(&admin, &0_u32).is_ok(),
+        "first payout must always succeed regardless of cooldown"
+    );
+    // last_payout_timestamp should now be set.
+    let status = client.get_status();
+    assert_eq!(status.last_payout_timestamp, 1_000_000);
+}
+
+/// #115 — cooldown blocked: second payout called immediately is rejected.
+#[test]
+fn test_payout_cooldown_blocks_second_call_within_window() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1_000_000);
+    let (client, admin, token) = setup_cooldown_circle(&env, 3_600 /* 1 hour */);
+    // First payout at t=1_000_000.
+    client.trigger_payout(&admin, &0_u32);
+
+    // Contribute for round 1 immediately (no time advance).
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    // Grab the existing members from the circle for round-1 contributions.
+    // It's easier to just use the same token to fund fresh addresses —
+    // but for this test we only care about the rejection, not the contribution.
+    // Attempt to trigger payout for round 1 before cooldown expires.
+    let result = client.try_trigger_payout(&admin, &1_u32);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::PayoutCooldownActive)),
+        "second payout within cooldown window must be rejected with PayoutCooldownActive"
+    );
+}
+
+/// #115 — cooldown passes: second payout succeeds after enough time elapses.
+#[test]
+fn test_payout_cooldown_passes_after_window() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1_000_000);
+    let (client, admin, token) = setup_cooldown_circle(&env, 3_600 /* 1 hour */);
+    // First payout at t=1_000_000.
+    client.trigger_payout(&admin, &0_u32);
+
+    // Advance time past the cooldown window.
+    env.ledger().set_timestamp(1_000_000 + 3_600 + 1);
+
+    // Contribute for round 1.
+    let members = client.get_members();
+    let m1 = members.get(0).unwrap().address;
+    let m2 = members.get(1).unwrap().address;
+    mint_tokens(&env, &token, &m1, 10_000);
+    mint_tokens(&env, &token, &m2, 10_000);
+    client.contribute(&m1, &100_i128, &1_u32);
+    client.contribute(&m2, &100_i128, &1_u32);
+
+    // Should succeed now that the cooldown has elapsed.
+    assert!(
+        client.try_trigger_payout(&admin, &1_u32).is_ok(),
+        "payout after cooldown window must succeed"
+    );
+}
+
+/// #115 — zero cooldown: back-to-back payouts are allowed when cooldown = 0.
+#[test]
+fn test_payout_cooldown_zero_allows_immediate_repeat() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1_000_000);
+    let (client, admin, token) = setup_cooldown_circle(&env, 0 /* no cooldown */);
+    client.trigger_payout(&admin, &0_u32);
+
+    let members = client.get_members();
+    let m1 = members.get(0).unwrap().address;
+    let m2 = members.get(1).unwrap().address;
+    mint_tokens(&env, &token, &m1, 10_000);
+    mint_tokens(&env, &token, &m2, 10_000);
+    client.contribute(&m1, &100_i128, &1_u32);
+    client.contribute(&m2, &100_i128, &1_u32);
+
+    // No time advance — must succeed because cooldown is disabled.
+    assert!(
+        client.try_trigger_payout(&admin, &1_u32).is_ok(),
+        "with cooldown=0, back-to-back payouts must succeed"
+    );
+}
+
+/// #115 — get_status exposes new fields with correct defaults for old circles.
+#[test]
+fn test_payout_cooldown_fields_present_on_new_circle() {
+    let env = Env::default();
+    let (client, _admin, _token) = setup_cooldown_circle(&env, 7_200);
+    let status = client.get_status();
+    assert_eq!(status.payout_cooldown_seconds, 7_200);
+    assert_eq!(status.last_payout_timestamp, 0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests for issue #117 — zero net payout guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// #117 — happy path: when fee_bps = 10000 (100%), net = 0 and payout must be
+/// rejected with ZeroPayoutAmount rather than executing a zero-value transfer.
+#[test]
+fn test_zero_net_payout_blocked_when_full_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let mut config = create_config(&env, &token);
+    config.max_members = 2;
+    config.contribution_amount = 1_i128; // tiny contributions
+    config.payout_type = crate::types::PAYOUT_FIXED;
+    config.total_rounds = 2;
+    config.payout_cooldown_seconds = 0;
+    let admin = config.organizer.clone();
+    let factory = Address::generate(&env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    // Set fee to 100% so net = pool - fee = 0.
+    client.set_fee_bps(&admin, &10_000u32);
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    mint_tokens(&env, &token, &m1, 10_000);
+    mint_tokens(&env, &token, &m2, 10_000);
+    client.join(&m1);
+    client.join(&m2);
+    client.contribute(&m1, &1_i128, &0_u32);
+    client.contribute(&m2, &1_i128, &0_u32);
+
+    let result = client.try_trigger_payout(&admin, &0_u32);
+    assert_eq!(
+        result,
+        Err(Ok(CircleError::ZeroPayoutAmount)),
+        "trigger_payout with 100% fee must return ZeroPayoutAmount"
+    );
+}
+
+/// #117 — normal fee: payout succeeds and net > 0 for reasonable fee.
+#[test]
+fn test_nonzero_net_payout_succeeds_with_reasonable_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let mut config = create_config(&env, &token);
+    config.max_members = 2;
+    config.contribution_amount = 100_i128;
+    config.payout_type = crate::types::PAYOUT_FIXED;
+    config.total_rounds = 2;
+    config.payout_cooldown_seconds = 0;
+    let admin = config.organizer.clone();
+    let factory = Address::generate(&env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    // 5% fee → net = 190 on pool of 200.
+    client.set_fee_bps(&admin, &500u32);
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    mint_tokens(&env, &token, &m1, 10_000);
+    mint_tokens(&env, &token, &m2, 10_000);
+    client.join(&m1);
+    client.join(&m2);
+    client.contribute(&m1, &100_i128, &0_u32);
+    client.contribute(&m2, &100_i128, &0_u32);
+
+    // Must succeed — net = 190 > 0.
+    assert!(
+        client.try_trigger_payout(&admin, &0_u32).is_ok(),
+        "payout with 5% fee must succeed since net > 0"
+    );
+}
+
+/// #117 — zero fee: payout with no fee configured still succeeds (net == pool).
+#[test]
+fn test_nonzero_net_payout_succeeds_with_zero_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let mut config = create_config(&env, &token);
+    config.max_members = 2;
+    config.contribution_amount = 100_i128;
+    config.payout_type = crate::types::PAYOUT_FIXED;
+    config.total_rounds = 2;
+    config.payout_cooldown_seconds = 0;
+    let admin = config.organizer.clone();
+    let factory = Address::generate(&env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+    let client = CircleClient::new(&env, &contract_id);
+    // No set_fee_bps call → default 0%.
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    mint_tokens(&env, &token, &m1, 10_000);
+    mint_tokens(&env, &token, &m2, 10_000);
+    client.join(&m1);
+    client.join(&m2);
+    client.contribute(&m1, &100_i128, &0_u32);
+    client.contribute(&m2, &100_i128, &0_u32);
+
+    assert!(
+        client.try_trigger_payout(&admin, &0_u32).is_ok(),
+        "payout with 0% fee must succeed"
     );
 }

@@ -52,6 +52,7 @@ fn test_circle_lifecycle_with_fees() {
         grace_period_seconds: 86400u64,
         max_strikes: 3u32,
         slug: String::from_str(&env, "integration-test"),
+        payout_cooldown_seconds: 0u64,
     };
 
     let admin = organizer.clone();
