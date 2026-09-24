@@ -1159,6 +1159,82 @@ fn test_trigger_payout_transfer_failure_propagates_and_rolls_back() {
 }
 
 #[test]
+fn test_circle_graduation_rewards_full_participants_only() {
+    let env = Env::default();
+    let (client, admin, token) = setup_circle(&env);
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    mint_tokens(&env, &token, &m1, 100000_0000000);
+    mint_tokens(&env, &token, &m2, 100000_0000000);
+    client.join(&m1);
+    client.join(&m2);
+
+    // Both contribute to round 0; only m1 stays for every round.
+    client
+        .try_contribute(&m1, &100_i128, &0_u32)
+        .unwrap()
+        .unwrap();
+    client
+        .try_contribute(&m2, &100_i128, &0_u32)
+        .unwrap()
+        .unwrap();
+    client.try_trigger_payout(&admin, &0_u32).unwrap().unwrap();
+
+    client
+        .try_contribute(&m1, &100_i128, &1_u32)
+        .unwrap()
+        .unwrap();
+    // Top up the contract so the round-1 pool (2 x 100) is fully covered;
+    // m2 did not contribute this round. Simulates externally-arrived funds.
+    mint_tokens(&env, &token, &client.address, 100);
+    client.try_trigger_payout(&admin, &1_u32).unwrap().unwrap();
+
+    assert_eq!(client.get_status().status, 2u32); // STATUS_COMPLETED
+
+    // Only m1 participated in every round.
+    assert_eq!(client.get_graduated_count(), 1u32);
+}
+
+#[test]
+fn test_circle_graduation_handles_registry_unavailable() {
+    let env = Env::default();
+    let (client, admin, token) = setup_circle(&env);
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    mint_tokens(&env, &token, &m1, 100000_0000000);
+    mint_tokens(&env, &token, &m2, 100000_0000000);
+    client.join(&m1);
+    client.join(&m2);
+
+    client
+        .try_contribute(&m1, &100_i128, &0_u32)
+        .unwrap()
+        .unwrap();
+    client
+        .try_contribute(&m2, &100_i128, &0_u32)
+        .unwrap()
+        .unwrap();
+
+    // No reputation registry configured: graduation must still succeed via
+    // the built-in scoring fallback (graceful degradation).
+    client.try_trigger_payout(&admin, &0_u32).unwrap().unwrap();
+    client
+        .try_contribute(&m1, &100_i128, &1_u32)
+        .unwrap()
+        .unwrap();
+    client
+        .try_contribute(&m2, &100_i128, &1_u32)
+        .unwrap()
+        .unwrap();
+    client.try_trigger_payout(&admin, &1_u32).unwrap().unwrap();
+
+    assert_eq!(client.get_status().status, 2u32);
+    assert_eq!(client.get_graduated_count(), 2u32);
+}
+
+#[test]
 fn test_batch_payout_rejects_more_than_ten_recipients() {
     let env = Env::default();
     let (client, admin, _token) = setup_circle(&env);

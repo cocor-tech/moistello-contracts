@@ -689,6 +689,58 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
                 }
             }
         }
+
+        // Graduation (#351): reward members who participated in every round.
+        // Active members who missed rounds keep their per-round reputation but
+        // do not receive the completion boost.
+        let total_rounds = circle.total_rounds;
+        let mut graduated_count = 0u32;
+        for i in 0..members.len() {
+            let m = members.get(i).ok_or(CircleError::NotInitialized)?;
+            if m.status != MEMBER_ACTIVE {
+                continue;
+            }
+            let mut rounds_paid = 0u32;
+            for j in 0..all_contributions.len() {
+                let c = all_contributions.get(j).ok_or(CircleError::VecAccessError)?;
+                if c.member == m.address {
+                    rounds_paid = rounds_paid.checked_add(1).ok_or(CircleError::InvalidAmount)?;
+                }
+            }
+            if rounds_paid < total_rounds {
+                continue;
+            }
+            graduated_count = graduated_count.checked_add(1).ok_or(CircleError::InvalidAmount)?;
+            let mut fallback = true;
+            if let Some(registry) = &registry_opt {
+                let args: soroban_sdk::Vec<soroban_sdk::Val> =
+                    (m.address.clone(), 2u32, GRADUATION_BOOST).into_val(env);
+                if env
+                    .try_invoke_contract::<(), soroban_sdk::Error>(
+                        registry,
+                        &soroban_sdk::Symbol::new(env, "record"),
+                        args,
+                    )
+                    .is_ok()
+                {
+                    fallback = false;
+                }
+            }
+            if fallback {
+                scoring::record_circle_completion(env, &m.address);
+            }
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::GraduatedCount, &graduated_count);
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("graduated")),
+            CircleGraduated {
+                graduated: graduated_count,
+                active: active_count,
+                boost: GRADUATION_BOOST,
+            },
+        );
     }
     Ok(())
 }
@@ -1296,6 +1348,14 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
 ///
 /// # Panics
 /// Never panics. Returns default Circle if storage is empty.
+/// Returns the number of members who graduated (participated in every round)
+/// when this circle completed. Zero unless the circle has completed (#351).
+pub fn get_graduated_count(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::GraduatedCount)
+        .unwrap_or(0)
+}
 pub fn get_status(env: &Env) -> Circle {
     env.storage()
         .instance()

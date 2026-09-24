@@ -16,6 +16,9 @@ pub const MEMBER_DEFAULTED: u32 = 2;
 pub const RESOLVE_DISMISS: u32 = 1;
 pub const RESOLVE_PENALIZE: u32 = 2;
 pub const RESOLVE_FORCE_PAYOUT: u32 = 3;
+// Reputation boost awarded to members who participate in every round of a
+// completed circle (#351).
+pub const GRADUATION_BOOST: u32 = 100;
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Circle {
@@ -122,6 +125,7 @@ pub enum DataKey {
     ReputationRegistry,
     OracleContract,
     FallbackOracle,
+    GraduatedCount,
 }
 #[contracterror]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +224,14 @@ pub struct MemberDefaulted {
 #[derive(Clone, Debug, Default)]
 pub struct CircleCompleted {
     pub total_payouts: i128,
+}
+// Emitted when a completed circle graduates its fully-participating members (#351).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CircleGraduated {
+    pub graduated: u32,
+    pub active: u32,
+    pub boost: u32,
 }
 #[contracttype]
 #[derive(Clone, Debug)]
