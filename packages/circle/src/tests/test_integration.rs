@@ -35,7 +35,12 @@ fn test_circle_lifecycle_with_fees() {
     let organizer = Address::generate(&env);
     let token_admin = Address::generate(&env);
     let token = env.register_stellar_asset_contract(token_admin.clone());
-    let treasury = Address::generate(&env); // Simulated treasury address
+
+    // Deploy a real treasury contract — trigger_payout cross-calls
+    // deposit_fee on it, which fails on a plain generated address.
+    let treasury = env.register(treasury::Treasury, ());
+    let treasury_client = treasury::TreasuryClient::new(&env, &treasury);
+    treasury_client.init(&organizer, &token);
 
     let config = crate::types::CircleConfig {
         organizer: organizer.clone(),

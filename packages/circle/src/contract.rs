@@ -212,7 +212,8 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
 /// - `Err(CircleError::ContractPaused)` if the contract is paused
 /// - `Err(CircleError::NotActive)` if reentrancy guard fails or circle status is not ACTIVE
 /// - `Err(CircleError::RoundNotCurrent)` if provided round does not match current_round
-/// - `Err(CircleError::ContributionMismatch)` if amount does not match configured contribution_amount
+/// - `Err(CircleError::ContributionTooHigh)` if amount is greater than the configured contribution_amount (overpayment)
+/// - `Err(CircleError::ContributionTooLow)` if amount is less than the configured contribution_amount (underpayment)
 /// - `Err(CircleError::NotMember)` if member has not joined the circle
 /// - `Err(CircleError::InvalidMemberStatus)` if member status is not ACTIVE
 /// - `Err(CircleError::AlreadyContributed)` if member has already contributed for this round
@@ -244,7 +245,14 @@ pub fn contribute(
         return Err(CircleError::RoundNotCurrent);
     }
     if amount != circle.contribution_amount {
-        return Err(CircleError::ContributionMismatch);
+        // Direction-specific errors give clients an exact, actionable message
+        // ("overpaid by X" / "underpaid by X") instead of a generic mismatch
+        // code (#350). The amounts themselves are readable from get_status(),
+        // keeping the error channel data-free and backward compatible.
+        if amount > circle.contribution_amount {
+            return Err(CircleError::ContributionTooHigh);
+        }
+        return Err(CircleError::ContributionTooLow);
     }
     let members: Vec<Member> = env
         .storage()

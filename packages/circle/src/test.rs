@@ -415,9 +415,8 @@ mod tests {
         let member = Address::generate(&env);
         let evidence = BytesN::from_array(&env, &[0u8; 32]);
         let result = client.try_raise_dispute(&member, &evidence);
-        // Circle is PENDING (not full) — but raise_dispute only checks for DISPUTED/COMPLETED status
-        // So any member (even non-member) can raise a dispute on any circle
-        assert!(result.is_ok());
+        // Disputes are only allowed on ACTIVE circles — a PENDING circle must reject.
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
     }
 
     #[test]
@@ -664,16 +663,20 @@ mod tests {
     fn test_raise_dispute_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let _admin = config.organizer.clone();
         
         let (token, client) = setup_test_env(&env, &mut config);
         
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
 
+        // Circle becomes ACTIVE once full; disputes require an ACTIVE circle.
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_ok());
         assert_eq!(client.get_status().status, 4u32);
     }
@@ -682,15 +685,18 @@ mod tests {
     fn test_raise_dispute_duplicate() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let _admin = config.organizer.clone();
         
         let (token, client) = setup_test_env(&env, &mut config);
         
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
 
         client.try_raise_dispute(&member, &evidence_hash).unwrap().unwrap();
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_err());
@@ -700,15 +706,18 @@ mod tests {
     fn test_resolve_dispute_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let admin = config.organizer.clone();
         
         let (token, client) = setup_test_env(&env, &mut config);
         
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
         client.try_raise_dispute(&member, &evidence_hash).unwrap().unwrap();
 
         assert!(client.try_resolve_dispute(&admin, &1u32).is_ok()); // RESOLVE_DISMISS = 1
@@ -876,7 +885,7 @@ fn setup_circle(env: &Env) -> (CircleClient<'_>, Address, Address) {
 }
 
 #[test]
-fn test_contribute_rejects_amount_above_circle_max() {
+fn test_contribute_rejects_overpayment() {
     let env = Env::default();
     let (client, _admin, token) = setup_circle(&env);
     let member = Address::generate(&env);
@@ -886,8 +895,47 @@ fn test_contribute_rejects_amount_above_circle_max() {
     client.join(&other);
 
     mint_tokens(&env, &token, &member, 200);
+    // Overpayment (amount > configured contribution_amount) is rejected.
     let result = client.try_contribute(&member, &101_i128, &0_u32);
-    assert_eq!(result, Err(Ok(CircleError::ContributionMismatch)));
+    assert_eq!(result, Err(Ok(CircleError::ContributionTooHigh)));
+}
+
+#[test]
+fn test_contribute_rejects_underpayment() {
+    let env = Env::default();
+    let (client, _admin, token) = setup_circle(&env);
+    let member = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    client.join(&member);
+    client.join(&other);
+
+    mint_tokens(&env, &token, &member, 200);
+    // Underpayment (amount < configured contribution_amount) is rejected.
+    let result = client.try_contribute(&member, &99_i128, &0_u32);
+    assert_eq!(result, Err(Ok(CircleError::ContributionTooLow)));
+}
+
+#[test]
+fn test_contribute_accepts_exact_match() {
+    let env = Env::default();
+    let (client, _admin, token) = setup_circle(&env);
+    let member = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    client.join(&member);
+    client.join(&other);
+
+    mint_tokens(&env, &token, &member, 200);
+    // Exact match with the configured contribution_amount succeeds.
+    client
+        .try_contribute(&member, &100_i128, &0_u32)
+        .unwrap()
+        .unwrap();
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&member), 100_i128);
+    assert_eq!(token_client.balance(&client.address), 100_i128);
 }
 
 #[test]
@@ -986,9 +1034,12 @@ fn test_resolve_dispute_unauthorized() {
     let env = Env::default();
     let (client, _admin, _token) = setup_circle(&env);
     let member = Address::generate(&env);
+    let other = Address::generate(&env);
     let stranger = Address::generate(&env);
 
+    // Disputes require an ACTIVE circle, so fill it first.
     client.join(&member);
+    client.join(&other);
     client.raise_dispute(&member, &soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
 
     let result = client.try_resolve_dispute(&stranger, &1u32);
@@ -1034,46 +1085,40 @@ fn test_trigger_payout_transfers_tokens_and_deposits_fee() {
     );
 }
 
-    #[test]
-    fn test_cancel_circle_blocked_after_contribution() {
-        let env = Env::default();
-        let mut config = create_config(&env);
-        config.max_members = 2u32;
-        let admin = config.organizer.clone();
-        let (token, client) = setup_test_env(&env, &mut config);
+#[test]
+fn test_cancel_circle_blocked_after_contribution() {
+    let env = Env::default();
+    let (client, admin, token) = setup_circle(&env);
 
-        env.mock_all_auths();
-        let m1 = Address::generate(&env);
-        let m2 = Address::generate(&env);
-        mint_tokens(&env, &token, &m1, 100000_0000000);
-        mint_tokens(&env, &token, &m2, 100000_0000000);
-        client.try_join(&m1).unwrap().unwrap();
-        client.try_join(&m2).unwrap().unwrap();
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    mint_tokens(&env, &token, &m1, 100000_0000000);
+    mint_tokens(&env, &token, &m2, 100000_0000000);
+    client.join(&m1);
+    client.join(&m2);
 
-        // Both members have joined — circle transitions to ACTIVE. Record a contribution.
-        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap().unwrap();
+    // Both members have joined — circle transitions to ACTIVE. Record a contribution.
+    client
+        .try_contribute(&m1, &100_i128, &0_u32)
+        .unwrap()
+        .unwrap();
 
-        // Organizer must not be able to cancel once contributions exist.
-        let result = client.try_cancel_circle(&admin);
-        assert_eq!(result, Err(Ok(CircleError::NotActive)));
-    }
+    // Organizer must not be able to cancel once the circle is active.
+    let result = client.try_cancel_circle(&admin);
+    assert_eq!(result, Err(Ok(CircleError::NotActive)));
+}
 
-    #[test]
-    fn test_cancel_circle_allowed_before_contribution() {
-        let env = Env::default();
-        let mut config = create_config(&env);
-        config.max_members = 5u32;
-        let admin = config.organizer.clone();
-        let (token, client) = setup_test_env(&env, &mut config);
+#[test]
+fn test_cancel_circle_allowed_before_contribution() {
+    let env = Env::default();
+    let (client, admin, _token) = setup_circle(&env);
 
-        env.mock_all_auths();
-        let m1 = Address::generate(&env);
-        mint_tokens(&env, &token, &m1, 100000_0000000);
-        client.try_join(&m1).unwrap().unwrap();
+    let m1 = Address::generate(&env);
+    client.join(&m1);
 
-        // Circle is still PENDING (not full) and no contributions — cancel must succeed.
-        let result = client.try_cancel_circle(&admin);
-        assert!(result.is_ok());
-        assert_eq!(client.get_status().status, 3u32); // STATUS_CANCELLED
-    }
+    // Only one member joined — circle is still PENDING with no contributions,
+    // so cancellation must succeed.
+    let result = client.try_cancel_circle(&admin);
+    assert!(result.is_ok());
+    assert_eq!(client.get_status().status, 3u32); // STATUS_CANCELLED
 }
