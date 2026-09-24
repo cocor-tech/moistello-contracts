@@ -20,6 +20,7 @@ pub use types::CircleError;
     pub fn cancel_circle(env:Env,caller:Address)->Result<(),types::CircleError>{contract::cancel_circle(&env,&caller)}
     pub fn cancel(env:Env,caller:Address)->Result<(),types::CircleError>{contract::cancel(&env,&caller)}
     pub fn report_late(env:Env,reporter:Address,late_member:Address,round:u32)->Result<(),types::CircleError>{contract::report_late(&env,&reporter,&late_member,round)}
+    pub fn check_contribution_deadline(env:Env)->Result<(),types::CircleError>{contract::check_contribution_deadline(&env)}
     pub fn dispute(env:Env,member:Address,evidence_hash:BytesN<32>)->Result<(),types::CircleError>{contract::dispute(&env,&member,&evidence_hash)}
     pub fn raise_dispute(env:Env,member:Address,evidence_hash:BytesN<32>)->Result<(),types::CircleError>{contract::raise_dispute(&env,&member,&evidence_hash)}
     pub fn resolve_dispute(env:Env,admin:Address,resolution:u32)->Result<(),types::CircleError>{contract::resolve_dispute(&env,&admin,resolution)}

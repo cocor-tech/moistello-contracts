@@ -123,6 +123,10 @@ pub fn init_vrf(env: &Env, admin_key: Option<&BytesN<32>>) -> Result<(), VrfErro
 /// * `VrfError::NotInitialized` if `init_vrf` has not been called
 /// * `VrfError::Overflow` if the internal counter overflows
 pub fn evaluate_vrf(env: &Env, input_seed: u32) -> Result<u32, VrfError> {
+    evaluate_vrf_inner(env, input_seed, true)
+}
+
+fn evaluate_vrf_inner(env: &Env, input_seed: u32, emit_event: bool) -> Result<u32, VrfError> {
     let counter: u32 = env
         .storage()
         .instance()
@@ -139,12 +143,14 @@ pub fn evaluate_vrf(env: &Env, input_seed: u32) -> Result<u32, VrfError> {
     let next_counter = counter.checked_add(1).ok_or(VrfError::Overflow)?;
     env.storage().instance().set(&COUNTER_KEY, &next_counter);
 
-    VrfEvaluated {
-        input_seed,
-        vrf_output: output,
-        counter,
+    if emit_event {
+        VrfEvaluated {
+            input_seed,
+            vrf_output: output,
+            counter,
+        }
+        .publish(env);
     }
-    .publish(env);
 
     Ok(output)
 }
@@ -226,7 +232,7 @@ pub fn shuffle_positions(env: &Env, n: u32) -> Result<Vec<u32>, VrfError> {
     let mut i = n;
     while i > 1 {
         i = i.saturating_sub(1);
-        let vrf_val = evaluate_vrf(env, i)?;
+        let vrf_val = evaluate_vrf_inner(env, i, false)?;
         let j = vrf_val % (i + 1);
         let a = shuffled.get(i).unwrap_or(0u32);
         let b = shuffled.get(j).unwrap_or(0u32);
