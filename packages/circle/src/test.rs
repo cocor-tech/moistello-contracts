@@ -415,9 +415,9 @@ mod tests {
         let member = Address::generate(&env);
         let evidence = BytesN::from_array(&env, &[0u8; 32]);
         let result = client.try_raise_dispute(&member, &evidence);
-        // Circle is PENDING (not full) — but raise_dispute only checks for DISPUTED/COMPLETED status
-        // So any member (even non-member) can raise a dispute on any circle
-        assert!(result.is_ok());
+        // Circle is PENDING (not full) and caller is not a member —
+        // disputes require an ACTIVE circle and active membership.
+        assert!(result.is_err());
     }
 
     #[test]
@@ -673,6 +673,11 @@ mod tests {
 
         env.mock_all_auths();
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        // Fill the circle so it becomes ACTIVE (disputes require ACTIVE status).
+        for _ in 0..4 {
+            let extra = Address::generate(&env);
+            client.try_join(&extra).unwrap().unwrap();
+        }
 
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_ok());
         assert_eq!(client.get_status().status, 4u32);
@@ -691,6 +696,10 @@ mod tests {
 
         env.mock_all_auths();
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        for _ in 0..4 {
+            let extra = Address::generate(&env);
+            client.try_join(&extra).unwrap().unwrap();
+        }
 
         client.try_raise_dispute(&member, &evidence_hash).unwrap().unwrap();
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_err());
@@ -709,6 +718,10 @@ mod tests {
 
         env.mock_all_auths();
         mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        for _ in 0..4 {
+            let extra = Address::generate(&env);
+            client.try_join(&extra).unwrap().unwrap();
+        }
         client.try_raise_dispute(&member, &evidence_hash).unwrap().unwrap();
 
         assert!(client.try_resolve_dispute(&admin, &1u32).is_ok()); // RESOLVE_DISMISS = 1
@@ -987,8 +1000,10 @@ fn test_resolve_dispute_unauthorized() {
     let (client, _admin, _token) = setup_circle(&env);
     let member = Address::generate(&env);
     let stranger = Address::generate(&env);
+    let other = Address::generate(&env);
 
     client.join(&member);
+    client.join(&other);
     client.raise_dispute(&member, &soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
 
     let result = client.try_resolve_dispute(&stranger, &1u32);
