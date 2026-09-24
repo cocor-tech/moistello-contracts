@@ -126,6 +126,7 @@ pub enum DataKey {
     OracleContract,
     FallbackOracle,
     GraduatedCount,
+    Description,
 }
 #[contracterror]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,6 +175,11 @@ pub enum CircleError {
     ContributionTooLow = 42,
     PayoutFailed = 43,
     FeeTransferFailed = 44,
+    EmptySlug = 45,
+    SlugTooLong = 46,
+    InvalidName = 47,
+    DescriptionTooLong = 48,
+    NothingToUpdate = 49,
 }
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -207,6 +213,15 @@ pub struct PayoutFailed {
     pub recipient: Address,
     pub amount: i128,
     pub reason: String,
+}
+// Emitted when circle metadata (name, slug, description) is updated (#357).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MetadataUpdated {
+    pub updated_by: Address,
+    pub name: String,
+    pub slug: String,
+    pub description: String,
 }
 #[contracttype]
 #[derive(Clone, Debug)]

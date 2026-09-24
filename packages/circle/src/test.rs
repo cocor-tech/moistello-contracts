@@ -1235,6 +1235,112 @@ fn test_circle_graduation_handles_registry_unavailable() {
 }
 
 #[test]
+fn test_update_metadata_happy_path() {
+    let env = Env::default();
+    let (client, admin, _token) = setup_circle(&env);
+
+    client
+        .update_metadata(
+            &admin,
+            &Some(soroban_sdk::String::from_str(&env, "Renamed Circle")),
+            &Some(soroban_sdk::String::from_str(&env, "renamed-circle")),
+            &Some(soroban_sdk::String::from_str(&env, "A brand new description")),
+        );
+
+    let status = client.get_status();
+    assert_eq!(status.name, soroban_sdk::String::from_str(&env, "Renamed Circle"));
+    assert_eq!(status.slug, soroban_sdk::String::from_str(&env, "renamed-circle"));
+    assert_eq!(
+        client.get_description(),
+        soroban_sdk::String::from_str(&env, "A brand new description")
+    );
+}
+
+#[test]
+fn test_update_metadata_partial_update() {
+    let env = Env::default();
+    let (client, admin, _token) = setup_circle(&env);
+
+    // Update only the description; name and slug must remain untouched.
+    client
+        .update_metadata(
+            &admin,
+            &None,
+            &None,
+            &Some(soroban_sdk::String::from_str(&env, "Only a description")),
+        );
+
+    let status = client.get_status();
+    assert_eq!(status.name, soroban_sdk::String::from_str(&env, "Test Circle"));
+    assert_eq!(status.slug, soroban_sdk::String::from_str(&env, "test-circle"));
+    assert_eq!(
+        client.get_description(),
+        soroban_sdk::String::from_str(&env, "Only a description")
+    );
+}
+
+#[test]
+fn test_update_metadata_rejects_unauthorized() {
+    let env = Env::default();
+    let (client, _admin, _token) = setup_circle(&env);
+    let stranger = Address::generate(&env);
+
+    let result = client.try_update_metadata(
+        &stranger,
+        &Some(soroban_sdk::String::from_str(&env, "Hacked")),
+        &None,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(CircleError::Unauthorized)));
+}
+
+#[test]
+fn test_update_metadata_rejects_invalid_values() {
+    let env = Env::default();
+    let (client, admin, _token) = setup_circle(&env);
+
+    // Empty name.
+    let result = client.try_update_metadata(
+        &admin,
+        &Some(soroban_sdk::String::from_str(&env, "")),
+        &None,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(CircleError::InvalidName)));
+
+    // Name longer than 64 chars.
+    let long_name = soroban_sdk::String::from_str(&env, &"x".repeat(65));
+    let result = client.try_update_metadata(&admin, &Some(long_name), &None, &None);
+    assert_eq!(result, Err(Ok(CircleError::InvalidName)));
+
+    // Empty slug.
+    let result = client.try_update_metadata(
+        &admin,
+        &None,
+        &Some(soroban_sdk::String::from_str(&env, "")),
+        &None,
+    );
+    assert_eq!(result, Err(Ok(CircleError::EmptySlug)));
+
+    // Slug longer than 32 chars.
+    let long_slug = soroban_sdk::String::from_str(&env, &"s".repeat(33));
+    let result = client.try_update_metadata(&admin, &None, &Some(long_slug), &None);
+    assert_eq!(result, Err(Ok(CircleError::SlugTooLong)));
+
+    // Description longer than 256 chars.
+    let long_desc = soroban_sdk::String::from_str(&env, &"d".repeat(257));
+    let result = client.try_update_metadata(&admin, &None, &None, &Some(long_desc));
+    assert_eq!(result, Err(Ok(CircleError::DescriptionTooLong)));
+
+    // Nothing to update.
+    let result = client.try_update_metadata(&admin, &None, &None, &None);
+    assert_eq!(result, Err(Ok(CircleError::NothingToUpdate)));
+
+    // Nothing changed.
+    assert_eq!(client.get_status().name, soroban_sdk::String::from_str(&env, "Test Circle"));
+}
+
+#[test]
 fn test_batch_payout_rejects_more_than_ten_recipients() {
     let env = Env::default();
     let (client, admin, _token) = setup_circle(&env);

@@ -1356,6 +1356,110 @@ pub fn get_graduated_count(env: &Env) -> u32 {
         .get(&DataKey::GraduatedCount)
         .unwrap_or(0)
 }
+/// Validates and updates circle metadata (name, slug, description).
+///
+/// Critical economic fields (token, contribution_amount, members, rounds)
+/// are intentionally NOT updatable. Only the admin (stored Admin) can call
+/// this (#357).
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Address authorizing the update (must match stored admin)
+/// - `name`: New name, or `None` to keep the current one
+/// - `slug`: New slug, or `None` to keep the current one
+/// - `description`: New description, or `None` to keep the current one
+///
+/// # Returns
+/// - `Ok(())` on success (a `MetadataUpdated` event is emitted)
+/// - `Err(CircleError::Unauthorized)` if admin does not match the stored admin
+/// - `Err(CircleError::InvalidName)` if name is empty or longer than 64 chars
+/// - `Err(CircleError::EmptySlug)` if slug is empty
+/// - `Err(CircleError::SlugTooLong)` if slug is longer than 32 chars
+/// - `Err(CircleError::DescriptionTooLong)` if description is longer than 256 chars
+/// - `Err(CircleError::NothingToUpdate)` if all three arguments are None
+///
+/// # Authorization
+/// Requires authentication from the stored admin address.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
+pub fn update_metadata(
+    env: &Env,
+    admin: &Address,
+    name: Option<soroban_sdk::String>,
+    slug: Option<soroban_sdk::String>,
+    description: Option<soroban_sdk::String>,
+) -> Result<(), CircleError> {
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    admin.require_auth();
+    if name.is_none() && slug.is_none() && description.is_none() {
+        return Err(CircleError::NothingToUpdate);
+    }
+    let mut circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    if let Some(n) = &name {
+        let len = n.len();
+        if len == 0 || len > 64 {
+            return Err(CircleError::InvalidName);
+        }
+    }
+    if let Some(s) = &slug {
+        let len = s.len();
+        if len == 0 {
+            return Err(CircleError::EmptySlug);
+        }
+        if len > 32 {
+            return Err(CircleError::SlugTooLong);
+        }
+    }
+    if let Some(d) = &description {
+        if d.len() > 256 {
+            return Err(CircleError::DescriptionTooLong);
+        }
+    }
+    if let Some(n) = name {
+        circle.name = n;
+    }
+    if let Some(s) = slug {
+        circle.slug = s;
+    }
+    if let Some(d) = description {
+        env.storage().instance().set(&DataKey::Description, &d);
+    }
+    env.storage().instance().set(&DataKey::Circle, &circle);
+    let current_description: soroban_sdk::String = env
+        .storage()
+        .instance()
+        .get(&DataKey::Description)
+        .unwrap_or_else(|| soroban_sdk::String::from_str(env, ""));
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("metaupd")),
+        MetadataUpdated {
+            updated_by: admin.clone(),
+            name: circle.name.clone(),
+            slug: circle.slug.clone(),
+            description: current_description,
+        },
+    );
+    Ok(())
+}
+/// Returns the circle description, or an empty string if none was set (#357).
+pub fn get_description(env: &Env) -> soroban_sdk::String {
+    env.storage()
+        .instance()
+        .get(&DataKey::Description)
+        .unwrap_or_else(|| soroban_sdk::String::from_str(env, ""))
+}
 pub fn get_status(env: &Env) -> Circle {
     env.storage()
         .instance()

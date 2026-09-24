@@ -25,6 +25,8 @@ pub use types::CircleError;
     pub fn resolve_dispute(env:Env,admin:Address,resolution:u32)->Result<(),types::CircleError>{contract::resolve_dispute(&env,&admin,resolution)}
     pub fn get_status(env:Env)->types::Circle{contract::get_status(&env)}
     pub fn get_graduated_count(env:Env)->u32{contract::get_graduated_count(&env)}
+    pub fn update_metadata(env:Env,admin:Address,name:Option<soroban_sdk::String>,slug:Option<soroban_sdk::String>,description:Option<soroban_sdk::String>)->Result<(),types::CircleError>{contract::update_metadata(&env,&admin,name,slug,description)}
+    pub fn get_description(env:Env)->soroban_sdk::String{contract::get_description(&env)}
     pub fn get_members(env:Env)->soroban_sdk::Vec<types::Member>{contract::get_members(&env)}
     pub fn get_contributions(env:Env,member:Address,page:u32,page_size:u32)->soroban_sdk::Vec<types::Contribution>{contract::get_contributions(&env,&member,page,page_size)}
 
