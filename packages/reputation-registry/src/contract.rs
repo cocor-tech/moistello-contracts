@@ -210,3 +210,14 @@ pub fn unpause(env: &Env, a: &Address) -> Result<(), ReputationError> {
     }
     pause::unpause(env, a).map_err(|_| ReputationError::ContractPaused)
 }
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &soroban_sdk::BytesN<32>) -> Result<(), ReputationError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(ReputationError::NotInitialized)?;
+    if admin != &s { return Err(ReputationError::Unauthorized); }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| ReputationError::Unauthorized)
+}
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), ReputationError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(ReputationError::NotInitialized)?;
+    if admin != &s { return Err(ReputationError::Unauthorized); }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| ReputationError::Unauthorized)
+}
+pub fn get_implementation(env: &Env) -> Option<Address> { common::upgrade::get_implementation(env) }

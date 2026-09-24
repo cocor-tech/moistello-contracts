@@ -248,6 +248,17 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), EscrowError> {
     }
     pause::unpause(env, admin).map_err(|_| EscrowError::ContractPaused)
 }
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) -> Result<(), EscrowError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(EscrowError::NotInitialized)?;
+    if admin != &s { return Err(EscrowError::Unauthorized); }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| EscrowError::Unauthorized)
+}
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), EscrowError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(EscrowError::NotInitialized)?;
+    if admin != &s { return Err(EscrowError::Unauthorized); }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| EscrowError::Unauthorized)
+}
+pub fn get_implementation(env: &Env) -> Option<Address> { common::upgrade::get_implementation(env) }
 
 pub fn expire_swap(env: &Env, id: u64) -> Result<(), EscrowError> {
     pause::when_not_paused(env).map_err(|_| EscrowError::ContractPaused)?;

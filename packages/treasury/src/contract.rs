@@ -225,3 +225,14 @@ pub fn unpause(env: &Env, a: &Address) -> Result<(), TreasuryError> {
     common::access::require_self_or_admin(env, a, &s).map_err(|_| TreasuryError::Unauthorized)?;
     pause::unpause(env, a).map_err(|_| TreasuryError::ContractPaused)
 }
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &soroban_sdk::BytesN<32>) -> Result<(), TreasuryError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;
+    if admin != &s { return Err(TreasuryError::Unauthorized); }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| TreasuryError::Unauthorized)
+}
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), TreasuryError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;
+    if admin != &s { return Err(TreasuryError::Unauthorized); }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| TreasuryError::Unauthorized)
+}
+pub fn get_implementation(env: &Env) -> Option<Address> { common::upgrade::get_implementation(env) }

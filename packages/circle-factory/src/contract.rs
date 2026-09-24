@@ -181,3 +181,14 @@ pub fn pause(env: &Env, admin: &Address) -> Result<(), FactoryError> { let s: Ad
 /// # Panics
 /// Never panics. All errors are returned as typed FactoryError variants.
 pub fn unpause(env: &Env, admin: &Address) -> Result<(), FactoryError> { let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?; if admin != &s { return Err(FactoryError::Unauthorized); } pause::unpause(env, admin).map_err(|_| FactoryError::ContractPaused) }
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) -> Result<(), FactoryError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?;
+    if admin != &s { return Err(FactoryError::Unauthorized); }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| FactoryError::Unauthorized)
+}
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), FactoryError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?;
+    if admin != &s { return Err(FactoryError::Unauthorized); }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| FactoryError::Unauthorized)
+}
+pub fn get_implementation(env: &Env) -> Option<Address> { common::upgrade::get_implementation(env) }

@@ -130,6 +130,15 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     if circle.status != STATUS_PENDING {
         return Err(CircleError::NotActive);
     }
+    // Organizer conflict of interest: disallow organizer joining unless explicitly allowed (#335)
+    let allow_organizer: bool = env
+        .storage()
+        .instance()
+        .get(&DataKey::AllowOrganizerJoin)
+        .unwrap_or(false);
+    if *member == circle.organizer && !allow_organizer {
+        return Err(CircleError::OrganizerCannotJoin);
+    }
     let score = scoring::get_score(env, member);
     if score < circle.min_moi_score {
         return Err(CircleError::InsufficientMoiScore);
@@ -329,6 +338,140 @@ pub fn contribute(
     if fallback {
         scoring::record_on_time_payment(env, member, &circle.id, amount, round);
     }
+    Ok(())
+}
+
+/// Batch contribution recording with atomic rollback and gas optimization.
+///
+/// Validates ALL inputs before any state changes. If any contribution fails,
+/// the entire transaction reverts (Soroban atomicity). Reduces storage reads
+/// by loading circle, members, and contributions once.
+pub fn batch_contribute(
+    env: &Env,
+    members: &Vec<Address>,
+    amounts: &Vec<i128>,
+    round: u32,
+) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    if members.len() == 0 || members.len() != amounts.len() {
+        return Err(CircleError::InvalidAmount);
+    }
+    if members.len() > 100 {
+        return Err(CircleError::InvalidAmount);
+    }
+    // Load circle once (gas optimization)
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    if circle.status != STATUS_ACTIVE {
+        return Err(CircleError::NotActive);
+    }
+    if round != circle.current_round {
+        return Err(CircleError::RoundNotCurrent);
+    }
+    // Load members once
+    let stored_members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .ok_or(CircleError::NotInitialized)?;
+    // Build member lookup map for O(1) checks (gas optimization)
+    let mut member_status: Map<Address, u32> = Map::new(env);
+    for i in 0..stored_members.len() {
+        let m = stored_members.get(i).ok_or(CircleError::VecAccessError)?;
+        member_status.set(m.address.clone(), m.status);
+    }
+    // Load contributions and contribution map once
+    let mut contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut contribution_map: Map<(Address, u32), bool> = env
+        .storage()
+        .persistent()
+        .get(&symbol_short!("contribs"))
+        .unwrap_or_else(|| {
+            let mut m = Map::new(env);
+            for i in 0..contributions.len() {
+                if let Some(c) = contributions.get(i) {
+                    m.set((c.member.clone(), c.round), true);
+                }
+            }
+            m
+        });
+    // === Validation phase: check ALL inputs before any state changes ===
+    for i in 0..members.len() {
+        let member = members.get(i).ok_or(CircleError::VecAccessError)?;
+        let amount = amounts.get(i).ok_or(CircleError::VecAccessError)?;
+        member.require_auth();
+        if amount != circle.contribution_amount {
+            return Err(CircleError::ContributionMismatch);
+        }
+        let status = member_status.get(member.clone()).ok_or(CircleError::NotMember)?;
+        if status != MEMBER_ACTIVE {
+            return Err(CircleError::InvalidMemberStatus);
+        }
+        if contribution_map.get((member.clone(), round)).unwrap_or(false) {
+            return Err(CircleError::AlreadyContributed);
+        }
+    }
+    // === Execution phase: all validations passed, perform state changes ===
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    let now = env.ledger().timestamp();
+    let on_time = now
+        <= circle
+            .started_at
+            .checked_add(circle.contribution_deadline_seconds)
+            .ok_or(CircleError::InvalidAmount)?;
+    let circle_id = circle.id.clone();
+    let registry_opt = env.storage().instance().get::<_, Address>(&DataKey::ReputationRegistry);
+    for i in 0..members.len() {
+        let member = members.get(i).ok_or(CircleError::VecAccessError)?;
+        let amount = amounts.get(i).ok_or(CircleError::VecAccessError)?;
+        token_client.transfer(&member, &circle_id, &amount);
+        contributions.push_back(Contribution {
+            member: member.clone(),
+            round,
+            amount,
+            timestamp: now,
+            on_time,
+            time_weight: now,
+        });
+        contribution_map.set((member.clone(), round), true);
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("contrib")),
+            ContributionRecorded {
+                member: member.clone(),
+                round,
+                amount,
+                on_time,
+            },
+        );
+        // Reputation callback (best-effort)
+        let mut fallback = true;
+        if let Some(registry) = &registry_opt {
+            let args: soroban_sdk::Vec<soroban_sdk::Val> = (member.clone(), 1u32, 1u32).into_val(env);
+            if env
+                .try_invoke_contract::<(), soroban_sdk::Error>(registry, &soroban_sdk::Symbol::new(env, "record"), args)
+                .is_ok()
+            {
+                fallback = false;
+            }
+        }
+        if fallback {
+            scoring::record_on_time_payment(env, &member, &circle_id, amount, round);
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::Contributions, &contributions);
+    env.storage()
+        .persistent()
+        .set(&symbol_short!("contribs"), &contribution_map);
     Ok(())
 }
 /// Triggers payout for the current round based on the circle's payout type.
@@ -1516,8 +1659,16 @@ pub fn batch_invite(
         .persistent()
         .get(&DataKey::Members)
         .unwrap_or_else(|| Vec::new(env));
+    let allow_organizer: bool = env
+        .storage()
+        .instance()
+        .get(&DataKey::AllowOrganizerJoin)
+        .unwrap_or(false);
     for mi in 0..members.len() {
         let member = members.get(mi).ok_or(CircleError::VecAccessError)?;
+        if member == circle.organizer && !allow_organizer {
+            return Err(CircleError::OrganizerCannotJoin);
+        }
         let score = scoring::get_score(env, &member);
         if score < circle.min_moi_score {
             return Err(CircleError::InsufficientMoiScore);
@@ -1740,6 +1891,8 @@ pub fn claim_referral_bonus(
     env: &Env,
     referrer: &Address,
 ) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     let token_address: Address = env
         .storage()
         .instance()
@@ -1753,13 +1906,17 @@ pub fn claim_referral_bonus(
     token_client.transfer(&env.current_contract_address(), referrer, &contract_balance);
     Ok(())
 }
-pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
+pub fn update_streak(env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     Err(CircleError::NotImplemented)
 }
 pub fn claim_streak_bonus(
     env: &Env,
     member: &Address,
 ) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     let token_address: Address = env
         .storage()
         .instance()
@@ -1974,4 +2131,60 @@ pub fn get_oracle(env: &Env) -> Option<Address> {
 
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
+}
+
+/// Configures whether the organizer may join their own circle (#335).
+/// Default is `false` (disallow). Admin-only. Documented policy:
+/// Organizer participation creates conflict of interest (controls rounds, votes, payouts).
+/// Option 1 (default): Disallow organizer from joining. Set `allow=true` to override per-circle.
+pub fn set_allow_organizer_join(env: &Env, admin: &Address, allow: bool) -> Result<(), CircleError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    admin.require_auth();
+    env.storage().instance().set(&DataKey::AllowOrganizerJoin, &allow);
+    Ok(())
+}
+
+pub fn get_allow_organizer_join(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::AllowOrganizerJoin)
+        .unwrap_or(false)
+}
+
+/// Upgrade proxy for Circle contract (#334) — admin-only, preserves state stored in proxy/contract storage.
+/// Uses Soroban's native `deployer().update_current_contract_wasm`.
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &soroban_sdk::BytesN<32>) -> Result<(), CircleError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| CircleError::Unauthorized)
+}
+
+/// Set implementation address for proxy pattern (#334) — admin-only.
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), CircleError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| CircleError::Unauthorized)
+}
+
+pub fn get_implementation(env: &Env) -> Option<Address> {
+    common::upgrade::get_implementation(env)
 }

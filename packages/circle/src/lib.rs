@@ -45,9 +45,15 @@ pub use types::CircleError;
     pub fn set_fee_bps(env:Env,admin:Address,fee_bps:u32)->Result<(),types::CircleError>{contract::set_fee_bps(&env,&admin,fee_bps)}
     pub fn set_allowlist(env:Env,admin:Address,allowlist:soroban_sdk::Vec<Address>)->Result<(),types::CircleError>{contract::set_allowlist(&env,&admin,allowlist)}
     pub fn get_allowlist(env:Env)->soroban_sdk::Vec<Address>{contract::get_allowlist(&env)}
-    pub fn set_oracle(env:Env,admin:Address,oracle:Address)->Result<(),types::CircleError>{contract::set_oracle(&env,&admin,&oracle)}
-    pub fn set_fallback_oracle(env:Env,admin:Address,oracle:Address)->Result<(),types::CircleError>{contract::set_fallback_oracle(&env,&admin,&oracle)}
-    pub fn get_oracle(env:Env)->Option<Address>{contract::get_oracle(&env)}
-    pub fn get_fallback_oracle(env:Env)->Option<Address>{contract::get_fallback_oracle(&env)}
+     pub fn set_oracle(env:Env,admin:Address,oracle:Address)->Result<(),types::CircleError>{contract::set_oracle(&env,&admin,&oracle)}
+     pub fn set_fallback_oracle(env:Env,admin:Address,oracle:Address)->Result<(),types::CircleError>{contract::set_fallback_oracle(&env,&admin,&oracle)}
+     pub fn get_oracle(env:Env)->Option<Address>{contract::get_oracle(&env)}
+     pub fn get_fallback_oracle(env:Env)->Option<Address>{contract::get_fallback_oracle(&env)}
+     pub fn batch_contribute(env:Env,members:soroban_sdk::Vec<Address>,amounts:soroban_sdk::Vec<i128>,round:u32)->Result<(),types::CircleError>{contract::batch_contribute(&env,&members,&amounts,round)}
+     pub fn set_allow_organizer_join(env:Env,admin:Address,allow:bool)->Result<(),types::CircleError>{contract::set_allow_organizer_join(&env,&admin,allow)}
+     pub fn get_allow_organizer_join(env:Env)->bool{contract::get_allow_organizer_join(&env)}
+     pub fn upgrade(env:Env,admin:Address,new_wasm_hash:BytesN<32>)->Result<(),types::CircleError>{contract::upgrade(&env,&admin,&new_wasm_hash)}
+     pub fn set_implementation(env:Env,admin:Address,new_impl:Address)->Result<(),types::CircleError>{contract::set_implementation(&env,&admin,&new_impl)}
+     pub fn get_implementation(env:Env)->Option<Address>{contract::get_implementation(&env)}
 }
 

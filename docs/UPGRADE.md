@@ -13,16 +13,31 @@ a way that's compatible with how the old Wasm wrote it. Almost every real
 incident with contract upgrades traces back to a storage-layout mismatch, not
 the deploy step — so most of this guide is about that.
 
+## Status (updated #334)
+
+All 8 contracts now expose the upgrade proxy entry points and pass admin-only authorization:
+
+| Contract | `upgrade(admin, new_wasm_hash)` | `set_implementation(admin, new_impl)` | `get_implementation()` |
+|---|---|---|---|
+| `circle` | `packages/circle/src/contract.rs:upgrade` | `set_implementation` | `get_implementation` |
+| `circle-factory` | `packages/circle-factory/src/contract.rs:upgrade` | `set_implementation` | `get_implementation` |
+| `treasury` | `packages/treasury/src/contract.rs:upgrade` | `set_implementation` | `get_implementation` |
+| `staking` | `packages/staking/src/contract.rs:upgrade` | `set_implementation` | `get_implementation` |
+| `reputation-registry` | `packages/reputation-registry/src/contract.rs:upgrade` | `set_implementation` | `get_implementation` |
+| `governance` | `packages/governance/src/contract.rs:upgrade` | `set_implementation` | `get_implementation` |
+| `governance-token` | `packages/governance-token/src/contract.rs:upgrade` | `set_implementation` | `get_implementation` |
+| `escrow-swap` | `packages/escrow-swap/src/contract.rs:upgrade` | `set_implementation` | `get_implementation` |
+
+Each `upgrade` implementation follows the same pattern (admin auth, delegate to `common::upgrade::upgrade_contract`):
+
 ## Prerequisite: wire up the `upgrade` entry point
 
 `packages/common/src/upgrade.rs` already implements the upgrade primitives
 (`set_implementation`, `upgrade_contract`, `get_implementation`), and
 `scripts/deploy-upgrade.sh --upgrade-only` already assumes each contract
 exposes a public `upgrade(admin, new_wasm_hash)` entry point that calls
-`common::upgrade::upgrade_contract`. As of this writing, **no contract's
-`lib.rs` actually exposes that entry point** — `common::upgrade` is wired into
-none of `#[contractimpl]` blocks. Before this guide's upgrade procedure can be
-executed against a real deployment, each contract needs something like:
+`common::upgrade::upgrade_contract`. Prior to #334 **no contract's
+`lib.rs` actually exposed that entry point**. After #334 every contract does, e.g.:
 
 ```rust
 pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), YourError> {

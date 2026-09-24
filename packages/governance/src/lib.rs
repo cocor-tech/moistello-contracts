@@ -21,6 +21,9 @@ use soroban_sdk::{contract,contractimpl,Address,BytesN,Env,Vec};
     pub fn get_config(env:Env)->Result<types::GovernanceConfig,types::GovernanceError>{contract::get_config(&env)}
     pub fn pause(env:Env,admin:Address)->Result<(),types::GovernanceError>{contract::pause(&env,&admin)}
     pub fn unpause(env:Env,admin:Address)->Result<(),types::GovernanceError>{contract::unpause(&env,&admin)}
+    pub fn upgrade(env:Env,admin:Address,new_wasm_hash:BytesN<32>)->Result<(),types::GovernanceError>{contract::upgrade(&env,&admin,&new_wasm_hash)}
+    pub fn set_implementation(env:Env,admin:Address,new_impl:Address)->Result<(),types::GovernanceError>{contract::set_implementation(&env,&admin,&new_impl)}
+    pub fn get_implementation(env:Env)->Option<Address>{contract::get_implementation(&env)}
 }
 
 #[cfg(test)]

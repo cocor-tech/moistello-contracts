@@ -34,6 +34,9 @@ use soroban_sdk::{contract,contractimpl,Address,Env};
         member.require_auth();
         Ok(scoring::apply_inactivity_decay(&env,&member,days_inactive))
     }
+    pub fn upgrade(env:Env,admin:Address,new_wasm_hash:soroban_sdk::BytesN<32>)->Result<(),types::ReputationError>{contract::upgrade(&env,&admin,&new_wasm_hash)}
+    pub fn set_implementation(env:Env,admin:Address,new_impl:Address)->Result<(),types::ReputationError>{contract::set_implementation(&env,&admin,&new_impl)}
+    pub fn get_implementation(env:Env)->Option<Address>{contract::get_implementation(&env)}
 }
 
 #[cfg(test)]

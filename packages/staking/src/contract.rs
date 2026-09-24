@@ -373,3 +373,14 @@ pub fn distribute_rewards(env: &Env, _user: &Address) -> Result<(), StakingError
     // Mock reward distribution mechanism
     Ok(())
 }
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &soroban_sdk::BytesN<32>) -> Result<(), StakingError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(StakingError::NotInitialized)?;
+    if admin != &s { return Err(StakingError::Unauthorized); }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| StakingError::Unauthorized)
+}
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), StakingError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(StakingError::NotInitialized)?;
+    if admin != &s { return Err(StakingError::Unauthorized); }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| StakingError::Unauthorized)
+}
+pub fn get_implementation(env: &Env) -> Option<Address> { common::upgrade::get_implementation(env) }

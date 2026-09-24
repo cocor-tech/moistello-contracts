@@ -74,6 +74,15 @@ impl Staking {
     pub fn update_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), types::StakingError> {
         contract::update_admin(&env, &current_admin, &new_admin)
     }
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), types::StakingError> {
+        contract::upgrade(&env, &admin, &new_wasm_hash)
+    }
+    pub fn set_implementation(env: Env, admin: Address, new_impl: Address) -> Result<(), types::StakingError> {
+        contract::set_implementation(&env, &admin, &new_impl)
+    }
+    pub fn get_implementation(env: Env) -> Option<Address> {
+        contract::get_implementation(&env)
+    }
 }
 
 #[cfg(test)]

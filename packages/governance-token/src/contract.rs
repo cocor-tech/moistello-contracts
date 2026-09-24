@@ -291,6 +291,15 @@ pub fn set_admin(env: &Env, admin: &Address, new_admin: &Address) -> Result<(), 
 pub fn get_admin(env: &Env) -> Result<Address, TokenError> {
     env.storage().instance().get(&ADMIN_KEY).ok_or(TokenError::NotInitialized)
 }
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &soroban_sdk::BytesN<32>) -> Result<(), TokenError> {
+    require_admin(env, admin)?;
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| TokenError::Unauthorized)
+}
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), TokenError> {
+    require_admin(env, admin)?;
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| TokenError::Unauthorized)
+}
+pub fn get_implementation(env: &Env) -> Option<Address> { common::upgrade::get_implementation(env) }
 
 fn require_admin(env: &Env, caller: &Address) -> Result<(), TokenError> {
     let stored: Address = env.storage().instance().get(&ADMIN_KEY).ok_or(TokenError::NotInitialized)?;

@@ -546,3 +546,14 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), GovernanceError> {
     }
     pause::unpause(env, admin).map_err(|_| GovernanceError::ContractPaused)
 }
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &soroban_sdk::BytesN<32>) -> Result<(), GovernanceError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(GovernanceError::NotInitialized)?;
+    if admin != &s { return Err(GovernanceError::Unauthorized); }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| GovernanceError::Unauthorized)
+}
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), GovernanceError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(GovernanceError::NotInitialized)?;
+    if admin != &s { return Err(GovernanceError::Unauthorized); }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| GovernanceError::Unauthorized)
+}
+pub fn get_implementation(env: &Env) -> Option<Address> { common::upgrade::get_implementation(env) }
