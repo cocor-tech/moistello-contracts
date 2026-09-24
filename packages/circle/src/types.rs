@@ -1,3 +1,4 @@
+
 use soroban_sdk::{contracttype,contracterror,Address,String,BytesN};
 // Re-export canonical CircleConfig from common to avoid duplicate type definitions (#320).
 pub use common::types::CircleConfig;
@@ -37,3 +38,5 @@ pub struct CircleCompleted{pub total_payouts:i128}
 #[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum CircleFrequency{Daily=0,Weekly=1,Biweekly=2,Monthly=3}
 #[contracttype]#[derive(Clone,Debug)]pub struct Referral{pub referrer:Address,pub referred:Address,pub bonus_pct:u32,pub timestamp:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct Streak{pub member:Address,pub current_streak:u32,pub longest_streak:u32,pub last_round:u32}
+
+
