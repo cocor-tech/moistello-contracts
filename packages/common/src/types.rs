@@ -1,4 +1,3 @@
-
 use soroban_sdk::{contracttype, Address, String};
 
 /// Canonical CircleConfig shared across the workspace.

@@ -1,15 +1,14 @@
-#![cfg(test)]
-
-#[cfg(test)]
 mod tests {
-    use soroban_sdk::{Address, BytesN, Env, String};
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::testutils::Ledger as _;
     use crate as circle;
     use circle::{Circle, CircleArgs, CircleError};
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::Ledger as _;
+    use soroban_sdk::{Address, BytesN, Env, String};
 
-
-    fn setup_test_env<'a>(env: &'a Env, config: &mut circle::types::CircleConfig) -> (Address, circle::CircleClient<'a>) {
+    fn setup_test_env<'a>(
+        env: &'a Env,
+        config: &mut circle::types::CircleConfig,
+    ) -> (Address, circle::CircleClient<'a>) {
         let admin = config.organizer.clone();
         let factory = Address::generate(env);
         let token_admin = Address::generate(env);
@@ -42,16 +41,16 @@ mod tests {
             grace_period_seconds: 86400u64,
             max_strikes: 3u32,
             slug: String::from_str(env, "test-circle"),
-
         }
     }
 
     // ── Bonus test helpers ────────────────────────────────────────────────────
 
     /// Deploy a 2-member active circle and return (env, client, admin, token_id, treasury)
+    #[allow(dead_code)]
     fn setup_active_circle_with_token(
         env: &Env,
-    ) -> (circle::CircleClient, Address, Address, Address, Address) {
+    ) -> (circle::CircleClient<'_>, Address, Address, Address, Address) {
         let mut config = create_config(env);
         config.max_members = 2u32;
         let admin = config.organizer.clone();
@@ -87,9 +86,9 @@ mod tests {
         let env = Env::default();
         let mut config = create_config(&env);
         let _admin = config.organizer.clone();
-        
+
         let (_token, client) = setup_test_env(&env, &mut config);
-        
+
         let status = client.get_status();
         assert_eq!(status.status, 0u32);
     }
@@ -99,13 +98,17 @@ mod tests {
         let env = Env::default();
         let mut config = create_config(&env);
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
 
         env.mock_all_auths();
-        assert!({ mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member) }.is_ok());
+        assert!({
+            mint_tokens(&env, &token, &member, 100000_0000000);
+            client.try_join(&member)
+        }
+        .is_ok());
         assert_eq!(client.get_members().len(), 1);
     }
 
@@ -115,9 +118,8 @@ mod tests {
         let mut config = create_config(&env);
         config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (_token, client) = setup_test_env(&env, &mut config);
-        
 
         env.mock_all_auths();
         client.try_join(&Address::generate(&env)).unwrap().unwrap();
@@ -130,13 +132,17 @@ mod tests {
         let env = Env::default();
         let mut config = create_config(&env);
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
 
         env.mock_all_auths();
-        assert!({ mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member) }.is_ok());
+        assert!({
+            mint_tokens(&env, &token, &member, 100000_0000000);
+            client.try_join(&member)
+        }
+        .is_ok());
         assert!(client.try_join(&member).is_err());
     }
 
@@ -146,16 +152,20 @@ mod tests {
         let mut config = create_config(&env);
         config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
         let other = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
-        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
-        assert!(client.try_contribute(&member, &config.contribution_amount, &0u32).is_ok());
+        mint_tokens(&env, &token, &member, 100000_0000000);
+        client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+        assert!(client
+            .try_contribute(&member, &config.contribution_amount, &0u32)
+            .is_ok());
     }
 
     #[test]
@@ -164,16 +174,20 @@ mod tests {
         let mut config = create_config(&env);
         config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
         let other = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
-        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
-        assert!(client.try_contribute(&member, &50_0000000i128, &0u32).is_err());
+        mint_tokens(&env, &token, &member, 100000_0000000);
+        client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+        assert!(client
+            .try_contribute(&member, &50_0000000i128, &0u32)
+            .is_err());
     }
 
     #[test]
@@ -182,17 +196,21 @@ mod tests {
         let mut config = create_config(&env);
         config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
         let outsider = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
-        mint_tokens(&env, &token, &outsider, 100000_0000000); client.try_join(&outsider).unwrap().unwrap();
+        mint_tokens(&env, &token, &member, 100000_0000000);
+        client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &outsider, 100000_0000000);
+        client.try_join(&outsider).unwrap().unwrap();
         let non_member = Address::generate(&env);
-        assert!(client.try_contribute(&non_member, &config.contribution_amount, &0u32).is_err());
+        assert!(client
+            .try_contribute(&non_member, &config.contribution_amount, &0u32)
+            .is_err());
     }
 
     #[test]
@@ -201,16 +219,21 @@ mod tests {
         let mut config = create_config(&env);
         config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
         let other = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
-        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
-        client.try_contribute(&member, &config.contribution_amount, &0u32).unwrap().unwrap();
+        mint_tokens(&env, &token, &member, 100000_0000000);
+        client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+        client
+            .try_contribute(&member, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
         assert!(client.try_exit_circle(&member).is_ok());
     }
 
@@ -219,16 +242,19 @@ mod tests {
         let env = Env::default();
         let mut config = create_config(&env);
         let admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
 
         env.mock_all_auths();
         assert!(client.try_pause_circle(&admin).is_ok());
         let member = Address::generate(&env);
         assert!(client.try_join(&member).is_err());
         assert!(client.try_unpause_circle(&admin).is_ok());
-        assert!({ mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member) }.is_ok());
+        assert!({
+            mint_tokens(&env, &token, &member, 100000_0000000);
+            client.try_join(&member)
+        }
+        .is_ok());
     }
 
     #[test]
@@ -261,7 +287,8 @@ mod tests {
         env.mock_all_auths();
         // Only 1 member joined — circle stays PENDING (not full)
         let m1 = Address::generate(&env);
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
         let result = client.try_trigger_payout(&admin, &0u32);
         assert_eq!(result, Err(Ok(CircleError::NotActive)));
     }
@@ -278,8 +305,10 @@ mod tests {
         env.mock_all_auths();
         let m1 = Address::generate(&env);
         let m2 = Address::generate(&env);
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
-        mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
 
         // Both exit — 0 active members remain
         client.try_exit_circle(&m1).unwrap().unwrap();
@@ -325,7 +354,8 @@ mod tests {
 
         env.mock_all_auths();
         let real_member = Address::generate(&env);
-        mint_tokens(&env, &token, &real_member, 100000_0000000); client.try_join(&real_member).unwrap().unwrap();
+        mint_tokens(&env, &token, &real_member, 100000_0000000);
+        client.try_join(&real_member).unwrap().unwrap();
 
         let stranger = Address::generate(&env);
         // Stranger exits — succeeds as no-op since stranger isn't in members list
@@ -347,8 +377,10 @@ mod tests {
         env.mock_all_auths();
         let m1 = Address::generate(&env);
         let m2 = Address::generate(&env);
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
-        mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
 
         client.try_exit_circle(&m1).unwrap().unwrap();
         client.try_exit_circle(&m2).unwrap().unwrap();
@@ -371,8 +403,10 @@ mod tests {
         env.mock_all_auths();
         let m1 = Address::generate(&env);
         let m2 = Address::generate(&env);
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
-        mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
 
         client.try_exit_circle(&m1).unwrap().unwrap();
         client.try_exit_circle(&m2).unwrap().unwrap();
@@ -394,8 +428,10 @@ mod tests {
         env.mock_all_auths();
         let m1 = Address::generate(&env);
         let m2 = Address::generate(&env);
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
-        mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
 
         client.try_exit_circle(&m1).unwrap().unwrap();
         client.try_exit_circle(&m2).unwrap().unwrap();
@@ -415,9 +451,9 @@ mod tests {
         let member = Address::generate(&env);
         let evidence = BytesN::from_array(&env, &[0u8; 32]);
         let result = client.try_raise_dispute(&member, &evidence);
-        // Circle is PENDING (not full) — but raise_dispute only checks for DISPUTED/COMPLETED status
-        // So any member (even non-member) can raise a dispute on any circle
-        assert!(result.is_ok());
+        // Circle is PENDING (not full) — a dispute is only valid once the circle is
+        // ACTIVE, so the call must be rejected with NotActive.
+        assert_eq!(result, Err(Ok(CircleError::NotActive)));
     }
 
     #[test]
@@ -429,9 +465,11 @@ mod tests {
         let m1 = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
         let m2 = Address::generate(&env);
-        mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
 
         mint_tokens(&env, &token, &m1, config.contribution_amount);
         let result = client.try_contribute(&m1, &config.contribution_amount, &0u32);
@@ -446,15 +484,14 @@ mod tests {
         let env = Env::default();
         let mut config = create_config(&env);
         let _admin = config.organizer.clone();
-        
+
         let (_token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
 
         // No env.mock_all_auths() — should fail authorization
         assert!(client.try_join(&member).is_err());
     }
-
 
     #[test]
     fn test_full_lifecycle() {
@@ -463,9 +500,8 @@ mod tests {
         config.max_members = 3u32;
         config.total_rounds = 3u32;
         let admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
 
         env.mock_all_auths();
 
@@ -474,28 +510,67 @@ mod tests {
         let m3 = Address::generate(&env);
 
         // Join
-        assert!({ mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1) }.is_ok());
-        assert!({ mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2) }.is_ok());
-        assert!({ mint_tokens(&env, &token, &m3, 100000_0000000); client.try_join(&m3) }.is_ok());
+        assert!({
+            mint_tokens(&env, &token, &m1, 100000_0000000);
+            client.try_join(&m1)
+        }
+        .is_ok());
+        assert!({
+            mint_tokens(&env, &token, &m2, 100000_0000000);
+            client.try_join(&m2)
+        }
+        .is_ok());
+        assert!({
+            mint_tokens(&env, &token, &m3, 100000_0000000);
+            client.try_join(&m3)
+        }
+        .is_ok());
         assert_eq!(client.get_members().len(), 3);
 
         // Round 0
-        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap().unwrap();
-        client.try_contribute(&m2, &config.contribution_amount, &0u32).unwrap().unwrap();
-        client.try_contribute(&m3, &config.contribution_amount, &0u32).unwrap().unwrap();
+        client
+            .try_contribute(&m1, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m2, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m3, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
         client.try_trigger_payout(&admin, &0u32).unwrap().unwrap();
         assert_eq!(client.get_status().current_round, 1u32);
 
         // Round 1
-        client.try_contribute(&m1, &config.contribution_amount, &1u32).unwrap().unwrap();
-        client.try_contribute(&m2, &config.contribution_amount, &1u32).unwrap().unwrap();
-        client.try_contribute(&m3, &config.contribution_amount, &1u32).unwrap().unwrap();
+        client
+            .try_contribute(&m1, &config.contribution_amount, &1u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m2, &config.contribution_amount, &1u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m3, &config.contribution_amount, &1u32)
+            .unwrap()
+            .unwrap();
         client.try_trigger_payout(&admin, &1u32).unwrap().unwrap();
 
         // Round 2
-        client.try_contribute(&m1, &config.contribution_amount, &2u32).unwrap().unwrap();
-        client.try_contribute(&m2, &config.contribution_amount, &2u32).unwrap().unwrap();
-        client.try_contribute(&m3, &config.contribution_amount, &2u32).unwrap().unwrap();
+        client
+            .try_contribute(&m1, &config.contribution_amount, &2u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m2, &config.contribution_amount, &2u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m3, &config.contribution_amount, &2u32)
+            .unwrap()
+            .unwrap();
         client.try_trigger_payout(&admin, &2u32).unwrap().unwrap();
 
         // Should be completed
@@ -508,16 +583,21 @@ mod tests {
         let mut config = create_config(&env);
         config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
         let other = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
-        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
-        client.try_contribute(&member, &config.contribution_amount, &0u32).unwrap().unwrap();
+        mint_tokens(&env, &token, &member, 100000_0000000);
+        client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+        client
+            .try_contribute(&member, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
 
         let contributions = client.get_contributions(&member, &0, &100);
         assert_eq!(contributions.len(), 1);
@@ -532,15 +612,16 @@ mod tests {
         config.max_members = 2u32;
         config.payout_type = 2u32; // PAYOUT_AUCTION
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let bidder = Address::generate(&env);
         let other = Address::generate(&env);
 
         env.mock_all_auths();
         client.try_join(&bidder).unwrap().unwrap();
-        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
 
         assert!(client.try_auction_bid(&bidder, &500u32, &0u32).is_ok());
     }
@@ -552,17 +633,21 @@ mod tests {
         config.max_members = 2u32;
         config.payout_type = 2u32; // PAYOUT_AUCTION
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let bidder = Address::generate(&env);
         let other = Address::generate(&env);
 
         env.mock_all_auths();
         client.try_join(&bidder).unwrap().unwrap();
-        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
 
-        client.try_auction_bid(&bidder, &500u32, &0u32).unwrap().unwrap();
+        client
+            .try_auction_bid(&bidder, &500u32, &0u32)
+            .unwrap()
+            .unwrap();
         assert!(client.try_auction_bid(&bidder, &600u32, &0u32).is_err());
     }
 
@@ -573,15 +658,16 @@ mod tests {
         config.max_members = 2u32;
         config.payout_type = 2u32; // PAYOUT_AUCTION
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let bidder = Address::generate(&env);
         let other = Address::generate(&env);
 
         env.mock_all_auths();
         client.try_join(&bidder).unwrap().unwrap();
-        mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
 
         assert!(client.try_auction_bid(&bidder, &10001u32, &0u32).is_err());
     }
@@ -593,9 +679,9 @@ mod tests {
         config.max_members = 2u32;
         config.payout_type = 3u32; // PAYOUT_VOTE
         let _admin = config.organizer.clone();
-        
+
         let (_token, client) = setup_test_env(&env, &mut config);
-        
+
         let voter = Address::generate(&env);
         let nominee = Address::generate(&env);
 
@@ -613,9 +699,9 @@ mod tests {
         config.max_members = 2u32;
         config.payout_type = 3u32; // PAYOUT_VOTE
         let _admin = config.organizer.clone();
-        
+
         let (_token, client) = setup_test_env(&env, &mut config);
-        
+
         let voter = Address::generate(&env);
         let nominee = Address::generate(&env);
 
@@ -623,7 +709,10 @@ mod tests {
         client.try_join(&voter).unwrap().unwrap();
         client.try_join(&nominee).unwrap().unwrap();
 
-        client.try_vote_payout(&voter, &nominee, &0u32).unwrap().unwrap();
+        client
+            .try_vote_payout(&voter, &nominee, &0u32)
+            .unwrap()
+            .unwrap();
         assert!(client.try_vote_payout(&voter, &nominee, &0u32).is_err());
     }
 
@@ -634,15 +723,17 @@ mod tests {
         config.max_members = 2u32;
         config.contribution_deadline_seconds = 1u64; // Very short deadline
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let late_member = Address::generate(&env);
         let reporter = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &late_member, 100000_0000000); client.try_join(&late_member).unwrap().unwrap();
-        mint_tokens(&env, &token, &reporter, 100000_0000000); client.try_join(&reporter).unwrap().unwrap();
+        mint_tokens(&env, &token, &late_member, 100000_0000000);
+        client.try_join(&late_member).unwrap().unwrap();
+        mint_tokens(&env, &token, &reporter, 100000_0000000);
+        client.try_join(&reporter).unwrap().unwrap();
 
         // Manually simulate a late contribution by advancing ledger time
         // For this test, we just check the function doesn't error on non-existent contribution
@@ -653,26 +744,36 @@ mod tests {
 
         // Try to report as late (should fail since no late contribution recorded)
         // But let's first contribute late
-        client.try_contribute(&late_member, &config.contribution_amount, &0u32).unwrap().unwrap();
+        client
+            .try_contribute(&late_member, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
 
         // Now report should succeed — contribution was made at timestamp=1000,
         // well past the 1-second deadline, so on_time=false
-        assert!(client.try_report_late(&reporter, &late_member, &0u32).is_ok());
+        assert!(client
+            .try_report_late(&reporter, &late_member, &0u32)
+            .is_ok());
     }
 
     #[test]
     fn test_raise_dispute_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &member, 100000_0000000);
+        client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
 
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_ok());
         assert_eq!(client.get_status().status, 4u32);
@@ -682,17 +783,25 @@ mod tests {
     fn test_raise_dispute_duplicate() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &member, 100000_0000000);
+        client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
 
-        client.try_raise_dispute(&member, &evidence_hash).unwrap().unwrap();
+        client
+            .try_raise_dispute(&member, &evidence_hash)
+            .unwrap()
+            .unwrap();
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_err());
     }
 
@@ -700,16 +809,24 @@ mod tests {
     fn test_resolve_dispute_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
+        let other = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member).unwrap().unwrap();
-        client.try_raise_dispute(&member, &evidence_hash).unwrap().unwrap();
+        mint_tokens(&env, &token, &member, 100000_0000000);
+        client.try_join(&member).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+        client
+            .try_raise_dispute(&member, &evidence_hash)
+            .unwrap()
+            .unwrap();
 
         assert!(client.try_resolve_dispute(&admin, &1u32).is_ok()); // RESOLVE_DISMISS = 1
         assert_eq!(client.get_status().status, 1u32);
@@ -722,17 +839,25 @@ mod tests {
         config.max_members = 2u32;
         config.payout_type = 0u32; // PAYOUT_RANDOM
         let admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let m1 = Address::generate(&env);
         let m2 = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
-        mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2).unwrap().unwrap();
-        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap().unwrap();
-        client.try_contribute(&m2, &config.contribution_amount, &0u32).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
+        client
+            .try_contribute(&m1, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m2, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
 
         assert!(client.try_trigger_payout(&admin, &0u32).is_ok());
         assert_eq!(client.get_status().current_round, 1u32);
@@ -745,17 +870,25 @@ mod tests {
         config.max_members = 2u32;
         config.payout_type = 1u32; // PAYOUT_FIXED
         let admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let m1 = Address::generate(&env);
         let m2 = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
-        mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2).unwrap().unwrap();
-        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap().unwrap();
-        client.try_contribute(&m2, &config.contribution_amount, &0u32).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
+        client
+            .try_contribute(&m1, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m2, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
 
         assert!(client.try_trigger_payout(&admin, &0u32).is_ok());
     }
@@ -766,18 +899,26 @@ mod tests {
         let mut config = create_config(&env);
         config.max_members = 2u32;
         let _admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let m1 = Address::generate(&env);
         let m2 = Address::generate(&env);
         let unauthorized = Address::generate(&env);
 
         env.mock_all_auths();
-        mint_tokens(&env, &token, &m1, 100000_0000000); client.try_join(&m1).unwrap().unwrap();
-        mint_tokens(&env, &token, &m2, 100000_0000000); client.try_join(&m2).unwrap().unwrap();
-        client.try_contribute(&m1, &config.contribution_amount, &0u32).unwrap().unwrap();
-        client.try_contribute(&m2, &config.contribution_amount, &0u32).unwrap().unwrap();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
+        client
+            .try_contribute(&m1, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
+        client
+            .try_contribute(&m2, &config.contribution_amount, &0u32)
+            .unwrap()
+            .unwrap();
 
         assert!(client.try_trigger_payout(&unauthorized, &0u32).is_err());
     }
@@ -787,31 +928,45 @@ mod tests {
         let env = Env::default();
         let mut config = create_config(&env);
         let admin = config.organizer.clone();
-        
+
         let (token, client) = setup_test_env(&env, &mut config);
-        
+
         let member = Address::generate(&env);
         let other = Address::generate(&env);
 
         env.mock_all_auths();
 
         // Initially can join
-        assert!({ mint_tokens(&env, &token, &member, 100000_0000000); client.try_join(&member) }.is_ok());
+        assert!({
+            mint_tokens(&env, &token, &member, 100000_0000000);
+            client.try_join(&member)
+        }
+        .is_ok());
 
         // Pause circle
         assert!(client.try_pause_circle(&admin).is_ok());
 
         // Cannot join while paused
-        assert!({ mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other) }.is_err());
+        assert!({
+            mint_tokens(&env, &token, &other, 100000_0000000);
+            client.try_join(&other)
+        }
+        .is_err());
 
         // Cannot contribute while paused
-        assert!(client.try_contribute(&member, &config.contribution_amount, &0u32).is_err());
+        assert!(client
+            .try_contribute(&member, &config.contribution_amount, &0u32)
+            .is_err());
 
         // Unpause
         assert!(client.try_unpause_circle(&admin).is_ok());
 
         // Can join again
-        assert!({ mint_tokens(&env, &token, &other, 100000_0000000); client.try_join(&other) }.is_ok());
+        assert!({
+            mint_tokens(&env, &token, &other, 100000_0000000);
+            client.try_join(&other)
+        }
+        .is_ok());
     }
 
     #[test]
@@ -819,9 +974,9 @@ mod tests {
         let env = Env::default();
         let mut config = create_config(&env);
         let _admin = config.organizer.clone();
-        
+
         let (_token, client) = setup_test_env(&env, &mut config);
-        
+
         let unauthorized = Address::generate(&env);
 
         env.mock_all_auths();
@@ -831,8 +986,6 @@ mod tests {
     }
 
     // ===== Issue 1: Allowlist Tests =====
-
-
 }
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
@@ -867,7 +1020,9 @@ fn create_config(env: &Env, token: &Address) -> crate::types::CircleConfig {
 fn setup_circle(env: &Env) -> (CircleClient<'_>, Address, Address) {
     env.mock_all_auths();
     let token_admin = Address::generate(env);
-    let token = env.register_stellar_asset_contract(token_admin);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
     let config = create_config(env, &token);
     let admin = config.organizer.clone();
     let factory = Address::generate(env);
@@ -967,10 +1122,7 @@ fn test_auth_trigger_payout_and_admin_setters() {
         client.try_set_token(&stranger, &Address::generate(&env)),
         Err(Ok(CircleError::Unauthorized))
     );
-    assert_eq!(
-        client.try_set_fee_bps(&stranger, &500u32),
-        Err(Ok(CircleError::Unauthorized))
-    );
+    assert_eq!(client.try_set_fee_bps(&stranger, &500u32), Err(Ok(CircleError::Unauthorized)));
     assert_eq!(
         client.try_set_oracle(&stranger, &Address::generate(&env)),
         Err(Ok(CircleError::Unauthorized))
@@ -986,9 +1138,11 @@ fn test_resolve_dispute_unauthorized() {
     let env = Env::default();
     let (client, _admin, _token) = setup_circle(&env);
     let member = Address::generate(&env);
+    let other = Address::generate(&env);
     let stranger = Address::generate(&env);
 
     client.join(&member);
+    client.join(&other);
     client.raise_dispute(&member, &soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
 
     let result = client.try_resolve_dispute(&stranger, &1u32);
@@ -1028,8 +1182,5 @@ fn test_trigger_payout_transfers_tokens_and_deposits_fee() {
     assert_eq!(treasury_client.get_balance(), 10_i128);
     assert_eq!(token_client.balance(&treasury_id), 10_i128);
     assert_eq!(token_client.balance(&client.address), 0_i128);
-    assert_eq!(
-        token_client.balance(&member_one) + token_client.balance(&member_two),
-        190_i128
-    );
+    assert_eq!(token_client.balance(&member_one) + token_client.balance(&member_two), 190_i128);
 }

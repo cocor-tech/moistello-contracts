@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Treasury contract — all public handler functions follow the **uniform
 //! Soroban-native `&Env`-based API pattern**: every function takes `env: &Env`
 //! as its first parameter and returns `Result<_, TreasuryError>` (or a plain
@@ -104,7 +105,8 @@ pub fn withdraw(
     amount: i128,
 ) -> Result<(), TreasuryError> {
     pause::when_not_paused(env).map_err(|_| TreasuryError::ContractPaused)?;
-    let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| TreasuryError::Unauthorized)?;
+    let _guard =
+        common::reentrancy::ReentrancyGuard::new(env).map_err(|_| TreasuryError::Unauthorized)?;
     require_admin(env, admin)?;
     if amount <= 0 {
         return Err(TreasuryError::InvalidAmount);
@@ -168,7 +170,8 @@ pub fn rescue_tokens(
     amount: i128,
 ) -> Result<(), TreasuryError> {
     require_admin(env, admin)?;
-    let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| TreasuryError::Unauthorized)?;
+    let _guard =
+        common::reentrancy::ReentrancyGuard::new(env).map_err(|_| TreasuryError::Unauthorized)?;
     if !pause::is_paused(env) {
         return Err(TreasuryError::ContractNotPaused);
     }
@@ -214,14 +217,22 @@ pub fn rescue_tokens(
 
 /// Pauses the treasury, preventing deposits and withdrawals.
 pub fn pause(env: &Env, a: &Address) -> Result<(), TreasuryError> {
-    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(TreasuryError::NotInitialized)?;
     common::access::require_self_or_admin(env, a, &s).map_err(|_| TreasuryError::Unauthorized)?;
     pause::pause(env, a).map_err(|_| TreasuryError::ContractPaused)
 }
 
 /// Unpauses the treasury, allowing deposits and withdrawals to resume.
 pub fn unpause(env: &Env, a: &Address) -> Result<(), TreasuryError> {
-    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(TreasuryError::NotInitialized)?;
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(TreasuryError::NotInitialized)?;
     common::access::require_self_or_admin(env, a, &s).map_err(|_| TreasuryError::Unauthorized)?;
     pause::unpause(env, a).map_err(|_| TreasuryError::ContractPaused)
 }

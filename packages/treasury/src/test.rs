@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::types::TreasuryError;
 use crate::{Treasury, TreasuryClient};
 use soroban_sdk::testutils::Address as _;

@@ -37,7 +37,6 @@
 ///
 /// For enhanced security, the admin can sign VRF outputs off-chain and callers
 /// can verify via `verify_vrf()` before accepting the shuffled order.
-
 use soroban_sdk::{contracterror, contractevent, symbol_short, Bytes, BytesN, Env, Vec};
 
 // ── Storage keys ──────────────────────────────────────────────────────────

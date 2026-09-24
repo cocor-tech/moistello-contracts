@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, contracterror, symbol_short, Address, BytesN, Env};
+use soroban_sdk::{contracterror, contractevent, symbol_short, Address, BytesN, Env};
 
 #[contracterror]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +35,11 @@ pub fn get_implementation(env: &Env) -> Option<Address> {
 /// This function deliberately does NOT check `when_not_paused` — a contract
 /// upgrade may be the only way to fix a bug that caused the pause state,
 /// so the admin must be able to upgrade even while paused.
-pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), UpgradeError> {
+pub fn set_implementation(
+    env: &Env,
+    admin: &Address,
+    new_impl: &Address,
+) -> Result<(), UpgradeError> {
     admin.require_auth();
     // Validate that new_impl is a plausible contract address.
     // Setting the proxy to an EOA account or to itself would brick the
@@ -50,14 +54,29 @@ pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Res
     // above prevents the most common bricking case; a full host-level
     // check (`env.deployer().get_contract_hash(new_impl).is_some()`) should
     // replace / augment this when the SDK stabilizes. See #304.
-    env.storage().instance().set(&symbol_short!("impl"), new_impl);
-    Upgraded { by: admin.clone(), new_impl: new_impl.clone() }.publish(env);
+    env.storage()
+        .instance()
+        .set(&symbol_short!("impl"), new_impl);
+    Upgraded {
+        by: admin.clone(),
+        new_impl: new_impl.clone(),
+    }
+    .publish(env);
     Ok(())
 }
 
-pub fn upgrade_contract(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) -> Result<(), UpgradeError> {
+pub fn upgrade_contract(
+    env: &Env,
+    admin: &Address,
+    new_wasm_hash: &BytesN<32>,
+) -> Result<(), UpgradeError> {
     admin.require_auth();
-    env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
-    ContractUpgraded { by: admin.clone(), new_wasm_hash: new_wasm_hash.clone() }.publish(env);
+    env.deployer()
+        .update_current_contract_wasm(new_wasm_hash.clone());
+    ContractUpgraded {
+        by: admin.clone(),
+        new_wasm_hash: new_wasm_hash.clone(),
+    }
+    .publish(env);
     Ok(())
 }

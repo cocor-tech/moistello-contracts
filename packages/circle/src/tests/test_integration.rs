@@ -3,29 +3,6 @@
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env, String};
 
-/// Integration test: factory deploys circle -> members join -> contribute -> trigger payout -> fee sent to treasury
-/// This test is currently a stub due to circular dependencies between contracts in the test environment.
-/// In production, these contracts are deployed separately and interact via cross-contract calls.
-#[test]
-#[ignore = "Integration tests require all contracts to be deployed separately"]
-fn test_full_integration_factory_circle_treasury() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    // This test validates the complete flow:
-    // 1. Factory deploys a circle
-    // 2. Members join the circle
-    // 3. Members contribute to rounds
-    // 4. Payouts are triggered with fees
-    // 5. Fees are sent to treasury
-    // 6. Treasury accumulates fees from multiple circles
-
-    // Due to test environment limitations, this must be tested on testnet/mainnet
-    // where contracts are deployed independently.
-
-    assert!(true, "Integration test placeholder");
-}
-
 /// Unit test: Circle lifecycle with fee collection (simulated treasury)
 #[test]
 fn test_circle_lifecycle_with_fees() {
@@ -34,8 +11,13 @@ fn test_circle_lifecycle_with_fees() {
 
     let organizer = Address::generate(&env);
     let token_admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract(token_admin.clone());
-    let treasury = Address::generate(&env); // Simulated treasury address
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    let treasury_id = env.register(treasury::Treasury, ());
+    let treasury_client = treasury::TreasuryClient::new(&env, &treasury_id);
+    treasury_client.init(&organizer, &token);
+    let treasury = treasury_id;
 
     let config = crate::types::CircleConfig {
         organizer: organizer.clone(),

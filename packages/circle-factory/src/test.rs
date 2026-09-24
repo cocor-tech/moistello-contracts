@@ -1,13 +1,12 @@
-#![cfg(test)]
-
+use crate::types::{CircleConfig, FactoryError};
+use crate::{CircleFactory, CircleFactoryClient};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env};
-use crate::{CircleFactory, CircleFactoryClient}; use crate::types::{CircleConfig, FactoryError};
 
 fn install_wasm_hash(env: &Env) -> BytesN<32> {
-    // Test fixture wasm shipped with soroban-sdk (valid Soroban contract
-    // wasm with metadata section). The factory only deploys it; the deployed
-    // contract is never invoked by the factory tests.
+    // The circle contract this factory deploys, built to wasm (`cargo build
+    // --release --target wasm32v1-none -p circle`). Note: `*.wasm` is
+    // git-ignored, so the fixture must be (re)generated rather than fetched.
     let wasm: &[u8] = include_bytes!("../test_wasm/contract.wasm");
     env.deployer().upload_contract_wasm(wasm)
 }
@@ -18,7 +17,7 @@ fn sample_config(env: &Env, organizer: &Address) -> CircleConfig {
         token: Address::generate(env),
         name: soroban_sdk::String::from_str(env, "Test Circle"),
         contribution_amount: 100i128,
-        max_members: 10u32,
+        max_members: 5u32,
         payout_type: 0u32,
         total_rounds: 5u32,
         contribution_deadline_seconds: 86400u64,
@@ -31,7 +30,7 @@ fn sample_config(env: &Env, organizer: &Address) -> CircleConfig {
     }
 }
 
-fn setup(env: &Env) -> (CircleFactoryClient, Address, BytesN<32>) {
+fn setup(env: &Env) -> (CircleFactoryClient<'_>, Address, BytesN<32>) {
     env.mock_all_auths();
     let contract_id = env.register(CircleFactory, ());
     let client = CircleFactoryClient::new(env, &contract_id);
@@ -114,8 +113,13 @@ fn test_multiple_circles_increment_count() {
     let org1 = Address::generate(&env);
     let org2 = Address::generate(&env);
 
-    client.deploy_circle(&sample_config(&env, &org1));
-    client.deploy_circle(&sample_config(&env, &org2));
+    let mut cfg1 = sample_config(&env, &org1);
+    cfg1.slug = soroban_sdk::String::from_str(&env, "test-circle-1");
+    let mut cfg2 = sample_config(&env, &org2);
+    cfg2.slug = soroban_sdk::String::from_str(&env, "test-circle-2");
+
+    client.deploy_circle(&cfg1);
+    client.deploy_circle(&cfg2);
 
     assert_eq!(client.get_circle_count(), 2);
 }

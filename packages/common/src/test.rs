@@ -1,8 +1,8 @@
-#![cfg(test)]
-
 use proptest::prelude::*;
 
-use crate::math::{apply_fee, calculate_penalty, calculate_percentage, convert_shares, MathError};
+use crate::math::{
+    apply_fee, calculate_penalty, calculate_percentage, convert_shares, isqrt, MathError,
+};
 
 proptest! {
     #[test]
@@ -89,4 +89,55 @@ fn convert_shares_overflow_on_huge_inputs() {
     // member_shares * pool_amount overflows i128 → must return Overflow, not panic.
     let result = convert_shares(i128::MAX, 1, i128::MAX);
     assert_eq!(result, Err(MathError::Overflow));
+}
+
+// ── Deterministic unit tests for isqrt (quadratic voting, #330) ──────────────
+
+#[test]
+fn isqrt_zero_and_negative_are_zero() {
+    assert_eq!(isqrt(0), 0);
+    assert_eq!(isqrt(-1), 0);
+    assert_eq!(isqrt(i128::MIN), 0);
+}
+
+#[test]
+fn isqrt_one_is_one() {
+    assert_eq!(isqrt(1), 1);
+}
+
+#[test]
+fn isqrt_perfect_squares_are_exact() {
+    assert_eq!(isqrt(4), 2);
+    assert_eq!(isqrt(9), 3);
+    assert_eq!(isqrt(2_500_000_000), 50_000);
+    assert_eq!(isqrt(900_000_000), 30_000);
+}
+
+#[test]
+fn isqrt_floor_for_non_squares() {
+    assert_eq!(isqrt(2), 1);
+    assert_eq!(isqrt(8), 2);
+    assert_eq!(isqrt(10), 3);
+    assert_eq!(isqrt(600_000_000), 24_494);
+}
+
+#[test]
+fn isqrt_round_trip_never_exceeds_input() {
+    for n in [2i128, 5, 99, 1_000_000] {
+        let root = isqrt(n);
+        assert!(root.checked_mul(root).is_some_and(|r| r <= n));
+        assert!(root
+            .checked_add(1)
+            .and_then(|r| r.checked_mul(r))
+            .is_some_and(|r| r > n));
+    }
+}
+
+#[test]
+fn isqrt_huge_input_does_not_panic() {
+    // i128::MAX must not panic; (root+1)^2 overflows i128, so only the lower
+    // bound is asserted here.
+    let root = isqrt(i128::MAX);
+    assert!(root.checked_mul(root).is_some());
+    assert!(root >= 1);
 }

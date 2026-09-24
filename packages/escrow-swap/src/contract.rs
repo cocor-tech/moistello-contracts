@@ -1,6 +1,6 @@
-use soroban_sdk::{token::Client as TokenClient, Address, BytesN, Env, Map, Vec};
 use crate::types::*;
 use common::pause;
+use soroban_sdk::{token::Client as TokenClient, Address, BytesN, Env, Map, Vec};
 
 pub fn init(env: &Env, admin: &Address) -> Result<(), EscrowError> {
     admin.require_auth();
@@ -12,12 +12,14 @@ pub fn init(env: &Env, admin: &Address) -> Result<(), EscrowError> {
     }
     env.storage().instance().set(&DataKey::Admin, admin);
     env.storage().instance().set(&DataKey::NextSwapId, &0u64);
-    env.storage().persistent().set(&DataKey::SwapRequests, &Map::<u64, SwapRequest>::new(env));
+    env.storage()
+        .persistent()
+        .set(&DataKey::SwapRequests, &Map::<u64, SwapRequest>::new(env));
     Ok(())
 }
 
 /// Creates a new escrow swap between two parties.
-/// 
+///
 /// # Arguments
 /// * `env` - The contract environment
 /// * `initiator` - The address creating the swap
@@ -28,17 +30,17 @@ pub fn init(env: &Env, admin: &Address) -> Result<(), EscrowError> {
 /// * `responder_amount` - Amount of token_b the responder must deposit (must be positive)
 /// * `hash_lock` - SHA-256 hash of the secret that will be required to accept the swap
 /// * `time_lock` - Unix timestamp deadline for accepting the swap (must be in the future)
-/// 
+///
 /// # Returns
 /// * `Ok(u64)` with the new swap ID if successful
 /// * `Err(EscrowError)` if any validation fails
-/// 
+///
 /// # Validation
 /// * initiator and responder must be different addresses
 /// * initiator_amount and responder_amount must be positive
 /// * time_lock must be strictly greater than current timestamp (deadline is exclusive for creation)
 /// * The contract must not be paused
-/// 
+///
 /// # Deadline Semantics
 /// The deadline for creation is exclusive: `time_lock <= now` is rejected.
 /// This means the swap must have a future deadline at creation time.
@@ -54,7 +56,8 @@ pub fn create_swap(
     time_lock: u64,
 ) -> Result<u64, EscrowError> {
     pause::when_not_paused(env).map_err(|_| EscrowError::ContractPaused)?;
-    let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
+    let _guard =
+        common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
     initiator.require_auth();
 
     if initiator == responder {
@@ -69,7 +72,11 @@ pub fn create_swap(
         return Err(EscrowError::TimeLockExpired);
     }
 
-    let next_id: u64 = env.storage().instance().get(&DataKey::NextSwapId).unwrap_or(0);
+    let next_id: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextSwapId)
+        .unwrap_or(0);
     let swap = SwapRequest {
         id: next_id,
         initiator: initiator.clone(),
@@ -84,13 +91,21 @@ pub fn create_swap(
         created_at: now,
     };
 
-    let mut swaps: Map<u64, SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).unwrap_or_else(|| Map::new(env));
+    let mut swaps: Map<u64, SwapRequest> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SwapRequests)
+        .unwrap_or_else(|| Map::new(env));
     swaps.set(next_id, swap);
-    env.storage().persistent().set(&DataKey::SwapRequests, &swaps);
-    env.storage().instance().set(&DataKey::NextSwapId, &next_id.checked_add(1).ok_or(EscrowError::InvalidAmount)?);
+    env.storage()
+        .persistent()
+        .set(&DataKey::SwapRequests, &swaps);
+    env.storage()
+        .instance()
+        .set(&DataKey::NextSwapId, &next_id.checked_add(1).ok_or(EscrowError::InvalidAmount)?);
 
     let token_a_client = TokenClient::new(env, token_a);
-    token_a_client.transfer(initiator, &env.current_contract_address(), &initiator_amount);
+    token_a_client.transfer(initiator, env.current_contract_address(), &initiator_amount);
 
     SwapCreated {
         id: next_id,
@@ -107,33 +122,43 @@ pub fn create_swap(
 }
 
 /// Accepts a pending swap by providing the secret that matches the hash lock.
-/// 
+///
 /// # Arguments
 /// * `env` - The contract environment
 /// * `id` - The swap ID to accept
 /// * `responder` - The address of the responder accepting the swap (must match the swap's responder)
 /// * `secret` - The secret that produces the hash lock when hashed with SHA-256
-/// 
+///
 /// # Returns
 /// * `Ok(())` if the swap was successfully accepted
 /// * `Err(EscrowError)` if any validation fails
-/// 
+///
 /// # Validation
 /// * The swap must be in PENDING status
 /// * The caller must be the swap's responder
 /// * The provided secret must match the swap's hash lock
 /// * The current timestamp must be strictly before the swap's time_lock (deadline is inclusive)
 /// * The contract must not be paused
-/// 
+///
 /// # Deadline Semantics
 /// The deadline is inclusive: acceptance is rejected if `now >= time_lock`.
 /// This means the swap cannot be accepted at or after the exact deadline timestamp.
-pub fn accept_swap(env: &Env, id: u64, responder: &Address, secret: BytesN<32>) -> Result<(), EscrowError> {
+pub fn accept_swap(
+    env: &Env,
+    id: u64,
+    responder: &Address,
+    secret: BytesN<32>,
+) -> Result<(), EscrowError> {
     pause::when_not_paused(env).map_err(|_| EscrowError::ContractPaused)?;
-    let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
+    let _guard =
+        common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
     responder.require_auth();
 
-    let mut swaps: Map<u64, SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).ok_or(EscrowError::NotInitialized)?;
+    let mut swaps: Map<u64, SwapRequest> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SwapRequests)
+        .ok_or(EscrowError::NotInitialized)?;
     let mut s = swaps.get(id).ok_or(EscrowError::SwapNotFound)?;
     if s.status != STATUS_PENDING {
         return Err(EscrowError::SwapNotActive);
@@ -155,20 +180,31 @@ pub fn accept_swap(env: &Env, id: u64, responder: &Address, secret: BytesN<32>) 
     swaps.set(id, s.clone());
 
     let token_b_client = TokenClient::new(env, &s.token_b);
-    token_b_client.transfer(responder, &env.current_contract_address(), &s.responder_amount);
+    token_b_client.transfer(responder, env.current_contract_address(), &s.responder_amount);
 
-    SwapAccepted { id, responder: responder.clone() }.publish(env);
+    SwapAccepted {
+        id,
+        responder: responder.clone(),
+    }
+    .publish(env);
 
-    env.storage().persistent().set(&DataKey::SwapRequests, &swaps);
+    env.storage()
+        .persistent()
+        .set(&DataKey::SwapRequests, &swaps);
     Ok(())
 }
 
 pub fn complete_swap(env: &Env, id: u64, caller: &Address) -> Result<(), EscrowError> {
     pause::when_not_paused(env).map_err(|_| EscrowError::ContractPaused)?;
-    let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
+    let _guard =
+        common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
     caller.require_auth();
 
-    let mut swaps: Map<u64, SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).ok_or(EscrowError::NotInitialized)?;
+    let mut swaps: Map<u64, SwapRequest> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SwapRequests)
+        .ok_or(EscrowError::NotInitialized)?;
     let mut s = swaps.get(id).ok_or(EscrowError::SwapNotFound)?;
     if s.status != STATUS_ACTIVE {
         return Err(EscrowError::SwapNotActive);
@@ -185,18 +221,30 @@ pub fn complete_swap(env: &Env, id: u64, caller: &Address) -> Result<(), EscrowE
     let token_b_client = TokenClient::new(env, &s.token_b);
     token_b_client.transfer(&env.current_contract_address(), &s.initiator, &s.responder_amount);
 
-    SwapCompleted { id, initiator: s.initiator.clone(), responder: s.responder.clone() }.publish(env);
+    SwapCompleted {
+        id,
+        initiator: s.initiator.clone(),
+        responder: s.responder.clone(),
+    }
+    .publish(env);
 
-    env.storage().persistent().set(&DataKey::SwapRequests, &swaps);
+    env.storage()
+        .persistent()
+        .set(&DataKey::SwapRequests, &swaps);
     Ok(())
 }
 
 pub fn cancel_swap(env: &Env, id: u64, caller: &Address) -> Result<(), EscrowError> {
     pause::when_not_paused(env).map_err(|_| EscrowError::ContractPaused)?;
-    let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
+    let _guard =
+        common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
     caller.require_auth();
 
-    let mut swaps: Map<u64, SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).ok_or(EscrowError::NotInitialized)?;
+    let mut swaps: Map<u64, SwapRequest> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SwapRequests)
+        .ok_or(EscrowError::NotInitialized)?;
     let mut s = swaps.get(id).ok_or(EscrowError::SwapNotFound)?;
     if s.status == STATUS_COMPLETED || s.status == STATUS_CANCELLED {
         return Err(EscrowError::SwapNotActive);
@@ -204,7 +252,7 @@ pub fn cancel_swap(env: &Env, id: u64, caller: &Address) -> Result<(), EscrowErr
     if *caller != s.initiator && *caller != s.responder {
         return Err(EscrowError::Unauthorized);
     }
-    
+
     let previous_status = s.status;
     s.status = STATUS_CANCELLED;
     swaps.set(id, s.clone());
@@ -219,22 +267,36 @@ pub fn cancel_swap(env: &Env, id: u64, caller: &Address) -> Result<(), EscrowErr
 
     SwapCancelled { id }.publish(env);
 
-    env.storage().persistent().set(&DataKey::SwapRequests, &swaps);
+    env.storage()
+        .persistent()
+        .set(&DataKey::SwapRequests, &swaps);
     Ok(())
 }
 
 pub fn get_swap(env: &Env, id: u64) -> Result<SwapRequest, EscrowError> {
-    let swaps: Map<u64, SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).ok_or(EscrowError::NotInitialized)?;
+    let swaps: Map<u64, SwapRequest> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SwapRequests)
+        .ok_or(EscrowError::NotInitialized)?;
     swaps.get(id).ok_or(EscrowError::SwapNotFound)
 }
 
 pub fn get_swaps(env: &Env) -> Vec<SwapRequest> {
-    let swaps: Map<u64, SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).unwrap_or_else(|| Map::new(env));
+    let swaps: Map<u64, SwapRequest> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SwapRequests)
+        .unwrap_or_else(|| Map::new(env));
     swaps.values()
 }
 
 pub fn pause(env: &Env, admin: &Address) -> Result<(), EscrowError> {
-    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(EscrowError::NotInitialized)?;
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(EscrowError::NotInitialized)?;
     if admin != &s {
         return Err(EscrowError::Unauthorized);
     }
@@ -242,16 +304,25 @@ pub fn pause(env: &Env, admin: &Address) -> Result<(), EscrowError> {
 }
 
 pub fn unpause(env: &Env, admin: &Address) -> Result<(), EscrowError> {
-    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(EscrowError::NotInitialized)?;
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(EscrowError::NotInitialized)?;
     if admin != &s {
         return Err(EscrowError::Unauthorized);
     }
     pause::unpause(env, admin).map_err(|_| EscrowError::ContractPaused)
 }
 
+#[allow(dead_code)]
 pub fn expire_swap(env: &Env, id: u64) -> Result<(), EscrowError> {
     pause::when_not_paused(env).map_err(|_| EscrowError::ContractPaused)?;
-    let mut swaps: Vec<SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).ok_or(EscrowError::NotInitialized)?;
+    let mut swaps: Vec<SwapRequest> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SwapRequests)
+        .ok_or(EscrowError::NotInitialized)?;
     let mut found = false;
 
     for i in 0..swaps.len() {
@@ -270,11 +341,19 @@ pub fn expire_swap(env: &Env, id: u64) -> Result<(), EscrowError> {
             found = true;
 
             let token_a_client = TokenClient::new(env, &s.token_a);
-            token_a_client.transfer(&env.current_contract_address(), &s.initiator, &s.initiator_amount);
+            token_a_client.transfer(
+                &env.current_contract_address(),
+                &s.initiator,
+                &s.initiator_amount,
+            );
 
             if previous_status == STATUS_ACTIVE {
                 let token_b_client = TokenClient::new(env, &s.token_b);
-                token_b_client.transfer(&env.current_contract_address(), &s.responder, &s.responder_amount);
+                token_b_client.transfer(
+                    &env.current_contract_address(),
+                    &s.responder,
+                    &s.responder_amount,
+                );
             }
 
             SwapCancelled { id }.publish(env);
@@ -285,6 +364,8 @@ pub fn expire_swap(env: &Env, id: u64) -> Result<(), EscrowError> {
     if !found {
         return Err(EscrowError::SwapNotFound);
     }
-    env.storage().persistent().set(&DataKey::SwapRequests, &swaps);
+    env.storage()
+        .persistent()
+        .set(&DataKey::SwapRequests, &swaps);
     Ok(())
 }

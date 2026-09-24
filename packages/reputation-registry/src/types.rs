@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, contracterror, Address};
+use soroban_sdk::{contracterror, contracttype, Address};
 
 pub const ACTIVITY_JOIN: u32 = 0;
 pub const ACTIVITY_CONTRIBUTE: u32 = 1;
@@ -14,7 +14,11 @@ pub const TIER_DIAMOND: u32 = 4;
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "camelCase"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct MoiScore {
     pub user: Address,
     pub score: u32,
@@ -29,7 +33,11 @@ pub struct MoiScore {
 
 #[contracttype]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "camelCase"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct Activity {
     pub user: Address,
     pub activity_type: u32,
@@ -54,7 +62,11 @@ pub enum DataKey {
 
 #[contracterror]
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "camelCase"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum ReputationError {
     NotInitialized = 1,
     Unauthorized = 2,
@@ -67,7 +79,11 @@ pub enum ReputationError {
 
 #[contracttype]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "camelCase"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct ActivityRecorded {
     pub user: Address,
     pub activity_type: u32,
@@ -77,7 +93,11 @@ pub struct ActivityRecorded {
 
 #[contracttype]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "camelCase"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct ScoreUpdated {
     pub user: Address,
     pub old_score: u32,

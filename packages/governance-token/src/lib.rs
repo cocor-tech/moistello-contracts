@@ -1,12 +1,12 @@
 #![cfg_attr(not(test), no_std)]
 
-mod types;
 mod contract;
 #[cfg(test)]
 mod test;
+mod types;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String};
 use crate::types::{AllowanceData, TokenError};
+use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
 #[contract]
 pub struct GovernanceToken;
@@ -79,7 +79,12 @@ impl GovernanceToken {
         contract::burn(&env, &from, amount)
     }
 
-    pub fn clawback(env: Env, admin: Address, from: Address, amount: i128) -> Result<(), TokenError> {
+    pub fn clawback(
+        env: Env,
+        admin: Address,
+        from: Address,
+        amount: i128,
+    ) -> Result<(), TokenError> {
         contract::clawback(&env, &admin, &from, amount)
     }
 
@@ -101,5 +106,13 @@ impl GovernanceToken {
 
     pub fn get_admin(env: Env) -> Result<Address, TokenError> {
         contract::get_admin(&env)
+    }
+
+    pub fn pause(env: Env, admin: Address) -> Result<(), TokenError> {
+        contract::pause(&env, &admin)
+    }
+
+    pub fn unpause(env: Env, admin: Address) -> Result<(), TokenError> {
+        contract::unpause(&env, &admin)
     }
 }

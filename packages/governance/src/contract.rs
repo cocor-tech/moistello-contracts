@@ -5,9 +5,9 @@
 //! `MessageInfo` parameters; those belong to CosmWasm and must never appear
 //! here.  All mutation functions perform access-control checks first, before
 //! touching storage.
-use soroban_sdk::{Address, BytesN, Env, Val, Vec};
 use crate::types::*;
 use common::{math, pause};
+use soroban_sdk::{Address, BytesN, Env, Val, Vec};
 
 const BPS_DENOM: i128 = 10_000;
 
@@ -194,7 +194,7 @@ pub fn cast_vote(
         &DataKey::Vote(proposal_id, voter.clone()),
         &VoteRecord {
             voter: voter.clone(),
-            vote: vote.clone(),
+            vote,
             vote_power,
             timestamp: now,
         },
@@ -303,11 +303,7 @@ pub fn execute_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceErr
         return Err(GovernanceError::TimelockNotElapsed);
     }
     let args: Vec<Val> = proposal.action.args.clone();
-    env.invoke_contract::<Val>(
-        &proposal.action.target_contract,
-        &proposal.action.method,
-        args,
-    );
+    env.invoke_contract::<Val>(&proposal.action.target_contract, &proposal.action.method, args);
     proposal.status = ProposalStatus::Executed;
     remove_proposal_from_status_index(env, &ProposalStatus::Queued, proposal_id);
     add_proposal_to_status_index(env, &ProposalStatus::Executed, proposal_id);
@@ -472,7 +468,7 @@ pub fn get_proposals(env: &Env, status: ProposalStatus, limit: u32) -> Vec<Propo
         .unwrap_or_else(|| Vec::new(env));
     let mut out = Vec::new(env);
     let mut i = 0u32;
-    while i < ids.len() && (out.len() as u32) < limit {
+    while i < ids.len() && out.len() < limit {
         if let Some(id) = ids.get(i) {
             if let Some(p) = env
                 .storage()
@@ -495,14 +491,26 @@ pub fn get_vote(env: &Env, proposal_id: u64, voter: &Address) -> Option<VoteReco
 
 /// Flat vote power (see `cast_vote` doc comment).
 pub fn get_vote_power(env: &Env, voter: &Address) -> i128 {
-    if let Some(staking_addr) = env.storage().instance().get::<_, Address>(&DataKey::StakingContract) {
-        env.invoke_contract(&staking_addr, &soroban_sdk::Symbol::new(env, "get_voting_power"), soroban_sdk::vec![env, voter.to_val()])
+    if let Some(staking_addr) = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::StakingContract)
+    {
+        env.invoke_contract(
+            &staking_addr,
+            &soroban_sdk::Symbol::new(env, "get_voting_power"),
+            soroban_sdk::vec![env, voter.to_val()],
+        )
     } else {
         1
     }
 }
 
-pub fn set_staking_contract(env: &Env, admin: &Address, staking: &Address) -> Result<(), GovernanceError> {
+pub fn set_staking_contract(
+    env: &Env,
+    admin: &Address,
+    staking: &Address,
+) -> Result<(), GovernanceError> {
     let s: Address = env
         .storage()
         .instance()
@@ -512,7 +520,9 @@ pub fn set_staking_contract(env: &Env, admin: &Address, staking: &Address) -> Re
         return Err(GovernanceError::Unauthorized);
     }
     admin.require_auth();
-    env.storage().instance().set(&DataKey::StakingContract, staking);
+    env.storage()
+        .instance()
+        .set(&DataKey::StakingContract, staking);
     Ok(())
 }
 

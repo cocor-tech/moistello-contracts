@@ -5,9 +5,9 @@ use soroban_sdk::{contracterror, contractevent, contracttype, Address};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum StakingPeriod {
-    OneMonth = 1,   // 1 month = 1x multiplier
-    ThreeMonths = 3, // 3 months = 2x multiplier
-    SixMonths = 6,   // 6 months = 3x multiplier
+    OneMonth = 1,      // 1 month = 1x multiplier
+    ThreeMonths = 3,   // 3 months = 2x multiplier
+    SixMonths = 6,     // 6 months = 3x multiplier
     TwelveMonths = 12, // 12 months = 5x multiplier
 }
 
@@ -139,15 +139,6 @@ pub struct Claimed {
     #[topic]
     pub user: Address,
     pub amount: i128,
-}
-
-/// Event emitted when voting power is queried (for governance integration)
-#[contractevent(topics = ["vp_query"])]
-#[derive(Clone, Debug)]
-pub struct VotingPowerQueried {
-    #[topic]
-    pub user: Address,
-    pub voting_power: i128,
 }
 
 // aligned staking reward type definitions

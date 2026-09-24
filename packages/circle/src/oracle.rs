@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Oracle integration for the Circle contract.
 //!
 //! The circle reads a `yield_rate` (in basis-points) from a configurable
@@ -43,6 +44,7 @@ fn call_oracle(env: &Env, oracle: &Address, round: u32) -> Result<i128, ()> {
 /// a small *relative* error but can exceed a tight 1% acceptance window (see
 /// `check_variance`). The acceptance window below is deliberately wider than
 /// 1% to account for this.
+#[allow(dead_code)]
 fn isqrt(n: i128) -> i128 {
     if n <= 0 {
         return 0;
@@ -85,7 +87,13 @@ fn isqrt(n: i128) -> i128 {
 /// # Returns
 /// `true` if `reported_value` falls within the 5% tolerance window around the
 /// estimate, `false` otherwise.
-pub fn check_variance(amount: i128, pool_balance: i128, deposit_count: i128, reported_value: i128) -> bool {
+#[allow(dead_code)]
+pub fn check_variance(
+    amount: i128,
+    pool_balance: i128,
+    deposit_count: i128,
+    reported_value: i128,
+) -> bool {
     if deposit_count <= 0 || amount <= 0 || pool_balance <= 0 || reported_value <= 0 {
         return false;
     }
@@ -163,12 +171,16 @@ pub fn get_yield_rate(env: &Env, round: u32) -> Result<i128, CircleError> {
 
 /// Store the primary oracle address.  Caller must enforce admin auth.
 pub fn set_primary_oracle(env: &Env, oracle: &Address) {
-    env.storage().instance().set(&DataKey::OracleContract, oracle);
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleContract, oracle);
 }
 
 /// Store the fallback oracle address.  Caller must enforce admin auth.
 pub fn set_fallback_oracle(env: &Env, oracle: &Address) {
-    env.storage().instance().set(&DataKey::FallbackOracle, oracle);
+    env.storage()
+        .instance()
+        .set(&DataKey::FallbackOracle, oracle);
 }
 
 /// Retrieve the currently configured primary oracle, if any.

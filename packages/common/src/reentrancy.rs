@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Symbol, contracterror, symbol_short};
+use soroban_sdk::{contracterror, symbol_short, Env, Symbol};
 
 const REENTRANCY_KEY: Symbol = symbol_short!("reent");
 
@@ -20,10 +20,11 @@ const REENTRANCY_KEY: Symbol = symbol_short!("reent");
 ///
 /// ## Usage
 /// ```rust
-/// use common::reentrancy::ReentrancyGuard;
+/// use common::reentrancy::{ReentrancyError, ReentrancyGuard};
+/// use soroban_sdk::Env;
 ///
-/// pub fn my_mutating_fn(env: &Env) -> Result<(), MyError> {
-///     let _guard = ReentrancyGuard::new(env).map_err(|_| MyError::ReentrantCall)?;
+/// pub fn my_mutating_fn(env: &Env) -> Result<(), ReentrancyError> {
+///     let _guard = ReentrancyGuard::new(env).map_err(|_| ReentrancyError::ReentrantCall)?;
 ///     // ... mutating logic ...
 ///     Ok(())
 ///     // _guard dropped here — lock released automatically
@@ -44,7 +45,11 @@ pub struct ReentrancyGuard {
 impl ReentrancyGuard {
     /// Acquires the reentrancy lock. Returns an error if already locked.
     pub fn new(env: &Env) -> Result<Self, ReentrancyError> {
-        let locked: bool = env.storage().temporary().get(&REENTRANCY_KEY).unwrap_or(false);
+        let locked: bool = env
+            .storage()
+            .temporary()
+            .get(&REENTRANCY_KEY)
+            .unwrap_or(false);
         if locked {
             return Err(ReentrancyError::ReentrantCall);
         }

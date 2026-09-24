@@ -1,7 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
-mod types;
 mod contract;
+mod types;
 
 #[cfg(test)]
 mod test;
@@ -71,21 +71,11 @@ impl Staking {
         contract::unpause(&env, &admin)
     }
 
-    pub fn update_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), types::StakingError> {
+    pub fn update_admin(
+        env: Env,
+        current_admin: Address,
+        new_admin: Address,
+    ) -> Result<(), types::StakingError> {
         contract::update_admin(&env, &current_admin, &new_admin)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_smoke_compile() {
-        assert!(true);
-    }
-
-    #[test]
-    fn test_types_compile() {
-        // Verify contract types compile correctly
-        assert!(true);
     }
 }

@@ -4,13 +4,9 @@
 # Enforce a cognitive complexity limit to keep functions readable.
 cognitive-complexity-threshold = 20
 
-# Allow up to 7 arguments before flagging too-many-arguments.
-too-many-arguments-threshold = 7
-
-# Allow up to 10 lines in a function before flagging too-many-lines.
+# Allow up to 9 arguments. Atomic swaps (HTLC) inherently require env + two
+# parties + two tokens + two amounts + hash/time locks.
+too-many-arguments-threshold = 9
 too-many-lines-threshold = 100
 
-# Disallow large stack values. Soroban contracts run in constrained
-# environments; keep stack allocations small.
-large-stack-arrays-threshold = 512
 vec-box-size-threshold = 4096

@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use crate::oracle;
 // `payout` is imported as a module-level path. `load_round_details` is an
 // internal helper used only within payout.rs and must NOT be re-exported here;
@@ -139,7 +140,7 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
         .persistent()
         .get(&DataKey::Allowlist)
         .unwrap_or_else(|| Vec::new(env));
-    if allowlist.len() > 0 {
+    if !allowlist.is_empty() {
         let mut permitted = false;
         for i in 0..allowlist.len() {
             if allowlist.get(i).ok_or(CircleError::VecAccessError)? == *member {
@@ -161,7 +162,7 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
             return Err(CircleError::AlreadyMember);
         }
     }
-    if members.len() as u32 >= circle.max_members {
+    if members.len() >= circle.max_members {
         return Err(CircleError::CircleFull);
     }
     if circle.collateral_amount > 0 {
@@ -169,7 +170,7 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
         token_client.transfer(member, &circle.id, &circle.collateral_amount);
     }
     let now = env.ledger().timestamp();
-    let pos = members.len() as u32;
+    let pos = members.len();
     members.push_back(Member {
         address: member.clone(),
         position: pos,
@@ -215,7 +216,9 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
 /// - `Err(CircleError::ContributionMismatch)` if amount does not match configured contribution_amount
 /// - `Err(CircleError::NotMember)` if member has not joined the circle
 /// - `Err(CircleError::InvalidMemberStatus)` if member status is not ACTIVE
-/// - `Err(CircleError::AlreadyContributed)` if member has already contributed for this round
+/// - `Err(CircleError::AlreadyContributed)` if the `(member, round)` uniqueness entry is
+///   already set, or a contribution for that `(member, round)` is present in the history
+///   vector (records written before the uniqueness entry existed)
 /// - `Err(CircleError::VecAccessError)` if vector access fails
 ///
 /// # Authorization
@@ -264,28 +267,17 @@ pub fn contribute(
     if !found {
         return Err(CircleError::NotMember);
     }
+    // Replay protection: a dedicated uniqueness entry per `(member, round)`. This is a
+    // single O(1) storage read, and — unlike rewriting a collection of all contributions —
+    // the cost of the check does not grow with the number of records in the circle.
+    if contribution_exists(env, member, round)? {
+        return Err(CircleError::AlreadyContributed);
+    }
     let mut contributions: Vec<Contribution> = env
         .storage()
         .persistent()
         .get(&DataKey::Contributions)
         .unwrap_or_else(|| Vec::new(env));
-    let mut contribution_map: Map<(Address, u32), bool> = env
-        .storage()
-        .persistent()
-        .get(&symbol_short!("contribs"))
-        .unwrap_or_else(|| {
-            let mut m = Map::new(env);
-            for i in 0..contributions.len() {
-                if let Some(c) = contributions.get(i) {
-                    m.set((c.member.clone(), c.round), true);
-                }
-            }
-            env.storage().persistent().set(&symbol_short!("contribs"), &m);
-            m
-        });
-    if contribution_map.get((member.clone(), round)).unwrap_or(false) {
-        return Err(CircleError::AlreadyContributed);
-    }
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     token_client.transfer(member, &circle.id, &amount);
     let now = env.ledger().timestamp();
@@ -305,10 +297,11 @@ pub fn contribute(
     env.storage()
         .persistent()
         .set(&DataKey::Contributions, &contributions);
-    contribution_map.set((member.clone(), round), true);
+    // Mark the contribution as recorded only after it is durably stored, so a rejected or
+    // failed call can never leave the uniqueness entry set without a matching record.
     env.storage()
         .persistent()
-        .set(&symbol_short!("contribs"), &contribution_map);
+        .set(&DataKey::ContributionExists(member.clone(), round), &true);
     env.events().publish(
         (env.current_contract_address(), symbol_short!("contrib")),
         ContributionRecorded {
@@ -318,11 +311,21 @@ pub fn contribute(
             on_time,
         },
     );
-    let registry_opt = env.storage().instance().get::<_, Address>(&DataKey::ReputationRegistry);
+    let registry_opt = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::ReputationRegistry);
     let mut fallback = true;
     if let Some(registry) = &registry_opt {
         let args: soroban_sdk::Vec<soroban_sdk::Val> = (member.clone(), 1u32, 1u32).into_val(env);
-        if env.try_invoke_contract::<(), soroban_sdk::Error>(registry, &soroban_sdk::Symbol::new(env, "record"), args).is_ok() {
+        if env
+            .try_invoke_contract::<(), soroban_sdk::Error>(
+                registry,
+                &soroban_sdk::Symbol::new(env, "record"),
+                args,
+            )
+            .is_ok()
+        {
             fallback = false;
         }
     }
@@ -331,6 +334,63 @@ pub fn contribute(
     }
     Ok(())
 }
+/// Returns whether `member` already has a recorded contribution for `round`.
+///
+/// The answer comes from the dedicated `DataKey::ContributionExists(member, round)`
+/// uniqueness entry, which makes the duplicate check a single O(1) storage read instead
+/// of a scan over every contribution the circle has ever recorded.
+///
+/// The entry is the only source of truth for new circles. Already deployed circles
+/// (upgraded from a version that predates the entry) still keep their history in
+/// `DataKey::Contributions`, so a miss falls back to consulting that history — that way an
+/// upgrade can never make an already recorded contribution replayable. The fallback answer
+/// is deliberately not written back: a replay is rejected by returning an error, and the
+/// storage writes of a failed invocation are rolled back anyway.
+fn contribution_exists(env: &Env, member: &Address, round: u32) -> Result<bool, CircleError> {
+    let key = DataKey::ContributionExists(member.clone(), round);
+    if let Some(recorded) = env.storage().persistent().get::<_, bool>(&key) {
+        return Ok(recorded);
+    }
+
+    let contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+    for i in 0..contributions.len() {
+        let c = contributions.get(i).ok_or(CircleError::VecAccessError)?;
+        if c.member == *member && c.round == round {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Returns whether `voter` has already cast a vote for `round`.
+///
+/// Mirrors `contribution_exists`: the dedicated `DataKey::VoteExists(voter, round)`
+/// entry makes the duplicate check an O(1) storage read, with a fallback scan of
+/// the votes history for circles that predate the entry.
+fn vote_exists(env: &Env, voter: &Address, round: u32) -> Result<bool, CircleError> {
+    let key = DataKey::VoteExists(voter.clone(), round);
+    if let Some(recorded) = env.storage().persistent().get::<_, bool>(&key) {
+        return Ok(recorded);
+    }
+
+    let votes: Vec<VoteEntry> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Votes)
+        .unwrap_or_else(|| Vec::new(env));
+    for i in 0..votes.len() {
+        let v = votes.get(i).ok_or(CircleError::VecAccessError)?;
+        if v.voter == *voter && v.round == round {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Triggers payout for the current round based on the circle's payout type.
 ///
 /// # Parameters
@@ -353,7 +413,6 @@ pub fn contribute(
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
-
 fn deposit_protocol_fee(
     env: &Env,
     token: &Address,
@@ -555,10 +614,18 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             payout_type,
         },
     );
-    let registry_opt = env.storage().instance().get::<_, Address>(&DataKey::ReputationRegistry);
+    let registry_opt = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::ReputationRegistry);
     if let Some(registry) = &registry_opt {
-        let args: soroban_sdk::Vec<soroban_sdk::Val> = (recipient.clone(), 4u32, 1u32).into_val(env);
-        let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(registry, &soroban_sdk::Symbol::new(env, "record"), args);
+        let args: soroban_sdk::Vec<soroban_sdk::Val> =
+            (recipient.clone(), 4u32, 1u32).into_val(env);
+        let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
+            registry,
+            &soroban_sdk::Symbol::new(env, "record"),
+            args,
+        );
     }
     if circle.status == STATUS_COMPLETED {
         env.events().publish(
@@ -575,7 +642,11 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             }
         }
         let balance = token_client.balance(&circle.id);
-        let share = if active_count > 0 { balance / (active_count as i128) } else { 0 };
+        let share = if active_count > 0 {
+            balance / (active_count as i128)
+        } else {
+            0
+        };
         for i in 0..members.len() {
             let m = members.get(i).ok_or(CircleError::NotInitialized)?;
             if m.status == MEMBER_ACTIVE {
@@ -584,8 +655,16 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
                 }
                 let mut fallback = true;
                 if let Some(registry) = &registry_opt {
-                    let args: soroban_sdk::Vec<soroban_sdk::Val> = (m.address.clone(), 2u32, 5u32).into_val(env);
-                    if env.try_invoke_contract::<(), soroban_sdk::Error>(registry, &soroban_sdk::Symbol::new(env, "record"), args).is_ok() {
+                    let args: soroban_sdk::Vec<soroban_sdk::Val> =
+                        (m.address.clone(), 2u32, 5u32).into_val(env);
+                    if env
+                        .try_invoke_contract::<(), soroban_sdk::Error>(
+                            registry,
+                            &soroban_sdk::Symbol::new(env, "record"),
+                            args,
+                        )
+                        .is_ok()
+                    {
                         fallback = false;
                     }
                 }
@@ -730,10 +809,8 @@ pub fn vote_payout(
             }
             is_member = true;
         }
-        if m.address == *vote_for {
-            if m.status == MEMBER_ACTIVE {
-                is_vote_for_member = true;
-            }
+        if m.address == *vote_for && m.status == MEMBER_ACTIVE {
+            is_vote_for_member = true;
         }
     }
     if !is_member || !is_vote_for_member {
@@ -744,11 +821,13 @@ pub fn vote_payout(
         .persistent()
         .get(&DataKey::Votes)
         .unwrap_or_else(|| Vec::new(env));
-    for i in 0..votes.len() {
-        let v = votes.get(i).ok_or(CircleError::VecAccessError)?;
-        if v.voter == *voter && v.round == round {
-            return Err(CircleError::AlreadyVoted);
-        }
+    // O(1) double-vote guard, mirroring `contribution_exists`: the dedicated
+    // `DataKey::VoteExists(voter, round)` entry answers the uniqueness check in a
+    // single read regardless of vote history. Circles deployed before the entry
+    // fall back to scanning the votes history, so an upgrade can never make an
+    // already cast vote castable again.
+    if vote_exists(env, voter, round)? {
+        return Err(CircleError::AlreadyVoted);
     }
     votes.push_back(VoteEntry {
         voter: voter.clone(),
@@ -757,6 +836,9 @@ pub fn vote_payout(
         timestamp: env.ledger().timestamp(),
     });
     env.storage().persistent().set(&DataKey::Votes, &votes);
+    env.storage()
+        .persistent()
+        .set(&DataKey::VoteExists(voter.clone(), round), &true);
     env.events().publish(
         (env.current_contract_address(), symbol_short!("vote")),
         VoteCast {
@@ -1096,11 +1178,7 @@ pub fn raise_dispute(
     Ok(())
 }
 
-pub fn dispute(
-    env: &Env,
-    member: &Address,
-    evidence_hash: &BytesN<32>,
-) -> Result<(), CircleError> {
+pub fn dispute(env: &Env, member: &Address, evidence_hash: &BytesN<32>) -> Result<(), CircleError> {
     raise_dispute(env, member, evidence_hash)
 }
 /// Resolves an active dispute and restores circle to ACTIVE status.
@@ -1300,11 +1378,9 @@ pub fn get_contributions(
 ///
 /// # Panics
 /// Never panics. Returns None on any error or ineligibility.
+#[allow(dead_code)]
 pub fn get_pending_payout(env: &Env, member: &Address) -> Option<i128> {
-    let circle: Circle = match env.storage().instance().get(&DataKey::Circle) {
-        Some(c) => c,
-        None => return None,
-    };
+    let circle: Circle = env.storage().instance().get(&DataKey::Circle)?;
     if circle.status != STATUS_ACTIVE {
         return None;
     }
@@ -1317,10 +1393,7 @@ pub fn get_pending_payout(env: &Env, member: &Address) -> Option<i128> {
         Err(_) => return None,
     };
     let round = circle.current_round;
-    let members: Vec<Member> = match env.storage().persistent().get(&DataKey::Members) {
-        Some(m) => m,
-        None => return None,
-    };
+    let members: Vec<Member> = env.storage().persistent().get(&DataKey::Members)?;
     match circle.payout_type {
         PAYOUT_FIXED => {
             let pos = round % circle.max_members;
@@ -1350,10 +1423,7 @@ pub fn get_pending_payout(env: &Env, member: &Address) -> Option<i128> {
             None
         }
         PAYOUT_AUCTION => {
-            let bids: Vec<AuctionBid> = match env.storage().persistent().get(&DataKey::Bids) {
-                Some(b) => b,
-                None => return None,
-            };
+            let bids: Vec<AuctionBid> = env.storage().persistent().get(&DataKey::Bids)?;
             let mut min_bps: u32 = 10001;
             for i in 0..bids.len() {
                 if let Some(b) = bids.get(i) {
@@ -1386,10 +1456,7 @@ pub fn get_pending_payout(env: &Env, member: &Address) -> Option<i128> {
             }
         }
         PAYOUT_VOTE => {
-            let votes: Vec<VoteEntry> = match env.storage().persistent().get(&DataKey::Votes) {
-                Some(v) => v,
-                None => return None,
-            };
+            let votes: Vec<VoteEntry> = env.storage().persistent().get(&DataKey::Votes)?;
             let mut tally: Map<Address, u32> = Map::new(env);
             for i in 0..votes.len() {
                 if let Some(v) = votes.get(i) {
@@ -1532,11 +1599,11 @@ pub fn batch_invite(
                 return Err(CircleError::AlreadyMember);
             }
         }
-        if members_vec.len() as u32 >= circle.max_members {
+        if members_vec.len() >= circle.max_members {
             return Err(CircleError::CircleFull);
         }
         let now = env.ledger().timestamp();
-        let pos = members_vec.len() as u32;
+        let pos = members_vec.len();
         members_vec.push_back(Member {
             address: member.clone(),
             position: pos,
@@ -1552,7 +1619,7 @@ pub fn batch_invite(
         .persistent()
         .set(&DataKey::Members, &members_vec);
     let circle_status = circle.status;
-    let member_count = members_vec.len() as u32;
+    let member_count = members_vec.len();
     let max_members = circle.max_members;
     let mut stored_circle = env
         .storage()
@@ -1608,16 +1675,12 @@ pub fn batch_payout(
     if round != circle.current_round {
         return Err(CircleError::RoundNotCurrent);
     }
-    if recipients.len() == 0 || recipients.len() > 10 || recipients.len() != amounts.len() {
+    if recipients.is_empty() || recipients.len() > 10 || recipients.len() != amounts.len() {
         return Err(CircleError::InvalidAmount);
     }
 
     // Get fee_bps from storage (#256)
-    let fee_bps: u32 = env
-        .storage()
-        .instance()
-        .get(&DataKey::FeeBps)
-        .unwrap_or(0);
+    let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
 
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     let now = env.ledger().timestamp();
@@ -1631,7 +1694,7 @@ pub fn batch_payout(
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
-    
+
     for i in 0..recipients.len() {
         let recipient = recipients.get(i).ok_or(CircleError::VecAccessError)?;
         let amount = amounts.get(i).ok_or(CircleError::VecAccessError)?;
@@ -1736,10 +1799,7 @@ pub fn register_referral(
     );
     Ok(())
 }
-pub fn claim_referral_bonus(
-    env: &Env,
-    referrer: &Address,
-) -> Result<(), CircleError> {
+pub fn claim_referral_bonus(env: &Env, referrer: &Address) -> Result<(), CircleError> {
     let token_address: Address = env
         .storage()
         .instance()
@@ -1756,10 +1816,7 @@ pub fn claim_referral_bonus(
 pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
     Err(CircleError::NotImplemented)
 }
-pub fn claim_streak_bonus(
-    env: &Env,
-    member: &Address,
-) -> Result<(), CircleError> {
+pub fn claim_streak_bonus(env: &Env, member: &Address) -> Result<(), CircleError> {
     let token_address: Address = env
         .storage()
         .instance()

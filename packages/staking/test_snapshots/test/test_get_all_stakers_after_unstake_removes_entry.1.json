@@ -141,7 +141,7 @@
   "ledger": {
     "protocol_version": 26,
     "sequence_number": 0,
-    "timestamp": 0,
+    "timestamp": 2592001,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -279,7 +279,7 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "StakersList"
+                    "symbol": "StakerList"
                   }
                 ]
               },
@@ -378,7 +378,7 @@
                               "symbol": "claimable_time"
                             },
                             "val": {
-                              "u64": "1209600"
+                              "u64": "3801601"
                             }
                           },
                           {
@@ -386,7 +386,7 @@
                               "symbol": "unbonding_start_time"
                             },
                             "val": {
-                              "u64": "0"
+                              "u64": "2592001"
                             }
                           }
                         ]

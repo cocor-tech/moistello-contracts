@@ -2,12 +2,12 @@
 
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{Address, Env, String};
-    use soroban_sdk::testutils::Address as _;
     use crate as governance_token;
     use governance_token::{GovernanceToken, GovernanceTokenClient};
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, Env, String};
 
-    fn setup(env: &Env) -> (Address, GovernanceTokenClient) {
+    fn setup(env: &Env) -> (Address, GovernanceTokenClient<'_>) {
         let admin = Address::generate(env);
         let contract_id = env.register(GovernanceToken, ());
         let client = GovernanceTokenClient::new(env, &contract_id);
@@ -58,9 +58,9 @@ mod tests {
         let (admin, client) = setup(&env);
         let recipient = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &recipient, &1_000_0000000i128);
-        assert_eq!(client.balance(&recipient), 1_000_0000000i128);
-        assert_eq!(client.total_supply(), 1_000_0000000i128);
+        client.mint(&admin, &recipient, &10_000_000_000_i128);
+        assert_eq!(client.balance(&recipient), 10_000_000_000_i128);
+        assert_eq!(client.total_supply(), 10_000_000_000_i128);
     }
 
     #[test]
@@ -70,7 +70,7 @@ mod tests {
         let not_admin = Address::generate(&env);
         let recipient = Address::generate(&env);
         env.mock_all_auths();
-        let result = client.try_mint(&not_admin, &recipient, &1_000_0000000i128);
+        let result = client.try_mint(&not_admin, &recipient, &10_000_000_000_i128);
         assert!(result.is_err());
     }
 
@@ -95,12 +95,33 @@ mod tests {
     }
 
     #[test]
+    fn test_mint_at_max_supply_boundary() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let recipient = Address::generate(&env);
+        env.mock_all_auths();
+        // 1_000_000_000_000_0000 exactly equals MAX_SUPPLY → allowed.
+        client.mint(&admin, &recipient, &10_000_000_000_000_000_i128);
+        assert_eq!(client.total_supply(), 10_000_000_000_000_000_i128);
+    }
+
+    #[test]
+    fn test_mint_exceeding_max_supply_fails() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let recipient = Address::generate(&env);
+        env.mock_all_auths();
+        let result = client.try_mint(&admin, &recipient, &(10_000_000_000_000_000_i128 + 1));
+        assert_eq!(result, Err(Ok(crate::types::TokenError::MaxSupplyExceeded)));
+    }
+
+    #[test]
     fn test_burn() {
         let env = Env::default();
         let (admin, client) = setup(&env);
         let holder = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &holder, &1_000_0000000i128);
+        client.mint(&admin, &holder, &10_000_000_000_i128);
         client.burn(&holder, &500_0000000i128);
         assert_eq!(client.balance(&holder), 500_0000000i128);
         assert_eq!(client.total_supply(), 500_0000000i128);
@@ -136,7 +157,7 @@ mod tests {
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &alice, &1_000_0000000i128);
+        client.mint(&admin, &alice, &10_000_000_000_i128);
         client.transfer(&alice, &bob, &300_0000000i128);
         assert_eq!(client.balance(&alice), 700_0000000i128);
         assert_eq!(client.balance(&bob), 300_0000000i128);
@@ -173,7 +194,7 @@ mod tests {
         let spender = Address::generate(&env);
         let recipient = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &owner, &1_000_0000000i128);
+        client.mint(&admin, &owner, &10_000_000_000_i128);
         client.approve(&owner, &spender, &500_0000000i128, &0u32);
         let allowance = client.allowance(&owner, &spender);
         assert_eq!(allowance.amount, 500_0000000i128);
@@ -192,7 +213,7 @@ mod tests {
         let spender = Address::generate(&env);
         let recipient = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &owner, &1_000_0000000i128);
+        client.mint(&admin, &owner, &10_000_000_000_i128);
         client.approve(&owner, &spender, &100i128, &0u32);
         let result = client.try_transfer_from(&spender, &owner, &recipient, &200i128);
         assert!(result.is_err());
@@ -216,7 +237,7 @@ mod tests {
         let (admin, client) = setup(&env);
         let holder = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &holder, &1_000_0000000i128);
+        client.mint(&admin, &holder, &10_000_000_000_i128);
         client.clawback(&admin, &holder, &400_0000000i128);
         assert_eq!(client.balance(&holder), 600_0000000i128);
         assert_eq!(client.total_supply(), 600_0000000i128);
@@ -241,7 +262,7 @@ mod tests {
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &alice, &1_000_0000000i128);
+        client.mint(&admin, &alice, &10_000_000_000_i128);
         client.freeze(&admin, &alice);
         assert!(client.is_frozen(&alice));
         let result = client.try_transfer(&alice, &bob, &100i128);
@@ -255,7 +276,7 @@ mod tests {
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &alice, &1_000_0000000i128);
+        client.mint(&admin, &alice, &10_000_000_000_i128);
         client.freeze(&admin, &bob);
         let result = client.try_transfer(&alice, &bob, &100i128);
         assert!(result.is_err());
@@ -268,7 +289,7 @@ mod tests {
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
         env.mock_all_auths();
-        client.mint(&admin, &alice, &1_000_0000000i128);
+        client.mint(&admin, &alice, &10_000_000_000_i128);
         client.freeze(&admin, &alice);
         assert!(client.is_frozen(&alice));
         client.unfreeze(&admin, &alice);
@@ -340,30 +361,30 @@ mod tests {
         env.mock_all_auths();
 
         // Mint to alice
-        client.mint(&admin, &alice, &10_000_0000000i128);
-        assert_eq!(client.total_supply(), 10_000_0000000i128);
+        client.mint(&admin, &alice, &100_000_000_000_i128);
+        assert_eq!(client.total_supply(), 100_000_000_000_i128);
 
         // Transfer alice -> bob
-        client.transfer(&alice, &bob, &3_000_0000000i128);
-        assert_eq!(client.balance(&alice), 7_000_0000000i128);
-        assert_eq!(client.balance(&bob), 3_000_0000000i128);
+        client.transfer(&alice, &bob, &30_000_000_000_i128);
+        assert_eq!(client.balance(&alice), 70_000_000_000_i128);
+        assert_eq!(client.balance(&bob), 30_000_000_000_i128);
 
         // Approve bob to spend alice's tokens, transfer to charlie
-        client.approve(&alice, &bob, &2_000_0000000i128, &0u32);
-        client.transfer_from(&bob, &alice, &charlie, &1_000_0000000i128);
-        assert_eq!(client.balance(&alice), 6_000_0000000i128);
-        assert_eq!(client.balance(&charlie), 1_000_0000000i128);
-        assert_eq!(client.allowance(&alice, &bob).amount, 1_000_0000000i128);
+        client.approve(&alice, &bob, &20_000_000_000_i128, &0u32);
+        client.transfer_from(&bob, &alice, &charlie, &10_000_000_000_i128);
+        assert_eq!(client.balance(&alice), 60_000_000_000_i128);
+        assert_eq!(client.balance(&charlie), 10_000_000_000_i128);
+        assert_eq!(client.allowance(&alice, &bob).amount, 10_000_000_000_i128);
 
         // Burn some of bob's tokens
         client.burn(&bob, &500_0000000i128);
-        assert_eq!(client.balance(&bob), 2_500_0000000i128);
-        assert_eq!(client.total_supply(), 9_500_0000000i128);
+        assert_eq!(client.balance(&bob), 25_000_000_000_i128);
+        assert_eq!(client.total_supply(), 95_000_000_000_i128);
 
         // Clawback 100 from charlie
         client.clawback(&admin, &charlie, &100_0000000i128);
         assert_eq!(client.balance(&charlie), 900_0000000i128);
-        assert_eq!(client.total_supply(), 9_400_0000000i128);
+        assert_eq!(client.total_supply(), 94_000_000_000_i128);
     }
 }
 
