@@ -8,7 +8,7 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 pub struct CircleFactory;
 #[contractimpl]
 impl CircleFactory {
-    pub fn init(
+pub fn init(
         env: Env,
         admin: Address,
         fee_bps: i128,
@@ -61,6 +61,23 @@ impl CircleFactory {
     }
     pub fn unpause(env: Env, admin: Address) -> Result<(), types::FactoryError> {
         contract::unpause(&env, &admin)
+    }
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), types::FactoryError> {
+        contract::upgrade(&env, &admin, &new_wasm_hash)
+    }
+    pub fn set_implementation(
+        env: Env,
+        admin: Address,
+        new_impl: Address,
+    ) -> Result<(), types::FactoryError> {
+        contract::set_implementation(&env, &admin, &new_impl)
+    }
+    pub fn get_implementation(env: Env) -> Option<Address> {
+        contract::get_implementation(&env)
     }
 }
 

@@ -110,6 +110,23 @@ impl Governance {
     pub fn revoke_delegation(env: Env, delegator: Address) -> Result<(), types::GovernanceError> {
         contract::revoke_delegation(&env, &delegator)
     }
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), types::GovernanceError> {
+        contract::upgrade(&env, &admin, &new_wasm_hash)
+    }
+    pub fn set_implementation(
+        env: Env,
+        admin: Address,
+        new_impl: Address,
+    ) -> Result<(), types::GovernanceError> {
+        contract::set_implementation(&env, &admin, &new_impl)
+    }
+    pub fn get_implementation(env: Env) -> Option<Address> {
+        contract::get_implementation(&env)
+    }
 }
 
 #[cfg(test)]

@@ -12,4 +12,7 @@ use soroban_sdk::{contract,contractimpl,Address,BytesN,Env};
     pub fn get_swaps(env:Env)->soroban_sdk::Vec<types::SwapRequest>{contract::get_swaps(&env)}
     pub fn pause(env:Env,admin:Address)->Result<(),types::EscrowError>{contract::pause(&env,&admin)}
     pub fn unpause(env:Env,admin:Address)->Result<(),types::EscrowError>{contract::unpause(&env,&admin)}
+    pub fn upgrade(env:Env,admin:Address,new_wasm_hash:BytesN<32>)->Result<(),types::EscrowError>{contract::upgrade(&env,&admin,&new_wasm_hash)}
+    pub fn set_implementation(env:Env,admin:Address,new_impl:Address)->Result<(),types::EscrowError>{contract::set_implementation(&env,&admin,&new_impl)}
+    pub fn get_implementation(env:Env)->Option<Address>{contract::get_implementation(&env)}
 }

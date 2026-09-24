@@ -171,7 +171,7 @@ impl Circle {
         contract::is_payout_scheduled(&env, round)
     }
 
-    pub fn pause_circle(env: Env, admin: Address) -> Result<(), types::CircleError> {
+pub fn pause_circle(env: Env, admin: Address) -> Result<(), types::CircleError> {
         contract::pause_circle(&env, &admin)
     }
     pub fn unpause_circle(env: Env, admin: Address) -> Result<(), types::CircleError> {
@@ -267,5 +267,40 @@ impl Circle {
     }
     pub fn get_fallback_oracle(env: Env) -> Option<Address> {
         contract::get_fallback_oracle(&env)
+    }
+    pub fn batch_contribute(
+        env: Env,
+        members: soroban_sdk::Vec<Address>,
+        amounts: soroban_sdk::Vec<i128>,
+        round: u32,
+    ) -> Result<(), types::CircleError> {
+        contract::batch_contribute(&env, &members, &amounts, round)
+    }
+    pub fn set_allow_organizer_join(
+        env: Env,
+        admin: Address,
+        allow: bool,
+    ) -> Result<(), types::CircleError> {
+        contract::set_allow_organizer_join(&env, &admin, allow)
+    }
+    pub fn get_allow_organizer_join(env: Env) -> bool {
+        contract::get_allow_organizer_join(&env)
+    }
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), types::CircleError> {
+        contract::upgrade(&env, &admin, &new_wasm_hash)
+    }
+    pub fn set_implementation(
+        env: Env,
+        admin: Address,
+        new_impl: Address,
+    ) -> Result<(), types::CircleError> {
+        contract::set_implementation(&env, &admin, &new_impl)
+    }
+    pub fn get_implementation(env: Env) -> Option<Address> {
+        contract::get_implementation(&env)
     }
 }

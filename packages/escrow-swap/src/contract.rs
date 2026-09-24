@@ -218,7 +218,7 @@ pub fn cancel_swap(env: &Env, id: u64, caller: &Address) -> Result<(), EscrowErr
     let _guard = common::reentrancy::ReentrancyGuard::new(env).map_err(|_| EscrowError::NotInitialized)?;
     caller.require_auth();
 
-    let mut swaps: Vec<SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).ok_or(EscrowError::NotInitialized)?;
+let mut swaps: Vec<SwapRequest> = env.storage().persistent().get(&DataKey::SwapRequests).ok_or(EscrowError::NotInitialized)?;
     let mut found = false;
 
     for i in 0..swaps.len() {
@@ -286,4 +286,26 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), EscrowError> {
         return Err(EscrowError::Unauthorized);
     }
     pause::unpause(env, admin).map_err(|_| EscrowError::ContractPaused)
+}
+
+/// Upgrade proxy for Escrow Swap contract (#334) — admin-only.
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) -> Result<(), EscrowError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(EscrowError::NotInitialized)?;
+    if admin != &s {
+        return Err(EscrowError::Unauthorized);
+    }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| EscrowError::Unauthorized)
+}
+
+/// Set implementation address for proxy pattern (#334) — admin-only.
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), EscrowError> {
+    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(EscrowError::NotInitialized)?;
+    if admin != &s {
+        return Err(EscrowError::Unauthorized);
+    }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| EscrowError::Unauthorized)
+}
+
+pub fn get_implementation(env: &Env) -> Option<Address> {
+    common::upgrade::get_implementation(env)
 }
