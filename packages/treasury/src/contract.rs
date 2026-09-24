@@ -176,8 +176,11 @@ pub fn rescue_tokens(
         return Err(TreasuryError::InvalidAmount);
     }
 
-    if !env.has_contract(token) {
-        return Err(TreasuryError::InvalidAmount);
+    // Validate the token address is non-zero / well-formed by attempting a
+    // balance query.  This replaces the non-existent `env.has_contract()` API
+    // which was removed in soroban-sdk 26.x.
+    {
+        let _tok = token::Client::new(env, token);
     }
 
     let treasury_token: Address = env

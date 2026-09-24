@@ -49,5 +49,7 @@ pub use types::CircleError;
     pub fn set_fallback_oracle(env:Env,admin:Address,oracle:Address)->Result<(),types::CircleError>{contract::set_fallback_oracle(&env,&admin,&oracle)}
     pub fn get_oracle(env:Env)->Option<Address>{contract::get_oracle(&env)}
     pub fn get_fallback_oracle(env:Env)->Option<Address>{contract::get_fallback_oracle(&env)}
+    pub fn update_config(env:Env,admin:Address,new_config:types::CircleConfig)->Result<(),types::CircleError>{contract::update_config(&env,&admin,&new_config)}
+    pub fn emergency_withdraw(env:Env,admin:Address)->Result<(),types::CircleError>{contract::emergency_withdraw(&env,&admin)}
 }
 

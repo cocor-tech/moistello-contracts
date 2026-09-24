@@ -1,6 +1,6 @@
 use crate::contract::{CircleContract, CircleContractClient};
 use crate::types::{CircleConfig, Currency};
-soroban_sdk::{Env, Address, symbol_short};
+use soroban_sdk::{Env, Address, symbol_short};
 
 #[test]
 fn test_contract_storage_versioning_and_migration() {
