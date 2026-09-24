@@ -12,7 +12,7 @@ use common::{math, pause};
 use reputation_registry::scoring;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    symbol_short, Address, BytesN, Env, IntoVal, Map, Vec,
+    symbol_short, Address, BytesN, Env, IntoVal, Map, String, Vec,
 };
 
 /// Initializes a new circle contract with the provided configuration.
@@ -288,10 +288,15 @@ pub fn contribute(
                     m.set((c.member.clone(), c.round), true);
                 }
             }
-            env.storage().persistent().set(&symbol_short!("contribs"), &m);
+            env.storage()
+                .persistent()
+                .set(&symbol_short!("contribs"), &m);
             m
         });
-    if contribution_map.get((member.clone(), round)).unwrap_or(false) {
+    if contribution_map
+        .get((member.clone(), round))
+        .unwrap_or(false)
+    {
         return Err(CircleError::AlreadyContributed);
     }
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
@@ -326,11 +331,21 @@ pub fn contribute(
             on_time,
         },
     );
-    let registry_opt = env.storage().instance().get::<_, Address>(&DataKey::ReputationRegistry);
+    let registry_opt = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::ReputationRegistry);
     let mut fallback = true;
     if let Some(registry) = &registry_opt {
         let args: soroban_sdk::Vec<soroban_sdk::Val> = (member.clone(), 1u32, 1u32).into_val(env);
-        if env.try_invoke_contract::<(), soroban_sdk::Error>(registry, &soroban_sdk::Symbol::new(env, "record"), args).is_ok() {
+        if env
+            .try_invoke_contract::<(), soroban_sdk::Error>(
+                registry,
+                &soroban_sdk::Symbol::new(env, "record"),
+                args,
+            )
+            .is_ok()
+        {
             fallback = false;
         }
     }
@@ -354,6 +369,10 @@ pub fn contribute(
 /// - `Err(CircleError::RoundNotCurrent)` if provided round does not match current_round
 /// - `Err(CircleError::InvalidPayoutType)` if payout_type is invalid
 /// - `Err(CircleError::InvalidAmount)` if math operations fail
+/// - `Err(CircleError::InsufficientContractBalance)` if the contract cannot cover the payout pool
+///   (a `payfail` diagnostic event with the reason is emitted before the error)
+/// - `Err(CircleError::PayoutFailed)` if a payout token transfer fails; no state is advanced
+/// - `Err(CircleError::FeeTransferFailed)` if the protocol fee deposit to the treasury fails
 /// - Other errors propagated from payout resolution functions
 ///
 /// # Authorization
@@ -362,13 +381,27 @@ pub fn contribute(
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
 
+/// Executes a token transfer with typed error propagation instead of a host
+/// panic, so payout transfer failures surface as CircleError variants (#348).
+fn try_transfer(
+    token_client: &soroban_sdk::token::Client,
+    from: &Address,
+    to: &Address,
+    amount: &i128,
+) -> Result<(), CircleError> {
+    token_client
+        .try_transfer(from, to, amount)
+        .map_err(|_| CircleError::PayoutFailed)?
+        .map_err(|_| CircleError::PayoutFailed)
+}
+
 fn deposit_protocol_fee(
     env: &Env,
     token: &Address,
     treasury: &Address,
     circle_id: &Address,
     amount: i128,
-) {
+) -> Result<(), CircleError> {
     env.authorize_as_current_contract(soroban_sdk::vec![
         env,
         InvokerContractAuthEntry::Contract(SubContractInvocation {
@@ -385,7 +418,10 @@ fn deposit_protocol_fee(
             sub_invocations: soroban_sdk::vec![env],
         }),
     ]);
-    treasury::TreasuryClient::new(env, treasury).deposit_fee(circle_id, &amount, circle_id);
+    treasury::TreasuryClient::new(env, treasury)
+        .try_deposit_fee(circle_id, &amount, circle_id)
+        .map_err(|_| CircleError::FeeTransferFailed)?
+        .map_err(|_| CircleError::FeeTransferFailed)
 }
 
 pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
@@ -436,6 +472,24 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     // Fetch yield rate for observability; zero if no oracle configured.
     let _yield_rate_bps = oracle::get_yield_rate(env, round)?;
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    // Pre-flight balance check: reject before touching any state if the
+    // contract cannot cover the payout pool (net + fee). This prevents the
+    // payout flow from partially mutating storage and then failing
+    // mid-transfer (#348).
+    let required = pool;
+    let balance = token_client.balance(&circle.id);
+    if balance < required {
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("payfail")),
+            PayoutFailed {
+                round,
+                recipient: recipient.clone(),
+                amount: net,
+                reason: String::from_str(env, "insufficient_balance"),
+            },
+        );
+        return Err(CircleError::InsufficientContractBalance);
+    }
     let now = env.ledger().timestamp();
     let all_contributions: Vec<Contribution> = env
         .storage()
@@ -486,7 +540,7 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
                     (net_u.saturating_mul(w) / total_weighted) as i128
                 };
                 if share > 0 {
-                    token_client.transfer(&circle.id, &m.address, &share);
+                    try_transfer(&token_client, &circle.id, &m.address, &share)?;
                     distributed = math::safe_add(distributed, share)
                         .map_err(|_| CircleError::InvalidAmount)?;
                     payouts.push_back(PayoutRecipient {
@@ -515,12 +569,12 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             .instance()
             .get::<DataKey, Address>(&DataKey::Treasury)
         {
-            deposit_protocol_fee(env, &circle.token, &treasury, &circle.id, fee);
+            deposit_protocol_fee(env, &circle.token, &treasury, &circle.id, fee)?;
         }
     }
     if distributed < net {
         let dust = math::safe_sub(net, distributed).map_err(|_| CircleError::InvalidAmount)?;
-        token_client.transfer(&circle.id, &recipient, &dust);
+        try_transfer(&token_client, &circle.id, &recipient, &dust)?;
         payouts.push_back(PayoutRecipient {
             recipient: recipient.clone(),
             round,
@@ -563,10 +617,18 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             payout_type,
         },
     );
-    let registry_opt = env.storage().instance().get::<_, Address>(&DataKey::ReputationRegistry);
+    let registry_opt = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::ReputationRegistry);
     if let Some(registry) = &registry_opt {
-        let args: soroban_sdk::Vec<soroban_sdk::Val> = (recipient.clone(), 4u32, 1u32).into_val(env);
-        let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(registry, &soroban_sdk::Symbol::new(env, "record"), args);
+        let args: soroban_sdk::Vec<soroban_sdk::Val> =
+            (recipient.clone(), 4u32, 1u32).into_val(env);
+        let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
+            registry,
+            &soroban_sdk::Symbol::new(env, "record"),
+            args,
+        );
     }
     if circle.status == STATUS_COMPLETED {
         env.events().publish(
@@ -583,17 +645,42 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             }
         }
         let balance = token_client.balance(&circle.id);
-        let share = if active_count > 0 { balance / (active_count as i128) } else { 0 };
+        let share = if active_count > 0 {
+            balance / (active_count as i128)
+        } else {
+            0
+        };
         for i in 0..members.len() {
             let m = members.get(i).ok_or(CircleError::NotInitialized)?;
             if m.status == MEMBER_ACTIVE {
                 if share > 0 {
-                    token_client.transfer(&circle.id, &m.address, &share);
+                    // Best-effort surplus sweep: a failed transfer must not
+                    // revert the completed payout round, so emit a diagnostic
+                    // event instead of propagating the error (#348).
+                    if try_transfer(&token_client, &circle.id, &m.address, &share).is_err() {
+                        env.events().publish(
+                            (env.current_contract_address(), symbol_short!("payfail")),
+                            PayoutFailed {
+                                round,
+                                recipient: m.address.clone(),
+                                amount: share,
+                                reason: String::from_str(env, "surplus_sweep_failed"),
+                            },
+                        );
+                    }
                 }
                 let mut fallback = true;
                 if let Some(registry) = &registry_opt {
-                    let args: soroban_sdk::Vec<soroban_sdk::Val> = (m.address.clone(), 2u32, 5u32).into_val(env);
-                    if env.try_invoke_contract::<(), soroban_sdk::Error>(registry, &soroban_sdk::Symbol::new(env, "record"), args).is_ok() {
+                    let args: soroban_sdk::Vec<soroban_sdk::Val> =
+                        (m.address.clone(), 2u32, 5u32).into_val(env);
+                    if env
+                        .try_invoke_contract::<(), soroban_sdk::Error>(
+                            registry,
+                            &soroban_sdk::Symbol::new(env, "record"),
+                            args,
+                        )
+                        .is_ok()
+                    {
                         fallback = false;
                     }
                 }
@@ -1113,11 +1200,7 @@ pub fn raise_dispute(
     Ok(())
 }
 
-pub fn dispute(
-    env: &Env,
-    member: &Address,
-    evidence_hash: &BytesN<32>,
-) -> Result<(), CircleError> {
+pub fn dispute(env: &Env, member: &Address, evidence_hash: &BytesN<32>) -> Result<(), CircleError> {
     raise_dispute(env, member, evidence_hash)
 }
 /// Resolves an active dispute and restores circle to ACTIVE status.
@@ -1630,11 +1713,7 @@ pub fn batch_payout(
     }
 
     // Get fee_bps from storage (#256)
-    let fee_bps: u32 = env
-        .storage()
-        .instance()
-        .get(&DataKey::FeeBps)
-        .unwrap_or(0);
+    let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
 
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     let now = env.ledger().timestamp();
@@ -1648,7 +1727,7 @@ pub fn batch_payout(
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
-    
+
     for i in 0..recipients.len() {
         let recipient = recipients.get(i).ok_or(CircleError::VecAccessError)?;
         let amount = amounts.get(i).ok_or(CircleError::VecAccessError)?;
@@ -1753,10 +1832,7 @@ pub fn register_referral(
     );
     Ok(())
 }
-pub fn claim_referral_bonus(
-    env: &Env,
-    referrer: &Address,
-) -> Result<(), CircleError> {
+pub fn claim_referral_bonus(env: &Env, referrer: &Address) -> Result<(), CircleError> {
     let token_address: Address = env
         .storage()
         .instance()
@@ -1773,10 +1849,7 @@ pub fn claim_referral_bonus(
 pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
     Err(CircleError::NotImplemented)
 }
-pub fn claim_streak_bonus(
-    env: &Env,
-    member: &Address,
-) -> Result<(), CircleError> {
+pub fn claim_streak_bonus(env: &Env, member: &Address) -> Result<(), CircleError> {
     let token_address: Address = env
         .storage()
         .instance()
