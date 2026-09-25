@@ -74,6 +74,30 @@ impl Staking {
     pub fn update_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), types::StakingError> {
         contract::update_admin(&env, &current_admin, &new_admin)
     }
+
+    pub fn get_slash_notice_period(env: Env) -> u64 {
+        contract::get_slash_notice_period(&env)
+    }
+
+    pub fn set_slash_notice_period(env: Env, admin: Address, period_seconds: u64) -> Result<(), types::StakingError> {
+        contract::set_slash_notice_period(&env, &admin, period_seconds)
+    }
+
+    pub fn get_slash_notice(env: Env, user: Address) -> Option<(i128, u64, Address)> {
+        contract::get_slash_notice(&env, &user)
+    }
+
+    pub fn slash(env: Env, admin: Address, user: Address, amount: i128) -> Result<(), types::StakingError> {
+        contract::slash(&env, &admin, &user, amount)
+    }
+
+    pub fn cancel_slash(env: Env, admin: Address, user: Address) -> Result<(), types::StakingError> {
+        contract::cancel_slash(&env, &admin, &user)
+    }
+
+    pub fn execute_slash(env: Env, admin: Address, user: Address) -> Result<(), types::StakingError> {
+        contract::execute_slash(&env, &admin, &user)
+    }
 }
 
 #[cfg(test)]
