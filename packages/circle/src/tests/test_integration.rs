@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, BytesN, Env, String, Vec};
+use soroban_sdk::{Address, Env, String};
 
 /// Integration test: factory deploys circle -> members join -> contribute -> trigger payout -> fee sent to treasury
 /// This test is currently a stub due to circular dependencies between contracts in the test environment.
@@ -35,7 +35,9 @@ fn test_circle_lifecycle_with_fees() {
     let organizer = Address::generate(&env);
     let token_admin = Address::generate(&env);
     let token = env.register_stellar_asset_contract(token_admin.clone());
-    let treasury = Address::generate(&env); // Simulated treasury address
+    let treasury = env.register(treasury::Treasury, ());
+    let treasury_client = treasury::TreasuryClient::new(&env, &treasury);
+    treasury_client.init(&organizer, &token);
 
     let config = crate::types::CircleConfig {
         organizer: organizer.clone(),

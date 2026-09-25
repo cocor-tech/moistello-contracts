@@ -142,3 +142,11 @@ pub struct ConfigUpdateQueued{#[topic]pub queued_by:Address,pub executable_at:u6
 #[contractevent(topics=["cfg_cncl"])]
 #[derive(Clone,Debug)]
 pub struct ConfigUpdateCancelled{#[topic]pub cancelled_by:Address}
+
+#[contractevent(topics=["deposit_refund"])]
+#[derive(Clone,Debug)]
+pub struct DepositRefunded{#[topic]pub id:u64,#[topic]pub proposer:Address,pub amount:i128}
+
+#[contractevent(topics=["deposit_forfeit"])]
+#[derive(Clone,Debug)]
+pub struct DepositForfeited{#[topic]pub id:u64,#[topic]pub proposer:Address,pub amount:i128}

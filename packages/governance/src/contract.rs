@@ -92,7 +92,7 @@ pub fn create_proposal(
         .instance()
         .get(&DataKey::Config)
         .ok_or(GovernanceError::NotInitialized)?;
-    if deposit_amount < config.min_proposal_deposit {
+    if deposit_amount < config.min_proposal_deposit || deposit_amount <= 0 {
         return Err(GovernanceError::InsufficientDeposit);
     }
     let id: u64 = env
@@ -261,6 +261,15 @@ pub fn finalize_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceEr
             .map_err(|_| GovernanceError::InvalidConfig)?
             >= config.pass_threshold_bps as i128;
     remove_proposal_from_status_index(env, &ProposalStatus::Active, proposal_id);
+    let deposit = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Deposit(proposal_id))
+        .unwrap_or(proposal.deposit_amount);
+    env.storage()
+        .persistent()
+        .remove(&DataKey::Deposit(proposal_id));
+
     if passed {
         proposal.timelock_ends_at = now
             .checked_add(config.timelock_seconds)
@@ -272,12 +281,24 @@ pub fn finalize_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceEr
             status: ProposalStatus::Queued,
         }
         .publish(env);
+        DepositRefunded {
+            id: proposal_id,
+            proposer: proposal.proposer.clone(),
+            amount: deposit,
+        }
+        .publish(env);
     } else {
         proposal.status = ProposalStatus::Defeated;
         add_proposal_to_status_index(env, &ProposalStatus::Defeated, proposal_id);
         ProposalStatusChanged {
             id: proposal_id,
             status: ProposalStatus::Defeated,
+        }
+        .publish(env);
+        DepositForfeited {
+            id: proposal_id,
+            proposer: proposal.proposer.clone(),
+            amount: deposit,
         }
         .publish(env);
     }
@@ -352,12 +373,23 @@ pub fn cancel_proposal(
     env.storage()
         .persistent()
         .set(&DataKey::Proposal(proposal_id), &proposal);
+    let deposit = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Deposit(proposal_id))
+        .unwrap_or(proposal.deposit_amount);
     env.storage()
         .persistent()
         .remove(&DataKey::Deposit(proposal_id));
     ProposalCancelled {
         id: proposal_id,
         cancelled_by: caller.clone(),
+    }
+    .publish(env);
+    DepositRefunded {
+        id: proposal_id,
+        proposer: caller.clone(),
+        amount: deposit,
     }
     .publish(env);
     Ok(())
@@ -545,4 +577,8 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), GovernanceError> {
         return Err(GovernanceError::Unauthorized);
     }
     pause::unpause(env, admin).map_err(|_| GovernanceError::ContractPaused)
+}
+
+pub fn get_deposit(env: &Env, id: u64) -> Option<i128> {
+    env.storage().persistent().get(&DataKey::Deposit(id))
 }

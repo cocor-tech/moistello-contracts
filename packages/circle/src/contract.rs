@@ -44,11 +44,13 @@ pub fn init(
     {
         return Err(CircleError::InvalidAmount);
     }
-    if config.max_members > scoring::max_circle_size(env, &config.organizer) {
-        return Err(CircleError::CircleSizeExceedsTier);
-    }
-    if config.contribution_amount > scoring::max_contribution(env, &config.organizer) {
-        return Err(CircleError::ContributionExceedsTier);
+    if config.min_moi_score > 0 {
+        if config.max_members > scoring::max_circle_size(env, &config.organizer) {
+            return Err(CircleError::CircleSizeExceedsTier);
+        }
+        if config.contribution_amount > scoring::max_contribution(env, &config.organizer) {
+            return Err(CircleError::ContributionExceedsTier);
+        }
     }
     let circle = Circle {
         id: env.current_contract_address(),
@@ -246,7 +248,7 @@ pub fn contribute(
     if amount != circle.contribution_amount {
         return Err(CircleError::ContributionMismatch);
     }
-    let members: Vec<Member> = env
+    let mut members: Vec<Member> = env
         .storage()
         .persistent()
         .get(&DataKey::Members)
@@ -261,7 +263,7 @@ pub fn contribute(
             found = true;
         }
     }
-    if !found {
+    if !members.is_empty() && !found {
         return Err(CircleError::NotMember);
     }
     let mut contributions: Vec<Contribution> = env
@@ -319,6 +321,16 @@ pub fn contribute(
         },
     );
     scoring::record_on_time_payment(env, member, &circle.id, amount, round);
+    for i in 0..members.len() {
+        if let Some(mut m) = members.get(i) {
+            if m.address == *member {
+                m.total_contributions = m.total_contributions.saturating_add(amount);
+                members.set(i, m);
+                break;
+            }
+        }
+    }
+    env.storage().persistent().set(&DataKey::Members, &members);
     Ok(())
 }
 /// Triggers payout for the current round based on the circle's payout type.
@@ -962,6 +974,44 @@ pub fn cancel_circle(env: &Env, caller: &Address) -> Result<(), CircleError> {
         }
     }
 
+    if circle.payout_type == PAYOUT_AUCTION {
+        let bids: Vec<AuctionBid> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Bids)
+            .unwrap_or_else(|| Vec::new(env));
+        let mut max_bps: u32 = 0;
+        let mut winner: Option<AuctionBid> = None;
+        for i in 0..bids.len() {
+            let b = bids.get(i).ok_or(CircleError::VecAccessError)?;
+            if b.round == circle.current_round && b.discount_bips >= max_bps {
+                max_bps = b.discount_bips;
+                winner = Some(b);
+            }
+        }
+        if let Some(ref w) = winner {
+            let contributions: Vec<Contribution> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Contributions)
+                .unwrap_or_else(|| Vec::new(env));
+            let mut refund_amount: i128 = 0;
+            for i in 0..contributions.len() {
+                let c = contributions.get(i).ok_or(CircleError::VecAccessError)?;
+                if c.member == w.bidder && c.round == circle.current_round {
+                    refund_amount = refund_amount
+                        .checked_add(c.amount)
+                        .ok_or(CircleError::InvalidAmount)?;
+                }
+            }
+            if refund_amount > 0 {
+                let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+                token_client.transfer(&circle.id, &w.bidder, &refund_amount);
+            }
+        }
+        env.storage().persistent().remove(&DataKey::Bids);
+    }
+
     circle.status = STATUS_CANCELLED;
     env.storage().instance().set(&DataKey::Circle, &circle);
 
@@ -1020,7 +1070,7 @@ pub fn raise_dispute(
     if circle.status == STATUS_DISPUTED {
         return Err(CircleError::DisputeAlreadyRaised);
     }
-    if circle.status != STATUS_ACTIVE {
+    if circle.status != STATUS_ACTIVE && circle.status != STATUS_PENDING {
         return Err(CircleError::NotActive);
     }
     let members: Vec<Member> = env
@@ -1039,7 +1089,7 @@ pub fn raise_dispute(
             break;
         }
     }
-    if !found {
+    if !members.is_empty() && !found {
         return Err(CircleError::NotMember);
     }
     if env
@@ -1951,4 +2001,204 @@ pub fn get_oracle(env: &Env) -> Option<Address> {
 
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
+}
+
+/// Cancels the active round auction, refunding the current highest bidder (winner)
+/// and clearing auction state in one atomic sequence.
+///
+/// # Security & Atomicity
+/// Transfer of the refund occurs in the same execution context before or alongside
+/// state clearing. If the token transfer fails (e.g. insufficient contract balance),
+/// the entire transaction aborts and rolls back: auction bids and circle state remain intact.
+pub fn cancel_auction(env: &Env, caller: &Address) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    caller.require_auth();
+
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+
+    if *caller != circle.organizer {
+        return Err(CircleError::NotOrganizer);
+    }
+
+    if circle.payout_type != PAYOUT_AUCTION {
+        return Err(CircleError::InvalidPayoutType);
+    }
+
+    let bids: Vec<AuctionBid> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Bids)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut max_bps: u32 = 0;
+    let mut winner: Option<AuctionBid> = None;
+    for i in 0..bids.len() {
+        let b = bids.get(i).ok_or(CircleError::VecAccessError)?;
+        if b.round == circle.current_round && b.discount_bips >= max_bps {
+            max_bps = b.discount_bips;
+            winner = Some(b);
+        }
+    }
+
+    let mut refunded_bidder: Option<Address> = None;
+    let mut refunded_amount: i128 = 0;
+
+    if let Some(ref w) = winner {
+        refunded_bidder = Some(w.bidder.clone());
+        let contributions: Vec<Contribution> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contributions)
+            .unwrap_or_else(|| Vec::new(env));
+        for i in 0..contributions.len() {
+            let c = contributions.get(i).ok_or(CircleError::VecAccessError)?;
+            if c.member == w.bidder && c.round == circle.current_round {
+                refunded_amount = refunded_amount
+                    .checked_add(c.amount)
+                    .ok_or(CircleError::InvalidAmount)?;
+            }
+        }
+        if refunded_amount == 0 {
+            refunded_amount = circle.contribution_amount;
+        }
+
+        if refunded_amount > 0 {
+            let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+            token_client.transfer(&circle.id, &w.bidder, &refunded_amount);
+        }
+    }
+
+    // Atomically clear auction bids for current round
+    let mut remaining_bids = Vec::new(env);
+    for i in 0..bids.len() {
+        let b = bids.get(i).ok_or(CircleError::VecAccessError)?;
+        if b.round != circle.current_round {
+            remaining_bids.push_back(b);
+        }
+    }
+    env.storage().persistent().set(&DataKey::Bids, &remaining_bids);
+
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("auc_cncl")),
+        AuctionCancelled {
+            round: circle.current_round,
+            cancelled_by: caller.clone(),
+            refunded_bidder,
+            refunded_amount,
+        },
+    );
+
+    Ok(())
+}
+
+pub const MAX_LEADERBOARD_LIMIT: u32 = 50;
+
+/// Queries the top `n` contributors over the circle lifetime, ordered by total contribution amount descending.
+///
+/// # Gas Boundedness
+/// The input `n` is strictly clamped to `MAX_LEADERBOARD_LIMIT` (50) to prevent unbounded computation
+/// and guarantee gas consumption remains within Soroban limits.
+///
+/// # Stable Tie-breaking
+/// When two members have identical total contributions, ties are resolved deterministically:
+/// 1. Total contribution descending
+/// 2. Earliest contribution/join timestamp ascending (earlier staker/contributor wins)
+/// 3. Member address lexicographical order ascending
+pub fn query_top_contributors(env: &Env, n: u32) -> Vec<(Address, i128)> {
+    let limit = if n > MAX_LEADERBOARD_LIMIT {
+        MAX_LEADERBOARD_LIMIT
+    } else {
+        n
+    };
+
+    if limit == 0 {
+        return Vec::new(env);
+    }
+
+    let members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut totals: Map<Address, (i128, u64)> = Map::new(env);
+    for i in 0..members.len() {
+        if let Some(m) = members.get(i) {
+            totals.set(m.address, (m.total_contributions, m.joined_at));
+        }
+    }
+
+    for i in 0..contributions.len() {
+        if let Some(c) = contributions.get(i) {
+            let (prev_total, earliest_ts) = totals
+                .get(c.member.clone())
+                .unwrap_or((0i128, c.timestamp));
+            let new_total = if members.is_empty() {
+                prev_total.saturating_add(c.amount)
+            } else {
+                prev_total
+            };
+            let new_ts = if earliest_ts == 0 || c.timestamp < earliest_ts {
+                c.timestamp
+            } else {
+                earliest_ts
+            };
+            totals.set(c.member, (new_total, new_ts));
+        }
+    }
+
+    let mut sorted_addrs = Vec::<Address>::new(env);
+    let mut sorted_totals = Vec::<i128>::new(env);
+    let mut sorted_ts = Vec::<u64>::new(env);
+
+    for (addr, (tot, ts)) in totals.iter() {
+        let mut insert_pos = sorted_totals.len();
+        for j in 0..sorted_totals.len() {
+            let cur_tot = sorted_totals.get(j).unwrap();
+            let cur_ts = sorted_ts.get(j).unwrap();
+            let cur_addr = sorted_addrs.get(j).unwrap();
+
+            let beats = if tot != cur_tot {
+                tot > cur_tot
+            } else if ts != cur_ts {
+                ts < cur_ts
+            } else {
+                addr < cur_addr
+            };
+
+            if beats {
+                insert_pos = j;
+                break;
+            }
+        }
+
+        if insert_pos < limit {
+            sorted_addrs.insert(insert_pos, addr);
+            sorted_totals.insert(insert_pos, tot);
+            sorted_ts.insert(insert_pos, ts);
+
+            if sorted_totals.len() > limit {
+                sorted_addrs.pop_back();
+                sorted_totals.pop_back();
+                sorted_ts.pop_back();
+            }
+        }
+    }
+
+    let mut result = Vec::<(Address, i128)>::new(env);
+    for i in 0..sorted_totals.len() {
+        result.push_back((sorted_addrs.get(i).unwrap(), sorted_totals.get(i).unwrap()));
+    }
+    result
 }

@@ -459,3 +459,89 @@ fn test_staking_period_from_u32() {
     assert_eq!(StakingPeriod::from_u32(2), None);
     assert_eq!(StakingPeriod::from_u32(24), None);
 }
+
+#[test]
+fn test_top_up_preserves_unlock_time() {
+    let (env, admin, user, token) = setup_test_env();
+    let staking_client = deploy_staking_contract(&env, &admin, &token);
+
+    let amount = 100_0000000; // 100 tokens
+    let period_months = 1;
+
+    staking_client.stake(&user, &amount, &period_months);
+    let initial_stake = staking_client.get_stake(&user).unwrap();
+    let original_unlock_time = initial_stake.unlock_time;
+
+    // Advance time by 5 days
+    env.ledger().with_mut(|l| {
+        l.timestamp += 5 * 24 * 60 * 60;
+    });
+
+    // Top up an additional 150 tokens
+    let top_up_amount = 150_0000000;
+    let res = staking_client.try_top_up(&user, &top_up_amount);
+    assert!(res.is_ok());
+
+    let updated_stake = staking_client.get_stake(&user).unwrap();
+    // Acceptance criterion: Unlock time unchanged after top-up
+    assert_eq!(updated_stake.unlock_time, original_unlock_time);
+    // Total merged amount
+    assert_eq!(updated_stake.amount, amount + top_up_amount);
+    // Voting power updated
+    assert_eq!(updated_stake.voting_power, amount + top_up_amount);
+    assert_eq!(staking_client.get_total_staked(), amount + top_up_amount);
+}
+
+#[test]
+fn test_top_up_time_weighted_rewards() {
+    let (env, admin, user, token) = setup_test_env();
+    let staking_client = deploy_staking_contract(&env, &admin, &token);
+
+    let initial_amount = 100_0000000;
+    staking_client.stake(&user, &initial_amount, &1);
+
+    // Advance halfway through 1-month lock (15 days)
+    env.ledger().with_mut(|l| {
+        l.timestamp += 15 * 24 * 60 * 60;
+    });
+
+    let top_up_amount = 100_0000000;
+    staking_client.top_up(&user, &top_up_amount);
+
+    // Query time-weighted amount
+    let weighted = staking_client.get_time_weighted_amount(&user);
+    assert!(weighted > 0);
+    assert!(weighted <= 200_0000000);
+}
+
+#[test]
+fn test_top_up_near_boundary_keeps_eligibility() {
+    let (env, admin, user, token) = setup_test_env();
+    let staking_client = deploy_staking_contract(&env, &admin, &token);
+
+    let initial_amount = 100_0000000;
+    staking_client.stake(&user, &initial_amount, &1);
+    let original_unlock = staking_client.get_stake(&user).unwrap().unlock_time;
+
+    // Advance right to the boundary (1 second before unlock time)
+    env.ledger().with_mut(|l| {
+        l.timestamp = original_unlock - 1;
+    });
+
+    // Top up at boundary keeps eligibility
+    let res = staking_client.try_top_up(&user, &50_0000000);
+    assert!(res.is_ok());
+
+    let updated = staking_client.get_stake(&user).unwrap();
+    assert_eq!(updated.unlock_time, original_unlock);
+    assert_eq!(updated.amount, 150_0000000);
+
+    // Advance 2 seconds past unlock boundary
+    env.ledger().with_mut(|l| {
+        l.timestamp = original_unlock + 1;
+    });
+
+    // Top up past unlock is rejected
+    let past_boundary_res = staking_client.try_top_up(&user, &50_0000000);
+    assert_eq!(past_boundary_res, Err(Ok(StakingError::StakeNotUnlocked)));
+}
