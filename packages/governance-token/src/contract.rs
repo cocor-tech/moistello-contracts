@@ -33,6 +33,9 @@ pub fn initialize(
 
 pub fn transfer(env: &Env, from: &Address, to: &Address, amount: i128) -> Result<(), TokenError> {
     from.require_auth();
+    if to == &env.current_contract_address() {
+        return Err(TokenError::CannotTransferToSelf);
+    }
     validate_non_frozen(env, from)?;
     validate_non_frozen(env, to)?;
     if amount <= 0 {
@@ -59,6 +62,9 @@ pub fn transfer_from(
     amount: i128,
 ) -> Result<(), TokenError> {
     spender.require_auth();
+    if to == &env.current_contract_address() {
+        return Err(TokenError::CannotTransferToSelf);
+    }
     validate_non_frozen(env, from)?;
     validate_non_frozen(env, to)?;
     if amount <= 0 {
@@ -163,6 +169,9 @@ pub fn decimals(env: &Env) -> u32 {
 pub fn mint(env: &Env, admin: &Address, to: &Address, amount: i128) -> Result<(), TokenError> {
     admin.require_auth();
     require_admin(env, admin)?;
+    if to == &env.current_contract_address() {
+        return Err(TokenError::CannotTransferToSelf);
+    }
     validate_non_frozen(env, to)?;
     if amount <= 0 {
         return Err(TokenError::InvalidAmount);
