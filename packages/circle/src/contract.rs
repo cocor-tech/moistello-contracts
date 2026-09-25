@@ -3,17 +3,126 @@ use crate::oracle;
 // internal helper used only within payout.rs and must NOT be re-exported here;
 // doing so would create an unused import (fixes #271).
 use crate::payout;
+use crate::{analytics, migration};
 use crate::types::*;
 // Reentrancy protection comes from the shared common module — there is intentionally
 // no local reentrancy.rs in this package. See packages/common/src/reentrancy.rs for
 // the canonical implementation and the rationale for centralisation.
 use common::reentrancy::ReentrancyGuard;
-use common::{math, pause};
+use common::{expiry, math, multisig, pause, validation};
 use reputation_registry::scoring;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     symbol_short, Address, BytesN, Env, IntoVal, Map, Vec,
 };
+
+// ---------------------------------------------------------------------------
+// Shared guards (#356 address validation, #358 expiry, #359 multisig)
+// ---------------------------------------------------------------------------
+
+/// Validate an address input, mapping to typed circle errors (#356).
+fn validate_addr(env: &Env, addr: &Address) -> Result<(), CircleError> {
+    match validation::validate_address(env, addr) {
+        Ok(()) => Ok(()),
+        Err(validation::ValidationError::ZeroAddress) => Err(CircleError::ZeroAddress),
+        Err(validation::ValidationError::InvalidAddress) => Err(CircleError::InvalidAddress),
+    }
+}
+
+fn map_expiry_err(e: expiry::ExpiryError) -> CircleError {
+    match e {
+        expiry::ExpiryError::Expired => CircleError::TxExpired,
+        expiry::ExpiryError::InvalidBound => CircleError::InvalidExpiryBound,
+    }
+}
+
+/// True once `configure_multisig` has stored an admin set (#359).
+fn is_multisig_enabled(env: &Env) -> bool {
+    env.storage().instance().has(&DataKey::MultisigAdmins)
+}
+
+fn load_multisig_admins(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::MultisigAdmins)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+fn load_multisig_threshold(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MultisigThreshold)
+        .unwrap_or(1u32)
+}
+
+/// Recorded approvers for a single-use `action_id` (#359). Empty when none.
+fn load_action_approvals(env: &Env, action_id: &BytesN<32>) -> Vec<Address> {
+    let approvals: Map<BytesN<32>, Vec<Address>> = env
+        .storage()
+        .instance()
+        .get(&DataKey::MultisigApprovals)
+        .unwrap_or_else(|| Map::new(env));
+    approvals.get(action_id.clone()).unwrap_or_else(|| Vec::new(env))
+}
+
+fn store_action_approvals(env: &Env, action_id: &BytesN<32>, approvers: &Vec<Address>) {
+    let mut approvals: Map<BytesN<32>, Vec<Address>> = env
+        .storage()
+        .instance()
+        .get(&DataKey::MultisigApprovals)
+        .unwrap_or_else(|| Map::new(env));
+    approvals.set(action_id.clone(), approvers.clone());
+    env.storage()
+        .instance()
+        .set(&DataKey::MultisigApprovals, &approvals);
+}
+
+/// Require that `action_id` carries ≥ threshold recorded admin approvals.
+/// Pure check (no nested auth): each approval was authorized in its own
+/// `approve_action` transaction where the approver was the invoker.
+fn require_action_approved(env: &Env, action_id: &BytesN<32>) -> Result<(), CircleError> {
+    if !is_multisig_enabled(env) {
+        return Err(CircleError::InvalidMultisigConfig);
+    }
+    let admins = load_multisig_admins(env);
+    let threshold = load_multisig_threshold(env);
+    let approvers = load_action_approvals(env, action_id);
+    if approvers.len() == 0 {
+        return Err(CircleError::MultisigNoApprovals);
+    }
+    multisig::verify_signers(&admins, threshold, &approvers).map_err(map_multisig_err)
+}
+
+/// Clear single-use approvals after execution so an `action_id` cannot replay.
+fn clear_action_approvals(env: &Env, action_id: &BytesN<32>) {
+    let mut approvals: Map<BytesN<32>, Vec<Address>> = env
+        .storage()
+        .instance()
+        .get(&DataKey::MultisigApprovals)
+        .unwrap_or_else(|| Map::new(env));
+    approvals.remove(action_id.clone());
+    env.storage()
+        .instance()
+        .set(&DataKey::MultisigApprovals, &approvals);
+}
+
+/// Fail closed when multisig is enabled: single-sig critical paths must not
+/// bypass the threshold. Call at the top of single-sig critical functions.
+fn require_single_sig_allowed(env: &Env) -> Result<(), CircleError> {
+    if is_multisig_enabled(env) {
+        return Err(CircleError::MultisigThresholdNotMet);
+    }
+    Ok(())
+}
+
+fn map_multisig_err(e: multisig::MultisigError) -> CircleError {
+    match e {
+        multisig::MultisigError::InvalidConfig => CircleError::InvalidMultisigConfig,
+        multisig::MultisigError::NotAdmin => CircleError::Unauthorized,
+        multisig::MultisigError::ThresholdNotMet => CircleError::MultisigThresholdNotMet,
+        multisig::MultisigError::DuplicateSigner => CircleError::InvalidMultisigConfig,
+    }
+}
 
 /// Initializes a new circle contract with the provided configuration.
 ///
@@ -37,6 +146,10 @@ pub fn init(
     factory: &Address,
     config: &CircleConfig,
 ) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    validate_addr(env, factory)?;
+    validate_addr(env, &config.organizer)?;
+    validate_addr(env, &config.token)?;
     if config.max_members < 2
         || config.contribution_amount <= 0
         || config.total_rounds == 0
@@ -95,6 +208,8 @@ pub fn init(
     env.storage()
         .persistent()
         .set(&DataKey::Votes, &Vec::<VoteEntry>::new(env));
+    analytics::save(env, &analytics::load(env));
+    migration::init_current_version(env);
     Ok(())
 }
 /// Allows a member to join an active circle.
@@ -111,6 +226,7 @@ pub fn init(
 /// - `Err(CircleError::AllowlistNotPermitted)` if allowlist is configured and member is not on it
 /// - `Err(CircleError::AlreadyMember)` if member has already joined
 /// - `Err(CircleError::CircleFull)` if max_members limit has been reached
+/// - `Err(CircleError::JoinRateLimited)` if member attempted join within JOIN_RATE_LIMIT_LEDGERS of prior attempt
 /// - `Err(CircleError::VecAccessError)` if vector access fails
 ///
 /// # Authorization
@@ -121,7 +237,26 @@ pub fn init(
 pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, member)?;
     member.require_auth();
+    let attempt_key = DataKey::JoinAttempt(member.clone());
+    if let Some(prev) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, JoinAttempt>(&attempt_key)
+    {
+        let seq = env.ledger().sequence();
+        if seq.saturating_sub(prev.ledger) < JOIN_RATE_LIMIT_LEDGERS {
+            return Err(CircleError::JoinRateLimited);
+        }
+    }
+    env.storage().persistent().set(
+        &attempt_key,
+        &JoinAttempt {
+            ledger: env.ledger().sequence(),
+            timestamp: env.ledger().timestamp(),
+        },
+    );
     let mut circle: Circle = env
         .storage()
         .instance()
@@ -190,8 +325,9 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     }
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().persistent().set(&DataKey::Members, &members);
+    analytics::record_join(env, member, circle.member_count, now)?;
     env.events().publish(
-        (env.current_contract_address(), symbol_short!("joined")),
+        (env.current_contract_address(), symbol_short!("joined"), member.clone()),
         MemberJoined {
             member: member.clone(),
             position: pos,
@@ -231,6 +367,7 @@ pub fn contribute(
 ) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, member)?;
     member.require_auth();
     let circle: Circle = env
         .storage()
@@ -309,8 +446,9 @@ pub fn contribute(
     env.storage()
         .persistent()
         .set(&symbol_short!("contribs"), &contribution_map);
+    analytics::record_contribution(env, member, amount)?;
     env.events().publish(
-        (env.current_contract_address(), symbol_short!("contrib")),
+        (env.current_contract_address(), symbol_short!("contrib"), member.clone(), round),
         ContributionRecorded {
             member: member.clone(),
             round,
@@ -380,9 +518,10 @@ fn deposit_protocol_fee(
     treasury::TreasuryClient::new(env, treasury).deposit_fee(circle_id, &amount, circle_id);
 }
 
-pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
+fn trigger_payout_inner(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, caller)?;
     let mut circle: Circle = env
         .storage()
         .instance()
@@ -481,6 +620,7 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
                     token_client.transfer(&circle.id, &m.address, &share);
                     distributed = math::safe_add(distributed, share)
                         .map_err(|_| CircleError::InvalidAmount)?;
+                    analytics::record_receipt(env, &m.address, share)?;
                     payouts.push_back(PayoutRecipient {
                         recipient: m.address.clone(),
                         round,
@@ -513,6 +653,7 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     if distributed < net {
         let dust = math::safe_sub(net, distributed).map_err(|_| CircleError::InvalidAmount)?;
         token_client.transfer(&circle.id, &recipient, &dust);
+        analytics::record_receipt(env, &recipient, dust)?;
         payouts.push_back(PayoutRecipient {
             recipient: recipient.clone(),
             round,
@@ -545,8 +686,9 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().persistent().set(&DataKey::Payouts, &payouts);
     env.storage().persistent().set(&DataKey::Members, &members);
+    analytics::record_round_completed(env, &circle)?;
     env.events().publish(
-        (env.current_contract_address(), symbol_short!("payout")),
+        (env.current_contract_address(), symbol_short!("payout"), recipient.clone(), round, circle.payout_type),
         PayoutExecuted {
             recipient: recipient.clone(),
             round,
@@ -597,6 +739,49 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     }
     Ok(())
 }
+
+/// Single-admin payout path. Disabled once multisig is configured (#359) —
+/// use `trigger_payout_multisig` instead so the threshold cannot be bypassed.
+pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
+    require_single_sig_allowed(env)?;
+    trigger_payout_inner(env, caller, round)
+}
+
+/// N-of-M payout path (#359). Each admin records approval in their own
+/// `approve_action` transaction (self-authorized as invoker); once
+/// `action_id` carries ≥ threshold approvals, any admin may execute.
+/// Approvals are single-use and cleared on execution.
+pub fn trigger_payout_multisig(
+    env: &Env,
+    caller: &Address,
+    round: u32,
+    action_id: &BytesN<32>,
+) -> Result<(), CircleError> {
+    validate_addr(env, caller)?;
+    let admins = load_multisig_admins(env);
+    if !multisig::is_admin(&admins, caller) {
+        return Err(CircleError::Unauthorized);
+    }
+    // No require_auth here: the inner function authorizes `caller` exactly
+    // once (a second require_auth for the same address in one frame traps
+    // with Auth/ExistingValue).
+    require_action_approved(env, action_id)?;
+    trigger_payout_inner(env, caller, round)?;
+    clear_action_approvals(env, action_id);
+    Ok(())
+}
+
+/// Time-boxed payout path (#358). Rejects the call when the current ledger
+/// has moved past `valid_until_ledger` (stale transaction).
+pub fn trigger_payout_with_expiry(
+    env: &Env,
+    caller: &Address,
+    round: u32,
+    valid_until_ledger: u32,
+) -> Result<(), CircleError> {
+    expiry::check_tx_expiry(env, valid_until_ledger).map_err(map_expiry_err)?;
+    trigger_payout(env, caller, round)
+}
 /// Submits a bid for auction-based payout rounds.
 ///
 /// # Parameters
@@ -628,6 +813,7 @@ pub fn auction_bid(
 ) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, bidder)?;
     bidder.require_auth();
     let circle: Circle = env
         .storage()
@@ -662,7 +848,7 @@ pub fn auction_bid(
     });
     env.storage().persistent().set(&DataKey::Bids, &bids);
     env.events().publish(
-        (env.current_contract_address(), symbol_short!("bid")),
+        (env.current_contract_address(), symbol_short!("bid"), bidder.clone(), round),
         AuctionBidPlaced {
             bidder: bidder.clone(),
             discount_bips,
@@ -703,6 +889,8 @@ pub fn vote_payout(
 ) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, voter)?;
+    validate_addr(env, vote_for)?;
     voter.require_auth();
     let circle: Circle = env
         .storage()
@@ -758,7 +946,7 @@ pub fn vote_payout(
     });
     env.storage().persistent().set(&DataKey::Votes, &votes);
     env.events().publish(
-        (env.current_contract_address(), symbol_short!("vote")),
+        (env.current_contract_address(), symbol_short!("vote"), voter.clone(), round),
         VoteCast {
             voter: voter.clone(),
             vote_for: vote_for.clone(),
@@ -794,6 +982,7 @@ pub fn vote_payout(
 pub fn exit(env: &Env, member: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, member)?;
     member.require_auth();
     let circle: Circle = env
         .storage()
@@ -841,7 +1030,7 @@ pub fn exit(env: &Env, member: &Address) -> Result<(), CircleError> {
         token_client.transfer(&circle.id, member, &circle.collateral_amount);
     }
     env.events().publish(
-        (env.current_contract_address(), symbol_short!("exited")),
+        (env.current_contract_address(), symbol_short!("exited"), member.clone()),
         MemberExited {
             member: member.clone(),
             penalty,
@@ -880,6 +1069,8 @@ pub fn report_late(
     late_member: &Address,
     round: u32,
 ) -> Result<(), CircleError> {
+    validate_addr(env, reporter)?;
+    validate_addr(env, late_member)?;
     reporter.require_auth();
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
@@ -911,16 +1102,21 @@ pub fn report_late(
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
+    let mut newly_defaulted = false;
     for i in 0..members.len() {
         let mut m = members.get(i).ok_or(CircleError::VecAccessError)?;
         if m.address == *late_member {
+            if m.status == MEMBER_DEFAULTED {
+                continue;
+            }
             m.strikes = m.strikes.wrapping_add(1);
             m.strikes = m.strikes.checked_add(1).ok_or(CircleError::InvalidAmount)?;
             if m.strikes >= circle.max_strikes {
                 m.status = MEMBER_DEFAULTED;
+                newly_defaulted = true;
                 scoring::record_default(env, &m.address);
                 env.events().publish(
-                    (env.current_contract_address(), symbol_short!("default")),
+                    (env.current_contract_address(), symbol_short!("default"), late_member.clone(), round),
                     MemberDefaulted {
                         member: late_member.clone(),
                         strikes: m.strikes,
@@ -931,6 +1127,9 @@ pub fn report_late(
         }
     }
     env.storage().persistent().set(&DataKey::Members, &members);
+    if newly_defaulted {
+        analytics::record_default(env, late_member)?;
+    }
     Ok(())
 }
 /// Cancels a pending circle before it starts and refunds any collected collateral.
@@ -953,6 +1152,7 @@ pub fn report_late(
 pub fn cancel_circle(env: &Env, caller: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, caller)?;
     caller.require_auth();
 
     let mut circle: Circle = env
@@ -967,6 +1167,15 @@ pub fn cancel_circle(env: &Env, caller: &Address) -> Result<(), CircleError> {
 
     if circle.status != STATUS_PENDING {
         return Err(CircleError::NotActive);
+    }
+
+    let contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+    if contributions.len() > 0 {
+        return Err(CircleError::ContributionsExist);
     }
 
     let members: Vec<Member> = env
@@ -1049,6 +1258,7 @@ pub fn raise_dispute(
 ) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, member)?;
     member.require_auth();
     let mut circle: Circle = env
         .storage()
@@ -1102,7 +1312,7 @@ pub fn raise_dispute(
         },
     );
     env.events().publish(
-        (env.current_contract_address(), symbol_short!("disputed")),
+        (env.current_contract_address(), symbol_short!("disputed"), member.clone()),
         DisputeRaised {
             member: member.clone(),
             evidence_hash: evidence_hash.clone(),
@@ -1118,15 +1328,24 @@ pub fn dispute(
 ) -> Result<(), CircleError> {
     raise_dispute(env, member, evidence_hash)
 }
-/// Resolves an active dispute and restores circle to ACTIVE status.
+/// Timelock window (#364): once an admin proposes a dispute resolution,
+/// members have this long to challenge it before it can be executed. This
+/// bounds the blast radius of a compromised admin key — a malicious
+/// resolution can be challenged and blocked before it takes effect.
+pub const DISPUTE_RESOLUTION_TIMELOCK_SECONDS: u64 = 24 * 60 * 60;
+
+/// Proposes a resolution for an active dispute (#364). Does not apply the
+/// resolution immediately — it starts a timelock during which any circle
+/// member can challenge it via `challenge_dispute_resolution`. Once the
+/// timelock elapses unchallenged, `execute_dispute_resolution` applies it.
 ///
 /// # Parameters
 /// - `env`: Contract execution environment
-/// - `admin`: Admin address resolving the dispute
-/// - `resolution`: Resolution type (1=DISMISS, 2=PENALIZE, 3=FORCE_PAYOUT)
+/// - `admin`: Admin address proposing the resolution
+/// - `resolution`: Resolution type (1=DISMISS, 2=PENALIZE, 3=FORCE_PAYOUT, 4=REFUND)
 ///
 /// # Returns
-/// - `Ok(())` on successful resolution
+/// - `Ok(())` on successful proposal
 /// - `Err(CircleError::Unauthorized)` if caller is not the admin
 /// - `Err(CircleError::NoActiveDispute)` if no dispute entry exists
 /// - `Err(CircleError::InvalidAmount)` if resolution value is invalid
@@ -1134,13 +1353,38 @@ pub fn dispute(
 /// # Authorization
 /// Requires authentication from the admin address and admin must match stored admin.
 ///
-/// # Notes
-/// - Circle status is restored to STATUS_ACTIVE after resolution
-/// - Resolution and timestamp are recorded in the dispute entry
-///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
 pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<(), CircleError> {
+    require_single_sig_allowed(env)?;
+    propose_dispute_resolution(env, admin, resolution)
+}
+
+/// N-of-M dispute-resolution proposal path (#359). See `trigger_payout_multisig`.
+pub fn resolve_dispute_multisig(
+    env: &Env,
+    caller: &Address,
+    resolution: u32,
+    action_id: &BytesN<32>,
+) -> Result<(), CircleError> {
+    validate_addr(env, caller)?;
+    let admins = load_multisig_admins(env);
+    if !multisig::is_admin(&admins, caller) {
+        return Err(CircleError::Unauthorized);
+    }
+    // Single auth happens inside the proposal function (see above).
+    require_action_approved(env, action_id)?;
+    propose_dispute_resolution(env, caller, resolution)?;
+    clear_action_approvals(env, action_id);
+    Ok(())
+}
+
+fn propose_dispute_resolution(
+    env: &Env,
+    admin: &Address,
+    resolution: u32,
+) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
     let s: Address = env
         .storage()
         .instance()
@@ -1150,6 +1394,130 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
         return Err(CircleError::Unauthorized);
     }
     admin.require_auth();
+    if resolution == 0 || resolution > 4 {
+        return Err(CircleError::InvalidAmount);
+    }
+    if env
+        .storage()
+        .persistent()
+        .get::<DataKey, DisputeEntry>(&DataKey::Dispute)
+        .is_none()
+    {
+        return Err(CircleError::NoActiveDispute);
+    }
+    let now = env.ledger().timestamp();
+    let execute_after = now
+        .checked_add(DISPUTE_RESOLUTION_TIMELOCK_SECONDS)
+        .ok_or(CircleError::InvalidAmount)?;
+    env.storage().persistent().set(
+        &DataKey::PendingResolution,
+        &PendingDisputeResolution {
+            resolution,
+            proposed_by: admin.clone(),
+            proposed_at: now,
+            execute_after,
+            challenged: false,
+        },
+    );
+    env.events().publish(
+        (
+            env.current_contract_address(),
+            symbol_short!("dis_prop"),
+            admin.clone(),
+        ),
+        DisputeResolutionProposed {
+            admin: admin.clone(),
+            resolution,
+            execute_after,
+        },
+    );
+    Ok(())
+}
+
+/// Allows any current circle member to challenge a pending dispute
+/// resolution before its timelock elapses (#364). A challenge blocks
+/// `execute_dispute_resolution` until the admin proposes a fresh resolution.
+pub fn challenge_dispute_resolution(env: &Env, member: &Address) -> Result<(), CircleError> {
+    validate_addr(env, member)?;
+    member.require_auth();
+    let members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .ok_or(CircleError::NotInitialized)?;
+    let mut is_member = false;
+    for i in 0..members.len() {
+        if members.get(i).ok_or(CircleError::VecAccessError)?.address == *member {
+            is_member = true;
+            break;
+        }
+    }
+    if !is_member {
+        return Err(CircleError::NotMember);
+    }
+    let mut pending: PendingDisputeResolution = env
+        .storage()
+        .persistent()
+        .get(&DataKey::PendingResolution)
+        .ok_or(CircleError::NoPendingResolution)?;
+    if env.ledger().timestamp() >= pending.execute_after {
+        return Err(CircleError::ResolutionTimelockActive);
+    }
+    pending.challenged = true;
+    env.storage()
+        .persistent()
+        .set(&DataKey::PendingResolution, &pending);
+    env.events().publish(
+        (
+            env.current_contract_address(),
+            symbol_short!("dis_chal"),
+            member.clone(),
+        ),
+        DisputeResolutionChallenged {
+            member: member.clone(),
+        },
+    );
+    Ok(())
+}
+
+/// Applies a pending dispute resolution once its timelock has elapsed
+/// unchallenged (#364). Callable by anyone since the outcome is already
+/// fixed by the earlier admin-authenticated proposal.
+pub fn execute_dispute_resolution(env: &Env) -> Result<(), CircleError> {
+    let pending: PendingDisputeResolution = env
+        .storage()
+        .persistent()
+        .get(&DataKey::PendingResolution)
+        .ok_or(CircleError::NoPendingResolution)?;
+    if pending.challenged {
+        return Err(CircleError::ResolutionChallenged);
+    }
+    if env.ledger().timestamp() < pending.execute_after {
+        return Err(CircleError::ResolutionTimelockActive);
+    }
+    apply_dispute_resolution(env, &pending.proposed_by, pending.resolution)?;
+    env.storage()
+        .persistent()
+        .remove(&DataKey::PendingResolution);
+    env.events().publish(
+        (
+            env.current_contract_address(),
+            symbol_short!("resolved"),
+            pending.proposed_by.clone(),
+        ),
+        DisputeResolved {
+            admin: pending.proposed_by,
+            resolution: pending.resolution,
+        },
+    );
+    Ok(())
+}
+
+fn apply_dispute_resolution(
+    env: &Env,
+    admin: &Address,
+    resolution: u32,
+) -> Result<(), CircleError> {
     let mut circle: Circle = env
         .storage()
         .instance()
@@ -1160,9 +1528,6 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
         .persistent()
         .get(&DataKey::Dispute)
         .ok_or(CircleError::NoActiveDispute)?;
-    if resolution > 4 {
-        return Err(CircleError::InvalidAmount);
-    }
     match resolution {
         RESOLVE_DISMISS | RESOLVE_PENALIZE | RESOLVE_FORCE_PAYOUT => {
             circle.status = STATUS_ACTIVE;
@@ -1453,6 +1818,7 @@ pub fn get_pending_payout(env: &Env, member: &Address) -> Option<i128> {
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
 pub fn pause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
     let s: Address = env
         .storage()
         .instance()
@@ -1480,6 +1846,7 @@ pub fn pause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
 pub fn unpause_circle(env: &Env, admin: &Address) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
     let s: Address = env
         .storage()
         .instance()
@@ -1514,6 +1881,7 @@ pub fn batch_invite(
 ) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, caller)?;
     let circle: Circle = env
         .storage()
         .instance()
@@ -1533,6 +1901,7 @@ pub fn batch_invite(
         .unwrap_or_else(|| Vec::new(env));
     for mi in 0..members.len() {
         let member = members.get(mi).ok_or(CircleError::VecAccessError)?;
+        validate_addr(env, &member)?;
         let score = scoring::get_score(env, &member);
         if score < circle.min_moi_score {
             return Err(CircleError::InsufficientMoiScore);
@@ -1582,10 +1951,11 @@ pub fn batch_invite(
     env.storage()
         .instance()
         .set(&DataKey::Circle, &stored_circle);
+    analytics::sync_members(env, &members_vec, member_count)?;
     for mi in 0..members_vec.len() {
         let member = members_vec.get(mi).ok_or(CircleError::VecAccessError)?;
         env.events().publish(
-            (env.current_contract_address(), symbol_short!("joined")),
+            (env.current_contract_address(), symbol_short!("joined"), member.address.clone()),
             MemberJoined {
                 member: member.address.clone(),
                 position: member.position,
@@ -1603,6 +1973,7 @@ pub fn batch_payout(
 ) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, caller)?;
     let circle: Circle = env
         .storage()
         .instance()
@@ -1679,9 +2050,11 @@ pub fn batch_payout(
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
-    
+    let mut total_net: i128 = 0;
+
     for i in 0..recipients.len() {
         let recipient = recipients.get(i).ok_or(CircleError::VecAccessError)?;
+        validate_addr(env, &recipient)?;
         let amount = amounts.get(i).ok_or(CircleError::VecAccessError)?;
         if amount <= 0 {
             return Err(CircleError::InvalidAmount);
@@ -1694,9 +2067,11 @@ pub fn batch_payout(
             0
         };
         let net_amount = amount - fee;
+        total_net = math::safe_add(total_net, net_amount).map_err(|_| CircleError::InvalidAmount)?;
 
         // Transfer net amount to recipient
         token_client.transfer(&circle.id, &recipient, &net_amount);
+        analytics::record_receipt(env, &recipient, net_amount)?;
 
         // Transfer fee to treasury if fee > 0
         if fee > 0 {
@@ -1726,7 +2101,7 @@ pub fn batch_payout(
             }
         }
         env.events().publish(
-            (env.current_contract_address(), symbol_short!("payout")),
+            (env.current_contract_address(), symbol_short!("payout"), recipient.clone(), round, circle.payout_type),
             PayoutExecuted {
                 recipient,
                 round,
@@ -1738,6 +2113,150 @@ pub fn batch_payout(
     }
     env.storage().persistent().set(&DataKey::Payouts, &payouts);
     env.storage().persistent().set(&DataKey::Members, &members);
+    circle.total_payouts =
+        math::safe_add(circle.total_payouts, total_net).map_err(|_| CircleError::InvalidAmount)?;
+    env.storage().instance().set(&DataKey::Circle, &circle);
+    analytics::record_payout_total(env, &circle)?;
+    Ok(())
+}
+/// Exits multiple members from the circle in a single atomic call (#365),
+/// e.g. for circle dissolution. Each exiting member receives a proportional
+/// share of the circle's current token balance, weighted by their
+/// `total_contributions` relative to the combined contributions of everyone
+/// being exited in this batch.
+///
+/// # Atomicity
+/// All members are validated (must exist, must be `MEMBER_ACTIVE`) before any
+/// storage is mutated or any token transferred. If any member fails
+/// validation, the function returns early with a typed error and no state
+/// change or transfer has occurred — the whole batch rolls back together,
+/// since a Soroban contract invocation only commits state if it returns `Ok`.
+///
+/// # Errors
+/// - `CircleError::InvalidAmount` if the member list is empty
+/// - `CircleError::NotMember` if an address is not a circle member
+/// - `CircleError::InvalidMemberStatus` if a member is not `MEMBER_ACTIVE`
+pub fn batch_exit(
+    env: &Env,
+    caller: &Address,
+    members_to_exit: &Vec<Address>,
+) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, caller)?;
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if caller != &circle.organizer && caller != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    caller.require_auth();
+    if circle.status == STATUS_COMPLETED {
+        return Err(CircleError::NotActive);
+    }
+    if members_to_exit.len() == 0 {
+        return Err(CircleError::InvalidAmount);
+    }
+    let mut members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .ok_or(CircleError::NotInitialized)?;
+
+    // Pass 1: validate every requested member and accumulate their combined
+    // contribution weight before mutating any state (atomicity).
+    let mut indices: Vec<u32> = Vec::new(env);
+    let mut total_shares: i128 = 0;
+    for i in 0..members_to_exit.len() {
+        let addr = members_to_exit.get(i).ok_or(CircleError::VecAccessError)?;
+        validate_addr(env, &addr)?;
+        let mut found = false;
+        for j in 0..members.len() {
+            let m = members.get(j).ok_or(CircleError::VecAccessError)?;
+            if m.address == addr {
+                if m.status != MEMBER_ACTIVE {
+                    return Err(CircleError::InvalidMemberStatus);
+                }
+                total_shares = math::safe_add(total_shares, m.total_contributions)
+                    .map_err(|_| CircleError::InvalidAmount)?;
+                indices.push_back(j);
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(CircleError::NotMember);
+        }
+    }
+
+    // Pass 2: compute each member's proportional share of the current pool
+    // before applying any change, so a math error still aborts cleanly.
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    let pool_amount = token_client.balance(&circle.id);
+    let mut payout_amounts: Vec<i128> = Vec::new(env);
+    for i in 0..indices.len() {
+        let j = indices.get(i).ok_or(CircleError::VecAccessError)?;
+        let m = members.get(j).ok_or(CircleError::VecAccessError)?;
+        let payout = if total_shares > 0 {
+            math::convert_shares(m.total_contributions, total_shares, pool_amount)
+                .map_err(|_| CircleError::InvalidAmount)?
+        } else {
+            0
+        };
+        payout_amounts.push_back(payout);
+    }
+
+    // Pass 3: apply state changes and transfers now that everything has been
+    // validated and computed.
+    let now = env.ledger().timestamp();
+    let mut exited_count: u32 = 0;
+    for i in 0..indices.len() {
+        let j = indices.get(i).ok_or(CircleError::VecAccessError)?;
+        let mut m = members.get(j).ok_or(CircleError::VecAccessError)?;
+        let payout = payout_amounts.get(i).ok_or(CircleError::VecAccessError)?;
+        m.status = MEMBER_EXITED;
+        m.exited_at = now;
+        if payout > 0 {
+            m.total_received = math::safe_add(m.total_received, payout)
+                .map_err(|_| CircleError::InvalidAmount)?;
+        }
+        let member_addr = m.address.clone();
+        members.set(j, m);
+        if payout > 0 {
+            token_client.transfer(&circle.id, &member_addr, &payout);
+        }
+        exited_count = exited_count.checked_add(1).ok_or(CircleError::InvalidAmount)?;
+        env.events().publish(
+            (
+                env.current_contract_address(),
+                symbol_short!("exited"),
+                member_addr.clone(),
+            ),
+            MemberExited {
+                member: member_addr,
+                penalty: 0,
+            },
+        );
+    }
+    env.storage().persistent().set(&DataKey::Members, &members);
+    env.events().publish(
+        (
+            env.current_contract_address(),
+            symbol_short!("bat_exit"),
+            circle.current_round,
+        ),
+        BatchExitExecuted {
+            round: circle.current_round,
+            exited_count,
+        },
+    );
     Ok(())
 }
 pub fn register_referral(
@@ -1747,6 +2266,8 @@ pub fn register_referral(
     bonus_pct: u32,
 ) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    validate_addr(env, referrer)?;
+    validate_addr(env, referred)?;
     referrer.require_auth();
     if referrer == referred {
         return Err(CircleError::SelfReferral);
@@ -1788,6 +2309,7 @@ pub fn claim_referral_bonus(
     env: &Env,
     referrer: &Address,
 ) -> Result<(), CircleError> {
+    validate_addr(env, referrer)?;
     let token_address: Address = env
         .storage()
         .instance()
@@ -1801,13 +2323,140 @@ pub fn claim_referral_bonus(
     token_client.transfer(&env.current_contract_address(), referrer, &contract_balance);
     Ok(())
 }
-pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
-    Err(CircleError::NotImplemented)
+/// Records a contribution round towards a member's on-time streak.
+/// Consecutive rounds (`round == last_round + 1`) extend the streak; any gap
+/// resets it to 1. Uses checked arithmetic throughout (#368) so a very long
+/// streak cannot silently wrap.
+pub fn update_streak(env: &Env, member: &Address, round: u32) -> Result<(), CircleError> {
+    validate_addr(env, member)?;
+    let mut streaks: Vec<Streak> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut idx: Option<u32> = None;
+    for i in 0..streaks.len() {
+        if streaks.get(i).ok_or(CircleError::VecAccessError)?.member == *member {
+            idx = Some(i);
+            break;
+        }
+    }
+    let mut s = match idx {
+        Some(i) => streaks.get(i).ok_or(CircleError::VecAccessError)?,
+        None => Streak {
+            member: member.clone(),
+            current_streak: 0,
+            longest_streak: 0,
+            last_round: 0,
+        },
+    };
+    s.current_streak = if s.last_round > 0
+        && round == s.last_round.checked_add(1).ok_or(CircleError::InvalidAmount)?
+    {
+        s.current_streak.checked_add(1).ok_or(CircleError::InvalidAmount)?
+    } else {
+        1
+    };
+    if s.current_streak > s.longest_streak {
+        s.longest_streak = s.current_streak;
+    }
+    s.last_round = round;
+    match idx {
+        Some(i) => streaks.set(i, s),
+        None => streaks.push_back(s),
+    }
+    env.storage().persistent().set(&DataKey::Streaks, &streaks);
+    Ok(())
+}
+/// Retrieves the effective streak-bonus configuration, validating that
+/// `bonus_pct` stays within basis-point bounds (0-10000) (#368). A config
+/// stored outside these bounds is rejected rather than silently clamped.
+fn load_streak_bonus_config(env: &Env) -> Result<StreakBonusConfig, CircleError> {
+    let config: StreakBonusConfig = env
+        .storage()
+        .instance()
+        .get(&DataKey::StreakBonusConfig)
+        .unwrap_or(StreakBonusConfig {
+            base_bonus: 100_0000,
+            multiplier_per_day: 10_0000,
+            bonus_pct: 0,
+        });
+    if config.bonus_pct > 10_000 {
+        return Err(CircleError::InvalidBonusPct);
+    }
+    Ok(config)
+}
+/// Computes the streak bonus amount using exclusively checked arithmetic
+/// (#368): `checked_mul`/`checked_add` via `common::math`, so neither a very
+/// long streak nor a max `bonus_pct` can overflow `i128` and wrap into a
+/// smaller (or negative) payout.
+///
+/// Limits: `streak_count` is a `u32` (max ~4.29B) and `multiplier_per_day`
+/// is an `i128`; any combination that would overflow `i128` is rejected with
+/// `CircleError::InvalidAmount` instead of wrapping. `bonus_pct` is bounded
+/// to basis points 0-10000 (see `load_streak_bonus_config`).
+fn calculate_streak_bonus(
+    streak_count: u32,
+    config: &StreakBonusConfig,
+) -> Result<i128, CircleError> {
+    let linear = math::safe_add(
+        config.base_bonus,
+        math::safe_mul(streak_count as i128, config.multiplier_per_day)
+            .map_err(|_| CircleError::InvalidAmount)?,
+    )
+    .map_err(|_| CircleError::InvalidAmount)?;
+    let extra = math::calculate_percentage(linear, config.bonus_pct as i128)
+        .map_err(|_| CircleError::InvalidBonusPct)?;
+    math::safe_add(linear, extra).map_err(|_| CircleError::InvalidAmount)
+}
+pub fn set_streak_bonus_config(
+    env: &Env,
+    admin: &Address,
+    config: StreakBonusConfig,
+) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    admin.require_auth();
+    if config.bonus_pct > 10_000 {
+        return Err(CircleError::InvalidBonusPct);
+    }
+    env.storage()
+        .instance()
+        .set(&DataKey::StreakBonusConfig, &config);
+    Ok(())
 }
 pub fn claim_streak_bonus(
     env: &Env,
     member: &Address,
 ) -> Result<(), CircleError> {
+    validate_addr(env, member)?;
+    member.require_auth();
+    let mut streaks: Vec<Streak> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut idx: Option<u32> = None;
+    for i in 0..streaks.len() {
+        if streaks.get(i).ok_or(CircleError::VecAccessError)?.member == *member {
+            idx = Some(i);
+            break;
+        }
+    }
+    let i = idx.ok_or(CircleError::NotMember)?;
+    let mut s = streaks.get(i).ok_or(CircleError::VecAccessError)?;
+    if s.current_streak == 0 {
+        return Err(CircleError::InvalidAmount);
+    }
+    let config = load_streak_bonus_config(env)?;
+    let bonus_amount = calculate_streak_bonus(s.current_streak, &config)?;
     let token_address: Address = env
         .storage()
         .instance()
@@ -1815,10 +2464,14 @@ pub fn claim_streak_bonus(
         .ok_or(CircleError::NotInitialized)?;
     let token_client = soroban_sdk::token::Client::new(env, &token_address);
     let contract_balance = token_client.balance(&env.current_contract_address());
-    if contract_balance <= 0 {
+    if contract_balance < bonus_amount {
         return Err(CircleError::InsufficientContractBalance);
     }
-    token_client.transfer(&env.current_contract_address(), member, &contract_balance);
+    // Reset the streak once claimed to prevent double-claiming the same streak.
+    s.current_streak = 0;
+    streaks.set(i, s);
+    env.storage().persistent().set(&DataKey::Streaks, &streaks);
+    token_client.transfer(&env.current_contract_address(), member, &bonus_amount);
     Ok(())
 }
 pub fn get_referrals(env: &Env) -> Vec<Referral> {
@@ -1828,11 +2481,26 @@ pub fn get_referrals(env: &Env) -> Vec<Referral> {
         .unwrap_or_else(|| Vec::new(env))
 }
 pub fn get_streaks(env: &Env) -> Vec<Streak> {
-    Vec::new(env)
+    env.storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env))
 }
-pub fn get_member_streak(_env: &Env, _member: &Address) -> Streak {
+pub fn get_member_streak(env: &Env, member: &Address) -> Streak {
+    let streaks: Vec<Streak> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env));
+    for i in 0..streaks.len() {
+        if let Some(s) = streaks.get(i) {
+            if s.member == *member {
+                return s;
+            }
+        }
+    }
     Streak {
-        member: _member.clone(),
+        member: member.clone(),
         current_streak: 0,
         longest_streak: 0,
         last_round: 0,
@@ -1844,6 +2512,8 @@ pub fn set_reputation_registry(
     admin: &Address,
     registry: &Address,
 ) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    validate_addr(env, registry)?;
     let s: Address = env
         .storage()
         .instance()
@@ -1862,6 +2532,32 @@ pub fn get_reputation_registry(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::ReputationRegistry)
 }
 pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<(), CircleError> {
+    require_single_sig_allowed(env)?;
+    set_treasury_inner(env, admin, treasury)
+}
+
+/// N-of-M treasury path (#359). See `trigger_payout_multisig`.
+pub fn set_treasury_multisig(
+    env: &Env,
+    caller: &Address,
+    treasury: &Address,
+    action_id: &BytesN<32>,
+) -> Result<(), CircleError> {
+    validate_addr(env, caller)?;
+    let admins = load_multisig_admins(env);
+    if !multisig::is_admin(&admins, caller) {
+        return Err(CircleError::Unauthorized);
+    }
+    // Single auth happens inside the inner function (see above).
+    require_action_approved(env, action_id)?;
+    set_treasury_inner(env, caller, treasury)?;
+    clear_action_approvals(env, action_id);
+    Ok(())
+}
+
+fn set_treasury_inner(env: &Env, admin: &Address, treasury: &Address) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    validate_addr(env, treasury)?;
     let s: Address = env
         .storage()
         .instance()
@@ -1892,6 +2588,8 @@ pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<()
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
 pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    validate_addr(env, token)?;
     let s: Address = env
         .storage()
         .instance()
@@ -1910,6 +2608,31 @@ pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), Circ
     Ok(())
 }
 pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
+    require_single_sig_allowed(env)?;
+    set_fee_bps_inner(env, admin, fee_bps)
+}
+
+/// N-of-M fee path (#359). See `trigger_payout_multisig`.
+pub fn set_fee_bps_multisig(
+    env: &Env,
+    caller: &Address,
+    fee_bps: u32,
+    action_id: &BytesN<32>,
+) -> Result<(), CircleError> {
+    validate_addr(env, caller)?;
+    let admins = load_multisig_admins(env);
+    if !multisig::is_admin(&admins, caller) {
+        return Err(CircleError::Unauthorized);
+    }
+    // Single auth happens inside the inner function (see above).
+    require_action_approved(env, action_id)?;
+    set_fee_bps_inner(env, caller, fee_bps)?;
+    clear_action_approvals(env, action_id);
+    Ok(())
+}
+
+fn set_fee_bps_inner(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
     let s: Address = env
         .storage()
         .instance()
@@ -1952,6 +2675,11 @@ pub fn set_allowlist(
     admin: &Address,
     allowlist: Vec<Address>,
 ) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    for i in 0..allowlist.len() {
+        let a = allowlist.get(i).ok_or(CircleError::VecAccessError)?;
+        validate_addr(env, &a)?;
+    }
     let s: Address = env
         .storage()
         .instance()
@@ -1985,6 +2713,8 @@ pub fn get_allowlist(env: &Env) -> Vec<Address> {
 }
 
 pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    validate_addr(env, oracle)?;
     let s: Address = env
         .storage()
         .instance()
@@ -1995,6 +2725,8 @@ pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), Ci
     }
     admin.require_auth();
     oracle::set_primary_oracle(env, oracle);
+    // A new oracle invalidates previously cached rates.
+    env.storage().instance().remove(&DataKey::OracleCache);
     Ok(())
 }
 
@@ -2003,6 +2735,8 @@ pub fn set_fallback_oracle(
     admin: &Address,
     oracle: &Address,
 ) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    validate_addr(env, oracle)?;
     let s: Address = env
         .storage()
         .instance()
@@ -2013,6 +2747,7 @@ pub fn set_fallback_oracle(
     }
     admin.require_auth();
     oracle::set_fallback_oracle(env, oracle);
+    env.storage().instance().remove(&DataKey::OracleCache);
     Ok(())
 }
 
@@ -2022,4 +2757,185 @@ pub fn get_oracle(env: &Env) -> Option<Address> {
 
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
+}
+
+// ---------------------------------------------------------------------------
+// Transaction expiry (#358)
+// ---------------------------------------------------------------------------
+
+/// Check a caller-supplied `valid_until_ledger` bound against the current
+/// ledger. Exposed so clients can pre-flight; the `_with_expiry` entry
+/// points enforce it on-chain before any state change.
+pub fn check_tx_expiry(env: &Env, valid_until_ledger: u32) -> Result<(), CircleError> {
+    expiry::check_tx_expiry(env, valid_until_ledger).map_err(map_expiry_err)
+}
+
+/// Time-boxed contribution path (#358). Rejects stale transactions before
+/// touching storage.
+pub fn contribute_with_expiry(
+    env: &Env,
+    member: &Address,
+    amount: i128,
+    round: u32,
+    valid_until_ledger: u32,
+) -> Result<(), CircleError> {
+    expiry::check_tx_expiry(env, valid_until_ledger).map_err(map_expiry_err)?;
+    contribute(env, member, amount, round)
+}
+
+// ---------------------------------------------------------------------------
+// Multi-sig admin operations (#359)
+// ---------------------------------------------------------------------------
+
+/// Configure optional N-of-M admin control for high-value circles.
+///
+/// Only the current single admin may configure it. Once stored, the
+/// single-sig critical paths (`trigger_payout`, `set_fee_bps`,
+/// `set_treasury`, `resolve_dispute`) fail closed with
+/// `MultisigThresholdNotMet` and the `*_multisig` variants must be used.
+/// Emergency `pause_circle`/`unpause_circle` intentionally stay single-admin
+/// so incident response is never blocked waiting for co-signers.
+pub fn configure_multisig(
+    env: &Env,
+    admin: &Address,
+    admins: &Vec<Address>,
+    threshold: u32,
+) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    admin.require_auth();
+    for i in 0..admins.len() {
+        let a = admins.get(i).ok_or(CircleError::VecAccessError)?;
+        validate_addr(env, &a)?;
+    }
+    multisig::validate_config(admins, threshold).map_err(map_multisig_err)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::MultisigAdmins, admins);
+    env.storage()
+        .instance()
+        .set(&DataKey::MultisigThreshold, &threshold);
+    // A new admin set invalidates approvals recorded under the old config.
+    env.storage().instance().remove(&DataKey::MultisigApprovals);
+    Ok(())
+}
+
+/// Remove multisig control and restore single-admin critical paths.
+pub fn disable_multisig(env: &Env, admin: &Address) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    admin.require_auth();
+    env.storage().instance().remove(&DataKey::MultisigAdmins);
+    env.storage().instance().remove(&DataKey::MultisigThreshold);
+    env.storage().instance().remove(&DataKey::MultisigApprovals);
+    Ok(())
+}
+
+/// Return the stored multisig configuration, if any.
+pub fn get_multisig_config(env: &Env) -> Option<MultisigConfig> {
+    let admins: Vec<Address> = env.storage().instance().get(&DataKey::MultisigAdmins)?;
+    let threshold: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::MultisigThreshold)?;
+    Some(MultisigConfig { admins, threshold })
+}
+
+/// Record one admin's approval for `action_id` (#359).
+///
+/// Each approver calls this in their OWN transaction, authorizing as invoker
+/// (works for plain accounts and in tests — no nested `require_auth`).
+/// `action_id` is an opaque single-use token chosen by the proposer
+/// (e.g. sha256 of the proposed call); approvals are cleared on execution
+/// so an id cannot replay across actions.
+pub fn approve_action(
+    env: &Env,
+    approver: &Address,
+    action_id: &BytesN<32>,
+) -> Result<(), CircleError> {
+    validate_addr(env, approver)?;
+    if !is_multisig_enabled(env) {
+        return Err(CircleError::InvalidMultisigConfig);
+    }
+    let admins = load_multisig_admins(env);
+    if !multisig::is_admin(&admins, approver) {
+        return Err(CircleError::Unauthorized);
+    }
+    approver.require_auth();
+    let mut approvers = load_action_approvals(env, action_id);
+    for i in 0..approvers.len() {
+        let a = approvers.get(i).ok_or(CircleError::VecAccessError)?;
+        if &a == approver {
+            return Err(CircleError::MultisigAlreadyApproved);
+        }
+    }
+    approvers.push_back(approver.clone());
+    store_action_approvals(env, action_id, &approvers);
+    Ok(())
+}
+
+/// List recorded approvers for `action_id` (empty when none).
+pub fn get_action_approvals(env: &Env, action_id: &BytesN<32>) -> Vec<Address> {
+    load_action_approvals(env, action_id)
+}
+
+// ---------------------------------------------------------------------------
+// Oracle signing key + cache (#360)
+// ---------------------------------------------------------------------------
+
+/// Store the Ed25519 pubkey that must sign oracle rates. Once set, unsigned
+/// rates are rejected (`InvalidOracleSignature`).
+pub fn set_oracle_pubkey(
+    env: &Env,
+    admin: &Address,
+    pubkey: &BytesN<32>,
+) -> Result<(), CircleError> {
+    validate_addr(env, admin)?;
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if admin != &s {
+        return Err(CircleError::Unauthorized);
+    }
+    admin.require_auth();
+    oracle::set_oracle_pubkey(env, pubkey);
+    // A new signing key invalidates rates verified under the old key.
+    env.storage().instance().remove(&DataKey::OracleCache);
+    Ok(())
+}
+
+pub fn get_oracle_pubkey(env: &Env) -> Option<BytesN<32>> {
+    oracle::get_oracle_pubkey(env)
+}
+
+pub fn get_oracle_cache(env: &Env) -> Option<OracleCache> {
+    oracle::get_oracle_cache(env)
+}
+
+/// Read-only yield-rate fetch for clients/indexers (#360). Applies the same
+/// signature verification and TTL cache as the payout path.
+pub fn get_yield_rate(env: &Env, round: u32) -> Result<i128, CircleError> {
+    oracle::get_yield_rate(env, round)
+}
+
+/// Verify a caller-supplied oracle matches stored primary/fallback (#360).
+/// Used by off-chain clients before trusting a rate source.
+pub fn check_oracle_source(env: &Env, oracle: &Address) -> Result<(), CircleError> {
+    oracle::validate_oracle_source(env, oracle)
 }
