@@ -456,6 +456,18 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
+    // Issue #216: mark the recipient's position as paid in payout_bitmap.
+    // resolve_random/resolve_fixed/resolve_auction/resolve_vote all check
+    // this bitmap to avoid re-selecting an already-paid position, but
+    // nothing ever set it, so those checks were always no-ops and the same
+    // position could be paid out every round.
+    for i in 0..members.len() {
+        let m = members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.address == recipient {
+            circle.payout_bitmap |= 1u128 << m.position;
+            break;
+        }
+    }
     let mut distributed: i128 = 0;
     let net_u = net as u128;
     for i in 0..members.len() {
@@ -1565,7 +1577,7 @@ pub fn batch_payout(
 ) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
-    let circle: Circle = env
+    let mut circle: Circle = env
         .storage()
         .instance()
         .get(&DataKey::Circle)
@@ -1616,6 +1628,27 @@ pub fn batch_payout(
             return Err(CircleError::InvalidAmount);
         }
 
+        // Issue #216: reject (rather than silently re-pay) a recipient whose
+        // position has already been marked paid in payout_bitmap, and mark
+        // it paid before moving on to the next recipient. Without this,
+        // resolve_random/resolve_fixed/resolve_auction/resolve_vote's own
+        // bitmap checks were meaningless — nothing in batch_payout ever set
+        // the bit, so the same position could be paid out repeatedly.
+        let mut recipient_position: Option<u32> = None;
+        for j in 0..members.len() {
+            let m = members.get(j).ok_or(CircleError::VecAccessError)?;
+            if m.address == recipient {
+                recipient_position = Some(m.position);
+                break;
+            }
+        }
+        if let Some(pos) = recipient_position {
+            if (circle.payout_bitmap & (1u128 << pos)) != 0 {
+                return Err(CircleError::PayoutAlreadyExecuted);
+            }
+            circle.payout_bitmap |= 1u128 << pos;
+        }
+
         // Calculate fee (#256)
         let fee = if fee_bps > 0 {
             (amount * (fee_bps as i128)) / 10000
@@ -1660,11 +1693,17 @@ pub fn batch_payout(
                 recipient,
                 round,
                 amount,
-                fee: 0,
+                // Was hardcoded to 0 even though `fee` was already computed
+                // above — under-reported every fee-bearing batch payout to
+                // event consumers/indexers even though the correct amount
+                // was (and still is) recorded in `PayoutRecipient` and
+                // actually transferred to the treasury.
+                fee,
                 payout_type: circle.payout_type,
             },
         );
     }
+    env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().persistent().set(&DataKey::Payouts, &payouts);
     env.storage().persistent().set(&DataKey::Members, &members);
     Ok(())
