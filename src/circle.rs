@@ -1,4 +1,53 @@
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemberStatus {
+    Active = 1,
+    Exited = 2,
+    Defaulted = 3,
+}
+
+#[contracttype]
+pub enum DataKey {
+    MemberStatus(Address),
+    Vote(u32, Address), // round, member
+}
+
+#[contract]
+pub struct CircleContract;
+
+#[contractimpl]
+impl CircleContract {
+    pub fn vote_payout(env: Env, voter: Address, round: u32, support: bool) {
+        voter.require_auth();
+
+        // FIX: Verify voter membership status is strictly ACTIVE before accepting vote
+        let status: MemberStatus = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MemberStatus(voter.clone()))
+            .unwrap_or_else(|| panic!("Voter is not a registered member"));
+
+        if status != MemberStatus::Active {
+            panic!("Only active members are permitted to vote on payouts; exited or defaulted members cannot vote");
+        }
+
+        // Check if member already voted for this round
+        if env.storage().persistent().has(&DataKey::Vote(round, voter.clone())) {
+            panic!("Member has already cast a vote for this round");
+        }
+
+        // Record vote state
+        env.storage().persistent().set(&DataKey::Vote(round, voter.clone()), &support);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "VoteCast"), round, voter),
+            support,
+        );
+    }
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
