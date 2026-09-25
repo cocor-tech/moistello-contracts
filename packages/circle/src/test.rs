@@ -1134,6 +1134,61 @@ mod tests {
         assert_eq!(res, Err(Ok(CircleError::InvalidAddress)));
     }
 
+    #[test]
+    fn test_advance_round_monotonic_happy_path() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.total_rounds = 3u32;
+        let admin = config.organizer.clone();
+        let (_token, client) = setup_test_env(&env, &mut config);
+
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.join(&m1);
+        client.join(&m2);
+
+        assert_eq!(client.get_status().current_round, 0);
+
+        let next1 = client.advance_round(&admin, &0);
+        assert_eq!(next1, 1);
+        assert_eq!(client.get_status().current_round, 1);
+
+        let next2 = client.advance_round(&admin, &1);
+        assert_eq!(next2, 2);
+        assert_eq!(client.get_status().current_round, 2);
+    }
+
+    #[test]
+    fn test_advance_round_stale_submission_rejected() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.total_rounds = 3u32;
+        let admin = config.organizer.clone();
+        let (_token, client) = setup_test_env(&env, &mut config);
+
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.join(&m1);
+        client.join(&m2);
+
+        // Advance to round 1
+        client.advance_round(&admin, &0);
+
+        // Try to submit stale round 0
+        let res_stale = client.try_advance_round(&admin, &0);
+        assert_eq!(res_stale, Err(Ok(CircleError::RoundNotCurrent)));
+
+        // Try to submit future round 2
+        let res_future = client.try_advance_round(&admin, &2);
+        assert_eq!(res_future, Err(Ok(CircleError::RoundNotCurrent)));
+    }
+
 
     // ===== Issue 1: Allowlist Tests =====
 

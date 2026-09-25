@@ -3088,3 +3088,68 @@ pub fn propose_organizer_replacement(
     Ok(())
 }
 
+/// Enforces strictly monotonic round advance with explicit state machine checks (#448).
+/// Rejects stale, out-of-order, or regressive round submissions.
+pub fn advance_round(
+    env: &Env,
+    caller: &Address,
+    from_round: u32,
+) -> Result<u32, CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    validate_addr(env, caller)?;
+
+    let mut circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+
+    if caller != &circle.organizer && caller != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    caller.require_auth();
+
+    if circle.status != STATUS_ACTIVE {
+        return Err(CircleError::NotActive);
+    }
+
+    if from_round != circle.current_round {
+        return Err(CircleError::RoundNotCurrent);
+    }
+
+    let next_round = circle
+        .current_round
+        .checked_add(1)
+        .ok_or(CircleError::InvalidAmount)?;
+
+    if next_round <= circle.current_round {
+        return Err(CircleError::InvalidRound);
+    }
+
+    circle.current_round = next_round;
+    if circle.current_round >= circle.total_rounds {
+        circle.status = STATUS_COMPLETED;
+    }
+
+    env.storage().instance().set(&DataKey::Circle, &circle);
+    analytics::record_round_completed(env, &circle)?;
+
+    env.events().publish(
+        (
+            env.current_contract_address(),
+            symbol_short!("rnd_adv"),
+            caller.clone(),
+        ),
+        next_round,
+    );
+
+    Ok(next_round)
+}
+
