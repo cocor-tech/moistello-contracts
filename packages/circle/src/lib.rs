@@ -19,6 +19,8 @@ pub use types::CircleError;
     pub fn exit_circle(env:Env,member:Address)->Result<(),types::CircleError>{contract::exit(&env,&member)}
     pub fn cancel_circle(env:Env,caller:Address)->Result<(),types::CircleError>{contract::cancel_circle(&env,&caller)}
     pub fn cancel(env:Env,caller:Address)->Result<(),types::CircleError>{contract::cancel(&env,&caller)}
+    pub fn cancel_auction(env:Env,caller:Address)->Result<(),types::CircleError>{contract::cancel_auction(&env,&caller)}
+    pub fn query_top_contributors(env:Env,n:u32)->soroban_sdk::Vec<(Address,i128)>{contract::query_top_contributors(&env,n)}
     pub fn report_late(env:Env,reporter:Address,late_member:Address,round:u32)->Result<(),types::CircleError>{contract::report_late(&env,&reporter,&late_member,round)}
     pub fn dispute(env:Env,member:Address,evidence_hash:BytesN<32>)->Result<(),types::CircleError>{contract::dispute(&env,&member,&evidence_hash)}
     pub fn raise_dispute(env:Env,member:Address,evidence_hash:BytesN<32>)->Result<(),types::CircleError>{contract::raise_dispute(&env,&member,&evidence_hash)}

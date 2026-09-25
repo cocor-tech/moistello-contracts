@@ -149,3 +149,15 @@ pub struct VotingPowerQueried {
     pub user: Address,
     pub voting_power: i128,
 }
+
+/// Event emitted when an active stake is topped up
+#[contractevent(topics = ["top_up"])]
+#[derive(Clone, Debug)]
+pub struct StakeToppedUp {
+    #[topic]
+    pub user: Address,
+    pub added_amount: i128,
+    pub new_total_amount: i128,
+    pub unlock_time: u64,
+    pub new_voting_power: i128,
+}

@@ -74,6 +74,14 @@ impl Staking {
     pub fn update_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), types::StakingError> {
         contract::update_admin(&env, &current_admin, &new_admin)
     }
+
+    pub fn top_up(env: Env, user: Address, amount: i128) -> Result<(), types::StakingError> {
+        contract::top_up(&env, &user, amount)
+    }
+
+    pub fn get_time_weighted_amount(env: Env, user: Address) -> i128 {
+        contract::get_time_weighted_amount(&env, &user)
+    }
 }
 
 #[cfg(test)]
