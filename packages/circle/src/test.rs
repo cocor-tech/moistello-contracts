@@ -587,6 +587,166 @@ mod tests {
     }
 
     #[test]
+    fn test_dutch_auction_bid_before_floor_clears_at_decayed_price() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 2u32; // PAYOUT_AUCTION
+        let organizer = config.organizer.clone();
+
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        let bidder = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&bidder).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+
+        // Start at 1000 bips, decay 10 bips/ledger, floor at 200, expires after 500 ledgers.
+        client
+            .try_init_dutch_auction(&organizer, &0u32, &1000u32, &200u32, &10u32, &500u32)
+            .unwrap()
+            .unwrap();
+
+        // Advance 30 ledgers — price should have decayed to 1000 - 30*10 = 700,
+        // still above the floor.
+        let start_seq = env.ledger().sequence();
+        env.ledger().with_mut(|l| {
+            l.sequence_number = start_seq + 30;
+        });
+
+        let (price, expired) = client.try_dutch_auction_price(&0u32).unwrap().unwrap();
+        assert_eq!(price, 700u32);
+        assert!(!expired);
+
+        let cleared_at = client.try_dutch_auction_bid(&bidder, &0u32).unwrap().unwrap();
+        assert_eq!(cleared_at, 700u32);
+
+        // A second bid on the same round must be rejected — the auction already cleared.
+        assert!(client.try_dutch_auction_bid(&other, &0u32).is_err());
+    }
+
+    #[test]
+    fn test_dutch_auction_price_bottoms_out_at_floor() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 2u32; // PAYOUT_AUCTION
+        let organizer = config.organizer.clone();
+
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        let bidder = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&bidder).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+
+        client
+            .try_init_dutch_auction(&organizer, &0u32, &1000u32, &200u32, &10u32, &500u32)
+            .unwrap()
+            .unwrap();
+
+        // Advance far enough that a naive linear decay would go negative —
+        // price must clamp at the configured floor instead.
+        let start_seq = env.ledger().sequence();
+        env.ledger().with_mut(|l| {
+            l.sequence_number = start_seq + 200;
+        });
+
+        let (price, _expired) = client.try_dutch_auction_price(&0u32).unwrap().unwrap();
+        assert_eq!(price, 200u32);
+
+        let cleared_at = client.try_dutch_auction_bid(&bidder, &0u32).unwrap().unwrap();
+        assert_eq!(cleared_at, 200u32);
+    }
+
+    #[test]
+    fn test_dutch_auction_no_bid_expiry() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 2u32; // PAYOUT_AUCTION
+        let organizer = config.organizer.clone();
+
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        let bidder = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&bidder).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+
+        client
+            .try_init_dutch_auction(&organizer, &0u32, &1000u32, &200u32, &10u32, &50u32)
+            .unwrap()
+            .unwrap();
+
+        // Advance past the 50-ledger expiry window with no bid placed.
+        let start_seq = env.ledger().sequence();
+        env.ledger().with_mut(|l| {
+            l.sequence_number = start_seq + 51;
+        });
+
+        let (_price, expired) = client.try_dutch_auction_price(&0u32).unwrap().unwrap();
+        assert!(expired);
+
+        // A bid attempt after expiry must be rejected, not clear at the floor price.
+        assert!(client.try_dutch_auction_bid(&bidder, &0u32).is_err());
+    }
+
+    #[test]
+    fn test_dutch_auction_rejects_english_bid_once_configured() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 2u32; // PAYOUT_AUCTION
+        let organizer = config.organizer.clone();
+
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        let bidder = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&bidder).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+
+        client
+            .try_init_dutch_auction(&organizer, &0u32, &1000u32, &200u32, &10u32, &500u32)
+            .unwrap()
+            .unwrap();
+
+        assert!(client.try_auction_bid(&bidder, &500u32, &0u32).is_err());
+    }
+
+    #[test]
+    fn test_init_dutch_auction_rejects_invalid_config() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 2u32; // PAYOUT_AUCTION
+        let organizer = config.organizer.clone();
+
+        let (_token, client) = setup_test_env(&env, &mut config);
+        env.mock_all_auths();
+
+        // floor above start
+        assert!(client.try_init_dutch_auction(&organizer, &0u32, &200u32, &1000u32, &10u32, &500u32).is_err());
+        // zero decay
+        assert!(client.try_init_dutch_auction(&organizer, &0u32, &1000u32, &200u32, &0u32, &500u32).is_err());
+        // zero expiry window
+        assert!(client.try_init_dutch_auction(&organizer, &0u32, &1000u32, &200u32, &10u32, &0u32).is_err());
+    }
+
+    #[test]
     fn test_vote_payout_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
@@ -736,6 +896,45 @@ mod tests {
 
         assert!(client.try_trigger_payout(&admin, &0u32).is_ok());
         assert_eq!(client.get_status().current_round, 1u32);
+    }
+
+    #[test]
+    fn test_trigger_payout_zero_reward_round_settles_without_panic() {
+        // A round whose contribution pool nets to zero (contribution_amount
+        // configured as 0 here, but the same path is hit if fees consume
+        // the whole pool) used to hard-error with no state change, leaving
+        // the round permanently stuck since every retry hit the same error
+        // and current_round never advanced.
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 0u32; // PAYOUT_RANDOM
+        config.contribution_amount = 0i128;
+        let admin = config.organizer.clone();
+
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        let m1 = Address::generate(&env);
+        let m2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        mint_tokens(&env, &token, &m1, 100000_0000000);
+        client.try_join(&m1).unwrap().unwrap();
+        mint_tokens(&env, &token, &m2, 100000_0000000);
+        client.try_join(&m2).unwrap().unwrap();
+        client.try_contribute(&m1, &0i128, &0u32).unwrap().unwrap();
+        client.try_contribute(&m2, &0i128, &0u32).unwrap().unwrap();
+
+        // Must settle the round (no panic/abort, no permanent error), not
+        // fail with ZeroPayoutAmount and leave current_round stuck at 0.
+        assert!(client.try_trigger_payout(&admin, &0u32).is_ok());
+        assert_eq!(client.get_status().current_round, 1u32);
+
+        // The next round must be reachable — proof the circle isn't wedged.
+        client.try_contribute(&m1, &0i128, &1u32).unwrap().unwrap();
+        client.try_contribute(&m2, &0i128, &1u32).unwrap().unwrap();
+        assert!(client.try_trigger_payout(&admin, &1u32).is_ok());
+        assert_eq!(client.get_status().current_round, 2u32);
     }
 
     #[test]

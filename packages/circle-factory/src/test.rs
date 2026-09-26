@@ -173,3 +173,62 @@ fn test_pause_unpause_blocks_deploy() {
     client.unpause(&admin);
     assert!(client.try_deploy_circle(&config).is_ok());
 }
+
+#[test]
+fn test_storage_isolation_across_100_deployed_circles() {
+    // Issue #456: factory-deployed circles must not share storage. Each
+    // deploy_v2 call gets its own contract instance via a distinct salt, but
+    // that's a platform guarantee worth proving empirically — a salt or
+    // constructor-argument bug could silently make two circles alias the
+    // same address/config. Verified here through the factory's own
+    // per-circle storage (get_circle_config), which is what every other
+    // reader of a deployed circle's config (indexers, the frontend) also
+    // goes through — see sample_config()'s neighbours in this file for why
+    // the deployed circle contract itself is never invoked directly in
+    // these tests.
+    let env = Env::default();
+    let (client, _admin, _wh) = setup(&env);
+
+    const N: u32 = 100;
+    let mut circle_ids: std::vec::Vec<Address> = std::vec::Vec::with_capacity(N as usize);
+    let mut expected_amounts: std::vec::Vec<i128> = std::vec::Vec::with_capacity(N as usize);
+
+    for i in 0..N {
+        let organizer = Address::generate(&env);
+        let mut config = sample_config(&env, &organizer);
+        // Divergent per-circle config: each circle's contribution_amount and
+        // slug are unique, so any cross-circle storage aliasing would show
+        // up as one circle's config bleeding into another's.
+        config.contribution_amount = 100i128 + i as i128;
+        config.slug = soroban_sdk::String::from_str(&env, &std::format!("isolation-test-{i}"));
+        let cid = client.deploy_circle(&config);
+        circle_ids.push(cid);
+        expected_amounts.push(config.contribution_amount);
+    }
+
+    assert_eq!(client.get_circle_count(), N);
+
+    // Config A change never observable from circle B: read every deployed
+    // circle's own stored config back and confirm it matches exactly what
+    // that circle (and only that circle) was configured with.
+    for i in 0..N as usize {
+        let stored = client.get_circle_config(&circle_ids[i]);
+        assert_eq!(
+            stored.contribution_amount, expected_amounts[i],
+            "circle {i} read back a contribution_amount belonging to a different circle"
+        );
+        assert_eq!(
+            stored.slug,
+            soroban_sdk::String::from_str(&env, &std::format!("isolation-test-{i}")),
+            "circle {i} read back a slug belonging to a different circle"
+        );
+    }
+
+    // Every deployed circle address must be unique — a collision here would
+    // mean two configs landed on the same storage instance.
+    for i in 0..N as usize {
+        for j in (i + 1)..N as usize {
+            assert_ne!(circle_ids[i], circle_ids[j], "circles {i} and {j} deployed to the same address");
+        }
+    }
+}

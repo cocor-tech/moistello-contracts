@@ -3,6 +3,7 @@ pub const PAYOUT_RANDOM:u32=0;pub const PAYOUT_FIXED:u32=1;pub const PAYOUT_AUCT
 pub const STATUS_PENDING:u32=0;pub const STATUS_ACTIVE:u32=1;pub const STATUS_COMPLETED:u32=2;pub const STATUS_CANCELLED:u32=3;pub const STATUS_DISPUTED:u32=4;
 pub const MEMBER_ACTIVE:u32=0;pub const MEMBER_EXITED:u32=1;pub const MEMBER_DEFAULTED:u32=2;
 pub const RESOLVE_DISMISS:u32=1;pub const RESOLVE_PENALIZE:u32=2;pub const RESOLVE_FORCE_PAYOUT:u32=3;
+pub const AUCTION_MODE_ENGLISH:u32=0;pub const AUCTION_MODE_DUTCH:u32=1;
 #[contracttype]#[derive(Clone,Debug)]
 pub struct CircleConfig{pub organizer:Address,pub token:Address,pub name:String,pub contribution_amount:i128,pub max_members:u32,pub payout_type:u32,pub total_rounds:u32,pub contribution_deadline_seconds:u64,pub min_moi_score:u32,pub collateral_amount:i128,pub penalty_bps:u32,pub grace_period_seconds:u64,pub max_strikes:u32,pub slug:String}
 #[contracttype]#[derive(Clone,Debug)]
@@ -11,11 +12,17 @@ pub struct Circle{pub id:Address,pub token:Address,pub name:String,pub organizer
 #[contracttype]#[derive(Clone,Debug)]pub struct Contribution{pub member:Address,pub round:u32,pub amount:i128,pub timestamp:u64,pub on_time:bool,pub time_weight:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct PayoutRecipient{pub recipient:Address,pub round:u32,pub amount:i128,pub fee:i128,pub payout_type:u32,pub timestamp:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct AuctionBid{pub bidder:Address,pub discount_bips:u32,pub round:u32,pub timestamp:u64}
+/// Configuration for a Dutch-style auction on `round`: `discount_bips` starts at
+/// `start_bips` at `start_ledger` and decays by `decay_bips_per_ledger` per elapsed
+/// ledger down to a floor of `floor_bips`. The first bid clears at whatever the
+/// current decayed price is. If no bid lands within `expiry_ledgers` of
+/// `start_ledger`, the auction is expired and must be reconfigured.
+#[contracttype]#[derive(Clone,Debug)]pub struct DutchAuctionConfig{pub round:u32,pub start_bips:u32,pub floor_bips:u32,pub decay_bips_per_ledger:u32,pub start_ledger:u32,pub expiry_ledgers:u32,pub resolved:bool}
 #[contracttype]#[derive(Clone,Debug)]pub struct VoteEntry{pub voter:Address,pub vote_for:Address,pub round:u32,pub timestamp:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct DisputeEntry{pub raised_by:Address,pub evidence_hash:BytesN<32>,pub raised_at:u64,pub resolved_at:u64,pub resolution:u32,pub resolved_by:Address}
-#[contracttype]#[derive(Clone)]pub enum DataKey{Circle,Admin,Factory,Members,Contributions,Payouts,Bids,Votes,Dispute,FeeBps,Treasury,Allowlist,Token,Referrals,ReputationRegistry,OracleContract,FallbackOracle,RoundConfigSnapshot(u32),PayoutScheduled(u32)}
+#[contracttype]#[derive(Clone)]pub enum DataKey{Circle,Admin,Factory,Members,Contributions,Payouts,Bids,Votes,Dispute,FeeBps,Treasury,Allowlist,Token,Referrals,ReputationRegistry,OracleContract,FallbackOracle,RoundConfigSnapshot(u32),PayoutScheduled(u32),DutchAuction(u32)}
 pub use common::types::ErrorEnvelope;
-#[contracterror]#[derive(Debug,Clone,PartialEq,Eq)]pub enum CircleError{NotInitialized=1,NotActive=2,CircleFull=3,AlreadyMember=4,NotMember=5,InsufficientMoiScore=6,RoundNotCurrent=7,InvalidAmount=8,PaymentDeadlinePassed=9,MaxStrikesReached=10,NotOrganizer=11,ContractPaused=12,InvalidInviteCode=13,AuctionAlreadyResolved=14,VoteQuorumNotMet=15,AlreadyContributed=16,AlreadyVoted=17,AlreadyBidded=18,PayoutAlreadyExecuted=19,InvalidPayoutType=20,InvalidRound=21,ContributionMismatch=22,CircleNotFull=23,NotEnoughVotes=24,DisputeAlreadyRaised=25,NoActiveDispute=26,Unauthorized=27,InvalidBid=28,InvalidMemberStatus=29,EmptyPayoutOrder=30,CircleSizeExceedsTier=31,ContributionExceedsTier=32,VecAccessError=33,AllowlistNotPermitted=34,InsufficientContractBalance=35,SelfReferral=36,OracleUnavailable=37,NotImplemented=38,ZeroPayoutAmount=39,PayoutAlreadyScheduled=59}
+#[contracterror]#[derive(Debug,Clone,PartialEq,Eq)]pub enum CircleError{NotInitialized=1,NotActive=2,CircleFull=3,AlreadyMember=4,NotMember=5,InsufficientMoiScore=6,RoundNotCurrent=7,InvalidAmount=8,PaymentDeadlinePassed=9,MaxStrikesReached=10,NotOrganizer=11,ContractPaused=12,InvalidInviteCode=13,AuctionAlreadyResolved=14,VoteQuorumNotMet=15,AlreadyContributed=16,AlreadyVoted=17,AlreadyBidded=18,PayoutAlreadyExecuted=19,InvalidPayoutType=20,InvalidRound=21,ContributionMismatch=22,CircleNotFull=23,NotEnoughVotes=24,DisputeAlreadyRaised=25,NoActiveDispute=26,Unauthorized=27,InvalidBid=28,InvalidMemberStatus=29,EmptyPayoutOrder=30,CircleSizeExceedsTier=31,ContributionExceedsTier=32,VecAccessError=33,AllowlistNotPermitted=34,InsufficientContractBalance=35,SelfReferral=36,OracleUnavailable=37,NotImplemented=38,ZeroPayoutAmount=39,PayoutAlreadyScheduled=59,DutchAuctionNotConfigured=60,DutchAuctionExpired=61,InvalidDutchConfig=62}
 
 impl CircleError {
     pub fn to_envelope(&self, env: &soroban_sdk::Env, details: &str, request_id: u64) -> ErrorEnvelope {
@@ -60,6 +67,9 @@ impl CircleError {
             CircleError::NotImplemented => (38, "Not implemented"),
             CircleError::ZeroPayoutAmount => (39, "Zero payout amount"),
             CircleError::PayoutAlreadyScheduled => (59, "Payout already scheduled"),
+            CircleError::DutchAuctionNotConfigured => (60, "Dutch auction not configured"),
+            CircleError::DutchAuctionExpired => (61, "Dutch auction expired"),
+            CircleError::InvalidDutchConfig => (62, "Invalid Dutch auction config"),
         };
         ErrorEnvelope::new(env, code, msg, details, request_id)
     }
@@ -106,6 +116,9 @@ impl CircleError {
             38 => Some(CircleError::NotImplemented),
             39 => Some(CircleError::ZeroPayoutAmount),
             59 => Some(CircleError::PayoutAlreadyScheduled),
+            60 => Some(CircleError::DutchAuctionNotConfigured),
+            61 => Some(CircleError::DutchAuctionExpired),
+            62 => Some(CircleError::InvalidDutchConfig),
             _ => None,
         }
     }

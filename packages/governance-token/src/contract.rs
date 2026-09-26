@@ -230,7 +230,7 @@ pub fn freeze(env: &Env, admin: &Address, account: &Address) -> Result<(), Token
     let mut frozen: Map<Address, bool> = env.storage().persistent().get(&FROZEN_KEY).ok_or(TokenError::NotInitialized)?;
     frozen.set(account.clone(), true);
     env.storage().persistent().set(&FROZEN_KEY, &frozen);
-    Freeze { account: account.clone() }.publish(env);
+    AccountFrozen { account: account.clone() }.publish(env);
     Ok(())
 }
 
@@ -240,7 +240,7 @@ pub fn unfreeze(env: &Env, admin: &Address, account: &Address) -> Result<(), Tok
     let mut frozen: Map<Address, bool> = env.storage().persistent().get(&FROZEN_KEY).ok_or(TokenError::NotInitialized)?;
     frozen.set(account.clone(), false);
     env.storage().persistent().set(&FROZEN_KEY, &frozen);
-    Unfreeze { account: account.clone() }.publish(env);
+    AccountUnfrozen { account: account.clone() }.publish(env);
     Ok(())
 }
 

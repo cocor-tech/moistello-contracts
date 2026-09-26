@@ -73,12 +73,12 @@ pub struct Clawback {
 
 #[contractevent]
 #[derive(Clone, Debug)]
-pub struct Freeze {
+pub struct AccountFrozen {
     pub account: Address,
 }
 
 #[contractevent]
 #[derive(Clone, Debug)]
-pub struct Unfreeze {
+pub struct AccountUnfrozen {
     pub account: Address,
 }
