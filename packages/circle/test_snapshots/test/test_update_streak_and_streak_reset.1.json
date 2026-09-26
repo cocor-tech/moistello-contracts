@@ -574,6 +574,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "vrf_ownr"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "vrf_salt"
                       },
                       "val": {
