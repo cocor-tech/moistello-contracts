@@ -30,6 +30,7 @@ pub enum TokenError {
     ContractPaused = 10,
     Underflow = 11,
     Frozen = 12,
+    RecipientNotAllowlisted = 13,
     CannotTransferToSelf = 16,
 }
 
@@ -80,5 +81,23 @@ pub struct AccountFrozen {
 #[contractevent]
 #[derive(Clone, Debug)]
 pub struct AccountUnfrozen {
+    pub account: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct AllowlistModeChanged {
+    pub enabled: bool,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct AllowlistAdded {
+    pub account: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct AllowlistRemoved {
     pub account: Address,
 }

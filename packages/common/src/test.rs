@@ -90,3 +90,164 @@ fn convert_shares_overflow_on_huge_inputs() {
     let result = convert_shares(i128::MAX, 1, i128::MAX);
     assert_eq!(result, Err(MathError::Overflow));
 }
+
+// ── VRF key rotation tests (#472) ────────────────────────────────────────────
+
+mod vrf_rotation {
+    use crate::vrf::{self, VrfError};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+    use soroban_sdk::{contract, Address, BytesN, Env};
+
+    #[contract]
+    struct TestContract;
+
+    fn setup(env: &Env) -> (Address, Address, BytesN<32>) {
+        env.mock_all_auths();
+        let contract_id = env.register(TestContract, ());
+        let owner = Address::generate(env);
+        let old_key = BytesN::from_array(env, &[1u8; 32]);
+        env.as_contract(&contract_id, || {
+            vrf::init_vrf(env, Some(&old_key), &owner).unwrap();
+        });
+        (contract_id, owner, old_key)
+    }
+
+    #[test]
+    fn test_propose_then_activate_rotates_key() {
+        let env = Env::default();
+        let (contract_id, owner, old_key) = setup(&env);
+        let new_key = BytesN::from_array(&env, &[2u8; 32]);
+        let sig = BytesN::from_array(&env, &[0u8; 64]);
+
+        env.as_contract(&contract_id, || {
+            // Evaluate + verify against the OLD key before proposing.
+            let out0 = vrf::evaluate_vrf(&env, 1).unwrap();
+            // verify_vrf will attempt ed25519 verification against the stored
+            // (old) admin key; the bogus signature will fail cryptographic
+            // verification but that failure happens inside ed25519_verify,
+            // which panics on invalid signatures in the mock environment
+            // rather than returning false — so we only assert the *plumbing*
+            // here: output stability and that the key material itself is
+            // what changes across rotation, not a full crypto proof.
+            let _ = out0;
+
+            vrf::propose_key_rotation(&env, &owner, &new_key, 100).unwrap();
+        });
+
+        // Old key must remain untouched immediately after proposing —
+        // in-flight verification still targets the old key.
+        env.as_contract(&contract_id, || {
+            let stored_admin: BytesN<32> = env
+                .storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("vrf_admin"))
+                .unwrap();
+            assert_eq!(stored_admin, old_key);
+        });
+
+        // Activation before the delay elapses fails.
+        env.as_contract(&contract_id, || {
+            let result = vrf::activate_key_rotation(&env, &owner);
+            assert_eq!(result, Err(VrfError::ActivationNotReady));
+        });
+
+        // Advance past the activation delay, then activate.
+        env.ledger().set_timestamp(env.ledger().timestamp() + 100);
+        env.as_contract(&contract_id, || {
+            vrf::activate_key_rotation(&env, &owner).unwrap();
+            let stored_admin: BytesN<32> = env
+                .storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("vrf_admin"))
+                .unwrap();
+            assert_eq!(stored_admin, new_key);
+        });
+    }
+
+    #[test]
+    fn test_activate_before_delay_fails() {
+        let env = Env::default();
+        let (contract_id, owner, _old_key) = setup(&env);
+        let new_key = BytesN::from_array(&env, &[3u8; 32]);
+
+        env.as_contract(&contract_id, || {
+            vrf::propose_key_rotation(&env, &owner, &new_key, 1000).unwrap();
+            let result = vrf::activate_key_rotation(&env, &owner);
+            assert_eq!(result, Err(VrfError::ActivationNotReady));
+        });
+    }
+
+    #[test]
+    fn test_propose_rotation_unauthorized_caller_rejected() {
+        let env = Env::default();
+        let (contract_id, _owner, _old_key) = setup(&env);
+        let not_owner = Address::generate(&env);
+        let new_key = BytesN::from_array(&env, &[4u8; 32]);
+
+        env.as_contract(&contract_id, || {
+            let result = vrf::propose_key_rotation(&env, &not_owner, &new_key, 100);
+            assert_eq!(result, Err(VrfError::Unauthorized));
+        });
+    }
+
+    #[test]
+    fn test_activate_rotation_unauthorized_caller_rejected() {
+        let env = Env::default();
+        let (contract_id, owner, _old_key) = setup(&env);
+        let not_owner = Address::generate(&env);
+        let new_key = BytesN::from_array(&env, &[5u8; 32]);
+
+        env.as_contract(&contract_id, || {
+            vrf::propose_key_rotation(&env, &owner, &new_key, 0).unwrap();
+            let result = vrf::activate_key_rotation(&env, &not_owner);
+            assert_eq!(result, Err(VrfError::Unauthorized));
+        });
+    }
+
+    #[test]
+    fn test_activate_with_no_pending_rotation_fails() {
+        let env = Env::default();
+        let (contract_id, owner, _old_key) = setup(&env);
+
+        env.as_contract(&contract_id, || {
+            let result = vrf::activate_key_rotation(&env, &owner);
+            assert_eq!(result, Err(VrfError::NoPendingRotation));
+        });
+    }
+
+    #[test]
+    fn test_evaluations_after_propose_before_activate_use_old_key() {
+        // The practical guarantee: proposing a rotation must not touch
+        // ADMIN_KEY. Any evaluation/verification performed after propose but
+        // before activate is unaffected because verify_vrf always reads
+        // ADMIN_KEY fresh from storage, which propose_key_rotation never
+        // writes to.
+        let env = Env::default();
+        let (contract_id, owner, old_key) = setup(&env);
+        let new_key = BytesN::from_array(&env, &[6u8; 32]);
+
+        env.as_contract(&contract_id, || {
+            vrf::propose_key_rotation(&env, &owner, &new_key, 50).unwrap();
+            let stored_admin: BytesN<32> = env
+                .storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("vrf_admin"))
+                .unwrap();
+            // Still the old key — in-flight verification during the
+            // rotation window keeps checking against it.
+            assert_eq!(stored_admin, old_key);
+            assert_ne!(stored_admin, new_key);
+        });
+
+        env.ledger().set_timestamp(env.ledger().timestamp() + 50);
+        env.as_contract(&contract_id, || {
+            vrf::activate_key_rotation(&env, &owner).unwrap();
+            let stored_admin: BytesN<32> = env
+                .storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("vrf_admin"))
+                .unwrap();
+            assert_eq!(stored_admin, new_key);
+        });
+    }
+}

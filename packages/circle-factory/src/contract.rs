@@ -18,13 +18,30 @@ use crate::types::*; use common::pause;
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed FactoryError variants.
-pub fn init(env: &Env, admin: &Address, fee_bps: i128, circle_wasm_hash: &BytesN<32>) -> Result<(), FactoryError> {
+/// - `organizer_rate_limit`: Max circles a single organizer may deploy per period (0 = unlimited)
+/// - `rate_limit_period_secs`: Length in seconds of the rolling rate-limit period. Ignored when
+///   `organizer_rate_limit` is 0.
+///
+/// # Returns
+/// - `Ok(())` on successful initialization
+/// - `Err(FactoryError::InvalidFeeBps)` if fee_bps < 0 or > 10000
+/// - `Err(FactoryError::InvalidConfig)` if `organizer_rate_limit` > 0 and `rate_limit_period_secs` == 0
+pub fn init(
+    env: &Env,
+    admin: &Address,
+    fee_bps: i128,
+    circle_wasm_hash: &BytesN<32>,
+    organizer_rate_limit: u32,
+    rate_limit_period_secs: u64,
+) -> Result<(), FactoryError> {
     admin.require_auth();
     if fee_bps < 0 || fee_bps > 10_000 { return Err(FactoryError::InvalidFeeBps); }
+    if organizer_rate_limit > 0 && rate_limit_period_secs == 0 { return Err(FactoryError::InvalidConfig); }
     env.storage().instance().set(&DataKey::Admin, admin);
     env.storage().instance().set(&DataKey::FeeConfig, &FeeConfig { fee_bps, updated_at: env.ledger().timestamp(), updated_by: admin.clone() });
     env.storage().instance().set(&DataKey::WasmHash, circle_wasm_hash);
     env.storage().instance().set(&DataKey::CircleCount, &0u32);
+    env.storage().instance().set(&DataKey::RateLimitConfig, &RateLimitConfig { limit: organizer_rate_limit, period_secs: rate_limit_period_secs });
     Ok(())
 }
 /// Deploys a new circle contract with the provided configuration.
@@ -53,6 +70,14 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
     pause::when_not_paused(env).map_err(|_| FactoryError::ContractPaused)?;
     config.organizer.require_auth();
     if config.max_members < 2 || config.contribution_amount <= 0 || config.total_rounds == 0 || config.payout_type > 3 { return Err(FactoryError::InvalidConfig); }
+    let rl: RateLimitConfig = env.storage().instance().get(&DataKey::RateLimitConfig).unwrap_or(RateLimitConfig { limit: 0, period_secs: 0 });
+    if rl.limit > 0 {
+        let period = env.ledger().timestamp() / rl.period_secs;
+        let key = DataKey::OrganizerPeriodCount(config.organizer.clone(), period);
+        let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        if count >= rl.limit { return Err(FactoryError::RateLimitExceeded); }
+        env.storage().persistent().set(&key, &(count.checked_add(1).ok_or(FactoryError::InvalidConfig)?));
+    }
     let wh: BytesN<32> = env.storage().instance().get(&DataKey::WasmHash).ok_or(FactoryError::WasmHashNotSet)?;
     let count: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
     let mut salt = [0u8; 32];
@@ -97,6 +122,15 @@ pub fn get_circles(env: &Env) -> CircleRegistry { CircleRegistry { circles: env.
 /// # Panics
 /// Never panics.
 pub fn get_circle_count(env: &Env) -> u32 { env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0) }
+/// Returns the current per-organizer rate-limit configuration.
+///
+/// # Returns
+/// `RateLimitConfig` with `limit` (0 = unlimited) and `period_secs`. Defaults to
+/// `{ limit: 0, period_secs: 0 }` if never configured.
+///
+/// # Panics
+/// Never panics.
+pub fn get_rate_limit_config(env: &Env) -> RateLimitConfig { env.storage().instance().get(&DataKey::RateLimitConfig).unwrap_or(RateLimitConfig { limit: 0, period_secs: 0 }) }
 /// Returns the current fee configuration.
 ///
 /// # Parameters

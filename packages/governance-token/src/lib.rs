@@ -102,4 +102,24 @@ impl GovernanceToken {
     pub fn get_admin(env: Env) -> Result<Address, TokenError> {
         contract::get_admin(&env)
     }
+
+    pub fn set_allowlist_mode(env: Env, admin: Address, enabled: bool) -> Result<(), TokenError> {
+        contract::set_allowlist_mode(&env, &admin, enabled)
+    }
+
+    pub fn is_allowlist_mode_enabled(env: Env) -> bool {
+        contract::is_allowlist_mode_enabled(&env)
+    }
+
+    pub fn add_to_allowlist(env: Env, admin: Address, account: Address) -> Result<(), TokenError> {
+        contract::add_to_allowlist(&env, &admin, &account)
+    }
+
+    pub fn remove_from_allowlist(env: Env, admin: Address, account: Address) -> Result<(), TokenError> {
+        contract::remove_from_allowlist(&env, &admin, &account)
+    }
+
+    pub fn is_allowlisted(env: Env, account: Address) -> bool {
+        contract::is_allowlisted(&env, &account)
+    }
 }
