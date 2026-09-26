@@ -1472,6 +1472,163 @@ fn test_default_grace_period_zero_rejects_past_deadline() {
     assert_eq!(res, Err(Ok(CircleError::PaymentDeadlinePassed)));
 }
 
+#[test]
+fn test_streak_stored_and_retrieved_on_contributions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin);
+
+    let config = CircleConfig {
+        organizer: admin.clone(),
+        token: token.address(),
+        name: String::from_str(&env, "Streak Circle"),
+        contribution_amount: 1000,
+        max_members: 2,
+        payout_type: 1,
+        total_rounds: 3,
+        contribution_deadline_seconds: 1000,
+        min_moi_score: 0,
+        collateral_amount: 0,
+        penalty_bps: 0,
+        grace_period_seconds: 0,
+        max_strikes: 3,
+        slug: String::from_str(&env, "streak-circle"),
+    };
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    client.join(&m1);
+    client.join(&m2);
+
+    mint_tokens(&env, &token.address(), &m1, 10000);
+    mint_tokens(&env, &token.address(), &m2, 10000);
+
+    // Initial streak should be 0
+    let initial_s1 = client.get_member_streak(&m1);
+    assert_eq!(initial_s1.current_streak, 0);
+    assert_eq!(initial_s1.longest_streak, 0);
+    assert_eq!(client.get_streaks().len(), 0);
+
+    // Round 0 contribution on time
+    client.contribute(&m1, &1000_i128, &0_u32);
+    let s1_r0 = client.get_member_streak(&m1);
+    assert_eq!(s1_r0.current_streak, 1);
+    assert_eq!(s1_r0.longest_streak, 1);
+    assert_eq!(s1_r0.last_round, 0);
+    assert_eq!(client.get_streaks().len(), 1);
+
+    // Advance round
+    client.contribute(&m2, &1000_i128, &0_u32);
+    client.trigger_payout(&admin, &0_u32);
+
+    // Round 1 contribution on time -> streak increments
+    client.contribute(&m1, &1000_i128, &1_u32);
+    let s1_r1 = client.get_member_streak(&m1);
+    assert_eq!(s1_r1.current_streak, 2);
+    assert_eq!(s1_r1.longest_streak, 2);
+    assert_eq!(s1_r1.last_round, 1);
+
+    // Member 2 streak after 1 contribution
+    let s2 = client.get_member_streak(&m2);
+    assert_eq!(s2.current_streak, 1);
+    assert_eq!(client.get_streaks().len(), 2);
+}
+
+#[test]
+fn test_update_streak_and_streak_reset() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin);
+
+    let config = CircleConfig {
+        organizer: admin.clone(),
+        token: token.address(),
+        name: String::from_str(&env, "Streak Reset"),
+        contribution_amount: 1000,
+        max_members: 2,
+        payout_type: 1,
+        total_rounds: 5,
+        contribution_deadline_seconds: 1000,
+        min_moi_score: 0,
+        collateral_amount: 0,
+        penalty_bps: 0,
+        grace_period_seconds: 0,
+        max_strikes: 3,
+        slug: String::from_str(&env, "streak-reset"),
+    };
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    client.join(&m1);
+    client.join(&m2);
+
+    // Update streak for round 0
+    client.update_streak(&m1, &0_u32);
+    // Update streak for round 1 (consecutive)
+    client.update_streak(&m1, &1_u32);
+    let s1 = client.get_member_streak(&m1);
+    assert_eq!(s1.current_streak, 2);
+    assert_eq!(s1.longest_streak, 2);
+
+    // Gap: round 3 (skipped round 2) resets current_streak to 1, while longest_streak stays 2
+    client.update_streak(&m1, &3_u32);
+    let s2 = client.get_member_streak(&m1);
+    assert_eq!(s2.current_streak, 1);
+    assert_eq!(s2.longest_streak, 2);
+    assert_eq!(s2.last_round, 3);
+}
+
+#[test]
+fn test_claim_streak_bonus_happy_path() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin);
+
+    let config = CircleConfig {
+        organizer: admin.clone(),
+        token: token.address(),
+        name: String::from_str(&env, "Bonus Circle"),
+        contribution_amount: 1000,
+        max_members: 2,
+        payout_type: 1,
+        total_rounds: 1,
+        contribution_deadline_seconds: 1000,
+        min_moi_score: 0,
+        collateral_amount: 0,
+        penalty_bps: 0,
+        grace_period_seconds: 0,
+        max_strikes: 3,
+        slug: String::from_str(&env, "bonus-circle"),
+    };
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    client.join(&m1);
+    client.join(&m2);
+
+    // Mint bonus tokens directly to contract
+    mint_tokens(&env, &token.address(), &contract_id, 500);
+
+    // Claim streak bonus
+    client.claim_streak_bonus(&m1);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token.address());
+    assert_eq!(token_client.balance(&m1), 500);
+}
+
+
 
 /// Issue #473: drives a full-year, 12-round circle (PAYOUT_FIXED, one 30-day
 /// round per member, ~360 days total) through contributions, a couple of

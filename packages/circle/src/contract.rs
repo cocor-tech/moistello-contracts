@@ -371,6 +371,7 @@ pub fn contribute(
     );
     if on_time {
         scoring::record_on_time_payment(env, member, &circle.id, amount, round);
+        let _ = update_streak_internal(env, member, round);
     }
     Ok(())
 }
@@ -2032,11 +2033,16 @@ pub fn claim_referral_bonus(
     env: &Env,
     referrer: &Address,
 ) -> Result<(), CircleError> {
-    let token_address: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Token)
-        .ok_or(CircleError::NotInitialized)?;
+    let token_address: Address = if let Some(t) = env.storage().instance().get(&DataKey::Token) {
+        t
+    } else {
+        let circle: Circle = env
+            .storage()
+            .instance()
+            .get(&DataKey::Circle)
+            .ok_or(CircleError::NotInitialized)?;
+        circle.token
+    };
     let token_client = soroban_sdk::token::Client::new(env, &token_address);
     let contract_balance = token_client.balance(&env.current_contract_address());
     if contract_balance <= 0 {
@@ -2045,18 +2051,72 @@ pub fn claim_referral_bonus(
     token_client.transfer(&env.current_contract_address(), referrer, &contract_balance);
     Ok(())
 }
-pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
-    Err(CircleError::NotImplemented)
+pub fn update_streak_internal(env: &Env, member: &Address, round: u32) -> Result<(), CircleError> {
+    let mut streaks: Vec<Streak> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut found = false;
+    for i in 0..streaks.len() {
+        let mut s = streaks.get(i).ok_or(CircleError::VecAccessError)?;
+        if s.member == *member {
+            found = true;
+            if s.current_streak == 0 {
+                s.current_streak = 1;
+                if s.longest_streak == 0 {
+                    s.longest_streak = 1;
+                }
+                s.last_round = round;
+            } else if round == s.last_round + 1 {
+                s.current_streak += 1;
+                if s.current_streak > s.longest_streak {
+                    s.longest_streak = s.current_streak;
+                }
+                s.last_round = round;
+            } else if round > s.last_round + 1 {
+                s.current_streak = 1;
+                s.last_round = round;
+            }
+            streaks.set(i, s);
+            break;
+        }
+    }
+    if !found {
+        streaks.push_back(Streak {
+            member: member.clone(),
+            current_streak: 1,
+            longest_streak: 1,
+            last_round: round,
+        });
+    }
+    env.storage().persistent().set(&DataKey::Streaks, &streaks);
+    Ok(())
 }
+
+pub fn update_streak(env: &Env, member: &Address, round: u32) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    member.require_auth();
+    update_streak_internal(env, member, round)
+}
+
 pub fn claim_streak_bonus(
     env: &Env,
     member: &Address,
 ) -> Result<(), CircleError> {
-    let token_address: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Token)
-        .ok_or(CircleError::NotInitialized)?;
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    member.require_auth();
+    let token_address: Address = if let Some(t) = env.storage().instance().get(&DataKey::Token) {
+        t
+    } else {
+        let circle: Circle = env
+            .storage()
+            .instance()
+            .get(&DataKey::Circle)
+            .ok_or(CircleError::NotInitialized)?;
+        circle.token
+    };
     let token_client = soroban_sdk::token::Client::new(env, &token_address);
     let contract_balance = token_client.balance(&env.current_contract_address());
     if contract_balance <= 0 {
@@ -2072,11 +2132,26 @@ pub fn get_referrals(env: &Env) -> Vec<Referral> {
         .unwrap_or_else(|| Vec::new(env))
 }
 pub fn get_streaks(env: &Env) -> Vec<Streak> {
-    Vec::new(env)
+    env.storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env))
 }
-pub fn get_member_streak(_env: &Env, _member: &Address) -> Streak {
+pub fn get_member_streak(env: &Env, member: &Address) -> Streak {
+    let streaks: Vec<Streak> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env));
+    for i in 0..streaks.len() {
+        if let Some(s) = streaks.get(i) {
+            if s.member == *member {
+                return s;
+            }
+        }
+    }
     Streak {
-        member: _member.clone(),
+        member: member.clone(),
         current_streak: 0,
         longest_streak: 0,
         last_round: 0,
