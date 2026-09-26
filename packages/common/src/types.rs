@@ -19,3 +19,25 @@ pub struct CircleConfig {
     pub slug: String,
     pub fee_bps: u32,
 }
+
+/// Canonical ErrorEnvelope for consistent error responses across all handlers.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErrorEnvelope {
+    pub code: u32,
+    pub message: String,
+    pub details: String,
+    pub request_id: u64,
+}
+
+impl ErrorEnvelope {
+    pub fn new(env: &soroban_sdk::Env, code: u32, message: &str, details: &str, request_id: u64) -> Self {
+        Self {
+            code,
+            message: String::from_str(env, message),
+            details: String::from_str(env, details),
+            request_id,
+        }
+    }
+}
+

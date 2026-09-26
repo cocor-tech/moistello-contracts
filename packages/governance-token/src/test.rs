@@ -365,4 +365,40 @@ mod tests {
         assert_eq!(client.balance(&charlie), 900_0000000i128);
         assert_eq!(client.total_supply(), 9_400_0000000i128);
     }
+
+    #[test]
+    fn test_transfer_to_contract_address_rejected() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let alice = Address::generate(&env);
+        env.mock_all_auths();
+        client.mint(&admin, &alice, &1_000_0000000i128);
+
+        let result = client.try_transfer(&alice, &client.address, &500_0000000i128);
+        assert_eq!(result, Err(Ok(crate::types::TokenError::CannotTransferToSelf)));
+    }
+
+    #[test]
+    fn test_transfer_from_to_contract_address_rejected() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        env.mock_all_auths();
+        client.mint(&admin, &alice, &1_000_0000000i128);
+        client.approve(&alice, &bob, &1_000_0000000i128, &0u32);
+
+        let result = client.try_transfer_from(&bob, &alice, &client.address, &500_0000000i128);
+        assert_eq!(result, Err(Ok(crate::types::TokenError::CannotTransferToSelf)));
+    }
+
+    #[test]
+    fn test_mint_to_contract_address_rejected() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        env.mock_all_auths();
+
+        let result = client.try_mint(&admin, &client.address, &1_000_0000000i128);
+        assert_eq!(result, Err(Ok(crate::types::TokenError::CannotTransferToSelf)));
+    }
 }

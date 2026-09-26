@@ -830,9 +830,109 @@ mod tests {
         assert!(client.try_unpause_circle(&unauthorized).is_err());
     }
 
-    // ===== Issue 1: Allowlist Tests =====
+    #[test]
+    fn test_round_config_snapshot_recorded_on_advance_and_queried() {
+        let env = Env::default();
+        let (client, admin, token, _treasury, m1) = setup_active_circle_with_token(&env);
+        let members = client.get_members();
+        let m2 = members.get(1).unwrap().address;
 
+        // Round 0 snapshot was recorded at initialization
+        let round_0_hash = client.query_round_config(&0u32);
+        assert_eq!(round_0_hash.len(), 32);
 
+        // Future round 1 has not advanced yet -> InvalidRound
+        let round_1_unadvanced = client.try_query_round_config(&1u32);
+        assert_eq!(round_1_unadvanced, Err(Ok(CircleError::InvalidRound)));
+
+        // Fund members and contribute for round 0
+        mint_tokens(&env, &token, &m1, 200_0000000);
+        mint_tokens(&env, &token, &m2, 200_0000000);
+        client.contribute(&m1, &100_0000000_i128, &0u32);
+        client.contribute(&m2, &100_0000000_i128, &0u32);
+
+        // Trigger payout advances round from 0 to 1
+        client.trigger_payout(&admin, &0u32);
+        let status = client.get_status();
+        assert_eq!(status.current_round, 1u32);
+
+        // Verify round 0 snapshot is preserved and round 1 snapshot is recorded
+        let stored_round_0 = client.query_round_config(&0u32);
+        let stored_round_1 = client.query_round_config(&1u32);
+        assert_eq!(stored_round_0, round_0_hash);
+        assert_eq!(stored_round_1.len(), 32);
+
+        // Round 99 was never recorded -> InvalidRound
+        let round_99 = client.try_query_round_config(&99u32);
+        assert_eq!(round_99, Err(Ok(CircleError::InvalidRound)));
+    }
+
+    #[test]
+    fn test_contribute_rejected_after_payout_scheduled() {
+        let env = Env::default();
+        let (client, admin, token, _treasury, m1) = setup_active_circle_with_token(&env);
+        let members = client.get_members();
+        let m2 = members.get(1).unwrap().address;
+
+        mint_tokens(&env, &token, &m1, 200_0000000);
+        mint_tokens(&env, &token, &m2, 200_0000000);
+
+        // Member 1 contributes
+        client.contribute(&m1, &100_0000000_i128, &0u32);
+
+        // Schedule payout for round 0
+        assert!(!client.is_payout_scheduled(&0u32));
+        let sched_result = client.try_schedule_payout(&admin, &0u32);
+        assert!(sched_result.is_ok());
+        assert!(client.is_payout_scheduled(&0u32));
+
+        // Member 2 attempts late contribution after payout scheduled
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        let m2_balance_before = token_client.balance(&m2);
+        let late_result = client.try_contribute(&m2, &100_0000000_i128, &0u32);
+        assert_eq!(late_result, Err(Ok(CircleError::PayoutAlreadyScheduled)));
+
+        // State remains unchanged and funds are not deducted
+        let m2_balance_after = token_client.balance(&m2);
+        assert_eq!(m2_balance_before, m2_balance_after);
+
+        let m2_contributions = client.get_contributions(&m2, &0u32, &10u32);
+        assert_eq!(m2_contributions.len(), 0);
+    }
+
+    #[test]
+    fn test_error_envelope_for_all_circle_errors() {
+        let env = Env::default();
+        let all_codes: [u32; 40] = [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+            31, 32, 33, 34, 35, 36, 37, 38, 39, 59,
+        ];
+        for code in all_codes {
+            let err = CircleError::from_code(code).expect("valid code mapping");
+            let env_result = err.to_envelope(&env, "Test details", 42u64);
+            assert_eq!(env_result.code, code);
+            assert_eq!(env_result.request_id, 42u64);
+            assert_eq!(env_result.details, String::from_str(&env, "Test details"));
+            assert!(env_result.message.len() > 0);
+        }
+        assert_eq!(CircleError::from_code(999u32), None);
+    }
+
+    #[test]
+    fn test_paginated_member_contributions_boundary_cases() {
+        let env = Env::default();
+        let (client, _admin, _token, _treasury, m1) = setup_active_circle_with_token(&env);
+
+        // Page 0 with page_size 10 on empty contributions returns empty list
+        let empty_page = client.get_contributions(&m1, &0u32, &10u32);
+        assert_eq!(empty_page.len(), 0);
+
+        // High page index out of range returns empty list
+        let out_of_range = client.get_contributions(&m1, &100u32, &10u32);
+        assert_eq!(out_of_range.len(), 0);
+    }
 }
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
@@ -1033,3 +1133,5 @@ fn test_trigger_payout_transfers_tokens_and_deposits_fee() {
         190_i128
     );
 }
+
+

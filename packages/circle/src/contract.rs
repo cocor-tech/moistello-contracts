@@ -12,7 +12,7 @@ use common::{math, pause};
 use reputation_registry::scoring;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    symbol_short, Address, BytesN, Env, IntoVal, Map, Vec,
+    symbol_short, xdr::ToXdr, Address, BytesN, Env, IntoVal, Map, Vec,
 };
 
 /// Initializes a new circle contract with the provided configuration.
@@ -95,6 +95,10 @@ pub fn init(
     env.storage()
         .persistent()
         .set(&DataKey::Votes, &Vec::<VoteEntry>::new(env));
+    let initial_hash = compute_circle_config_hash(env, &circle);
+    env.storage()
+        .persistent()
+        .set(&DataKey::RoundConfigSnapshot(0), &initial_hash);
     Ok(())
 }
 /// Allows a member to join an active circle.
@@ -242,6 +246,9 @@ pub fn contribute(
     }
     if round != circle.current_round {
         return Err(CircleError::RoundNotCurrent);
+    }
+    if is_payout_scheduled(env, round) {
+        return Err(CircleError::PayoutAlreadyScheduled);
     }
     if amount != circle.contribution_amount {
         return Err(CircleError::ContributionMismatch);
@@ -543,6 +550,11 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         math::safe_add(circle.total_fees, fee).map_err(|_| CircleError::InvalidAmount)?;
     if circle.current_round >= circle.total_rounds {
         circle.status = STATUS_COMPLETED;
+    } else {
+        let next_round_hash = compute_circle_config_hash(env, &circle);
+        env.storage()
+            .persistent()
+            .set(&DataKey::RoundConfigSnapshot(circle.current_round), &next_round_hash);
     }
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().persistent().set(&DataKey::Payouts, &payouts);
@@ -1991,3 +2003,68 @@ pub fn get_oracle(env: &Env) -> Option<Address> {
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
 }
+
+pub fn compute_circle_config_hash(env: &Env, circle: &Circle) -> BytesN<32> {
+    let config = CircleConfig {
+        organizer: circle.organizer.clone(),
+        token: circle.token.clone(),
+        name: circle.name.clone(),
+        contribution_amount: circle.contribution_amount,
+        max_members: circle.max_members,
+        payout_type: circle.payout_type,
+        total_rounds: circle.total_rounds,
+        contribution_deadline_seconds: circle.contribution_deadline_seconds,
+        min_moi_score: circle.min_moi_score,
+        collateral_amount: circle.collateral_amount,
+        penalty_bps: circle.penalty_bps,
+        grace_period_seconds: circle.grace_period_seconds,
+        max_strikes: circle.max_strikes,
+        slug: circle.slug.clone(),
+    };
+    let xdr_bytes = config.to_xdr(env);
+    env.crypto().sha256(&xdr_bytes).into()
+}
+
+pub fn query_round_config(env: &Env, round: u32) -> Result<BytesN<32>, CircleError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RoundConfigSnapshot(round))
+        .ok_or(CircleError::InvalidRound)
+}
+
+pub fn schedule_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    caller.require_auth();
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if caller != &circle.organizer && caller != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    if circle.status != STATUS_ACTIVE {
+        return Err(CircleError::NotActive);
+    }
+    if round != circle.current_round {
+        return Err(CircleError::RoundNotCurrent);
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::PayoutScheduled(round), &true);
+    Ok(())
+}
+
+pub fn is_payout_scheduled(env: &Env, round: u32) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PayoutScheduled(round))
+        .unwrap_or(false)
+}
+
