@@ -15,6 +15,9 @@ pub use types::CircleError;
     pub fn contribute(env:Env,member:Address,amount:i128,round:u32)->Result<(),types::CircleError>{contract::contribute(&env,&member,amount,round)}
     pub fn trigger_payout(env:Env,caller:Address,round:u32)->Result<(),types::CircleError>{contract::trigger_payout(&env,&caller,round)}
     pub fn auction_bid(env:Env,bidder:Address,discount_bips:u32,round:u32)->Result<(),types::CircleError>{contract::auction_bid(&env,&bidder,discount_bips,round)}
+    pub fn init_dutch_auction(env:Env,caller:Address,round:u32,start_bips:u32,floor_bips:u32,decay_bips_per_ledger:u32,expiry_ledgers:u32)->Result<(),types::CircleError>{contract::init_dutch_auction(&env,&caller,round,start_bips,floor_bips,decay_bips_per_ledger,expiry_ledgers)}
+    pub fn dutch_auction_price(env:Env,round:u32)->Result<(u32,bool),types::CircleError>{contract::dutch_auction_price(&env,round)}
+    pub fn dutch_auction_bid(env:Env,bidder:Address,round:u32)->Result<u32,types::CircleError>{contract::dutch_auction_bid(&env,&bidder,round)}
     pub fn vote_payout(env:Env,voter:Address,vote_for:Address,round:u32)->Result<(),types::CircleError>{contract::vote_payout(&env,&voter,&vote_for,round)}
     pub fn exit_circle(env:Env,member:Address)->Result<(),types::CircleError>{contract::exit(&env,&member)}
     pub fn cancel_circle(env:Env,caller:Address)->Result<(),types::CircleError>{contract::cancel_circle(&env,&caller)}

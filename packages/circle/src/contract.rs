@@ -420,7 +420,69 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     let (net, fee) =
         math::apply_fee(pool, fee_bps as i128).map_err(|_| CircleError::InvalidAmount)?;
     if net <= 0 {
-        return Err(CircleError::ZeroPayoutAmount);
+        // A round whose contribution pool nets to zero after fees (e.g. all
+        // fees consumed it, or contribution_amount is configured as zero)
+        // used to hard-error here with no state change — since `round ==
+        // circle.current_round` is required to even reach this function,
+        // that left the round permanently stuck: every retry hit the exact
+        // same ZeroPayoutAmount error forever, with current_round never
+        // advancing. Short-circuit instead: settle the round (mark the
+        // resolved recipient's position paid, advance current_round,
+        // complete the circle if this was the last round) with a
+        // zero-amount payout record for the audit trail, rather than
+        // leaving the circle wedged.
+        let now = env.ledger().timestamp();
+        let mut members: Vec<Member> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Members)
+            .ok_or(CircleError::NotInitialized)?;
+        for i in 0..members.len() {
+            let m = members.get(i).ok_or(CircleError::VecAccessError)?;
+            if m.address == recipient {
+                circle.payout_bitmap |= 1u128 << m.position;
+                break;
+            }
+        }
+        let mut payouts: Vec<PayoutRecipient> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Payouts)
+            .unwrap_or_else(|| Vec::new(env));
+        payouts.push_back(PayoutRecipient {
+            recipient: recipient.clone(),
+            round,
+            amount: 0,
+            fee: 0,
+            payout_type,
+            timestamp: now,
+        });
+        env.storage().persistent().set(&DataKey::Payouts, &payouts);
+        env.storage().persistent().set(&DataKey::Members, &members);
+        circle.current_round = circle
+            .current_round
+            .checked_add(1)
+            .ok_or(CircleError::InvalidAmount)?;
+        if circle.current_round >= circle.total_rounds {
+            circle.status = STATUS_COMPLETED;
+        } else {
+            let next_round_hash = compute_circle_config_hash(env, &circle);
+            env.storage()
+                .persistent()
+                .set(&DataKey::RoundConfigSnapshot(circle.current_round), &next_round_hash);
+        }
+        env.storage().instance().set(&DataKey::Circle, &circle);
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("payout")),
+            PayoutExecuted {
+                recipient,
+                round,
+                amount: 0,
+                fee: 0,
+                payout_type,
+            },
+        );
+        return Ok(());
     }
     // Fetch yield rate for observability; zero if no oracle configured.
     let _yield_rate_bps = oracle::get_yield_rate(env, round)?;
@@ -644,6 +706,18 @@ pub fn auction_bid(
     if round != circle.current_round {
         return Err(CircleError::RoundNotCurrent);
     }
+    // A round configured for Dutch mode (init_dutch_auction) clears on the
+    // first dutch_auction_bid() call at whatever price has decayed to — it
+    // does not accept ordinary English (highest-discount) bids, since the
+    // two clearing mechanisms are mutually exclusive per round.
+    if env
+        .storage()
+        .persistent()
+        .get::<DataKey, DutchAuctionConfig>(&DataKey::DutchAuction(round))
+        .is_some()
+    {
+        return Err(CircleError::InvalidPayoutType);
+    }
     let mut bids: Vec<AuctionBid> = env
         .storage()
         .persistent()
@@ -672,6 +746,150 @@ pub fn auction_bid(
     );
     Ok(())
 }
+
+/// Configures round `round`'s auction to clear via Dutch (decaying-price)
+/// mode instead of the default English (highest-bid) mode. Organizer-only.
+/// The price (`discount_bips`) starts at `start_bips` and decays linearly by
+/// `decay_bips_per_ledger` per elapsed ledger down to a floor of
+/// `floor_bips`; the first `dutch_auction_bid` call clears at whichever
+/// price has decayed to by then. If no bid lands within `expiry_ledgers`
+/// ledgers of this call, the auction expires unclaimed (see
+/// `dutch_auction_bid`'s `DutchAuctionExpired`).
+pub fn init_dutch_auction(
+    env: &Env,
+    caller: &Address,
+    round: u32,
+    start_bips: u32,
+    floor_bips: u32,
+    decay_bips_per_ledger: u32,
+    expiry_ledgers: u32,
+) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    caller.require_auth();
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    if *caller != circle.organizer {
+        return Err(CircleError::NotOrganizer);
+    }
+    if circle.payout_type != PAYOUT_AUCTION {
+        return Err(CircleError::InvalidPayoutType);
+    }
+    if round != circle.current_round {
+        return Err(CircleError::RoundNotCurrent);
+    }
+    if start_bips > 10000 || floor_bips > start_bips || decay_bips_per_ledger == 0 || expiry_ledgers == 0 {
+        return Err(CircleError::InvalidDutchConfig);
+    }
+    let bids: Vec<AuctionBid> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Bids)
+        .unwrap_or_else(|| Vec::new(env));
+    for i in 0..bids.len() {
+        let b = bids.get(i).ok_or(CircleError::VecAccessError)?;
+        if b.round == round {
+            return Err(CircleError::AlreadyBidded);
+        }
+    }
+    env.storage().persistent().set(
+        &DataKey::DutchAuction(round),
+        &DutchAuctionConfig {
+            round,
+            start_bips,
+            floor_bips,
+            decay_bips_per_ledger,
+            start_ledger: env.ledger().sequence(),
+            expiry_ledgers,
+            resolved: false,
+        },
+    );
+    Ok(())
+}
+
+/// Returns the current decayed clearing price (in bips) for round `round`'s
+/// Dutch auction, and whether it has expired unclaimed.
+pub fn dutch_auction_price(env: &Env, round: u32) -> Result<(u32, bool), CircleError> {
+    let config: DutchAuctionConfig = env
+        .storage()
+        .persistent()
+        .get(&DataKey::DutchAuction(round))
+        .ok_or(CircleError::DutchAuctionNotConfigured)?;
+    let elapsed = env.ledger().sequence().saturating_sub(config.start_ledger);
+    let decayed = config
+        .start_bips
+        .saturating_sub(config.decay_bips_per_ledger.saturating_mul(elapsed));
+    let price = decayed.max(config.floor_bips);
+    let expired = !config.resolved && elapsed >= config.expiry_ledgers;
+    Ok((price, expired))
+}
+
+/// Places the clearing bid for round `round`'s Dutch auction at whatever
+/// price has decayed to by the current ledger. The first caller wins — there
+/// is no higher-bid competition in Dutch mode, since the decaying price
+/// itself is the mechanism that finds a clearing price.
+///
+/// Returns the `discount_bips` the auction cleared at.
+pub fn dutch_auction_bid(env: &Env, bidder: &Address, round: u32) -> Result<u32, CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    bidder.require_auth();
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    if round != circle.current_round {
+        return Err(CircleError::RoundNotCurrent);
+    }
+    let mut config: DutchAuctionConfig = env
+        .storage()
+        .persistent()
+        .get(&DataKey::DutchAuction(round))
+        .ok_or(CircleError::DutchAuctionNotConfigured)?;
+    if config.resolved {
+        return Err(CircleError::AuctionAlreadyResolved);
+    }
+    let elapsed = env.ledger().sequence().saturating_sub(config.start_ledger);
+    if elapsed >= config.expiry_ledgers {
+        return Err(CircleError::DutchAuctionExpired);
+    }
+    let decayed = config
+        .start_bips
+        .saturating_sub(config.decay_bips_per_ledger.saturating_mul(elapsed));
+    let clearing_bips = decayed.max(config.floor_bips);
+
+    let mut bids: Vec<AuctionBid> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Bids)
+        .unwrap_or_else(|| Vec::new(env));
+    bids.push_back(AuctionBid {
+        bidder: bidder.clone(),
+        discount_bips: clearing_bips,
+        round,
+        timestamp: env.ledger().timestamp(),
+    });
+    env.storage().persistent().set(&DataKey::Bids, &bids);
+
+    config.resolved = true;
+    env.storage()
+        .persistent()
+        .set(&DataKey::DutchAuction(round), &config);
+
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("bid")),
+        AuctionBidPlaced {
+            bidder: bidder.clone(),
+            discount_bips: clearing_bips,
+            round,
+        },
+    );
+    Ok(clearing_bips)
+}
+
 /// Casts a vote for a payout recipient in vote-based payout rounds.
 ///
 /// # Parameters
