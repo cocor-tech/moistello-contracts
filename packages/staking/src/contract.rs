@@ -1,4 +1,4 @@
-use soroban_sdk::{token, symbol_short, Address, Env, Vec};
+use soroban_sdk::{symbol_short, token, Address, Env, Vec};
 
 use crate::types::*;
 use common::pause;
@@ -6,16 +6,18 @@ use common::pause;
 /// Initialize the staking contract
 pub fn init(env: &Env, admin: &Address, token: &Address) {
     admin.require_auth();
-    
+
     // Store admin
     env.storage().instance().set(&DataKey::Admin, admin);
-    
+
     // Store token address
     env.storage().instance().set(&DataKey::Token, token);
-    
+
     // Initialize paused state to false
-    env.storage().instance().set(&symbol_short!("paused"), &false);
-    
+    env.storage()
+        .instance()
+        .set(&symbol_short!("paused"), &false);
+
     // Initialize total staked to 0
     env.storage().instance().set(&DataKey::TotalStaked, &0i128);
 
@@ -38,40 +40,41 @@ pub fn stake(
     user.require_auth();
 
     // Validate amount
-    if amount <= 0 {
+    if amount < MIN_STAKE_AMOUNT {
         return Err(StakingError::InvalidAmount);
     }
-    
+
     // Validate and convert period
-    let period = StakingPeriod::from_u32(period_months)
-        .ok_or(StakingError::InvalidPeriod)?;
-    
+    let period = StakingPeriod::from_u32(period_months).ok_or(StakingError::InvalidPeriod)?;
+
     // Check if user already has an active stake
     if env.storage().instance().has(&DataKey::Stake(user.clone())) {
         return Err(StakingError::AlreadyStaked);
     }
-    
+
     // Get token address
-    let token_address: Address = env.storage().instance()
+    let token_address: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Token)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     // Transfer tokens from user to contract
     let token_client = token::Client::new(env, &token_address);
     token_client.transfer(user, &env.current_contract_address(), &amount);
-    
+
     // Calculate voting power with multiplier
     let multiplier = period.multiplier();
     let voting_power = amount
         .checked_mul(multiplier as i128)
         .ok_or(StakingError::Overflow)?;
-    
+
     // Calculate unlock time
     let current_time = env.ledger().timestamp();
     let unlock_time = current_time
         .checked_add(period.as_seconds())
         .ok_or(StakingError::Overflow)?;
-    
+
     // Create stake position
     let stake_position = StakePosition {
         amount,
@@ -80,18 +83,24 @@ pub fn stake(
         unlock_time,
         voting_power,
     };
-    
+
     // Store stake position
-    env.storage().instance().set(&DataKey::Stake(user.clone()), &stake_position);
-    
+    env.storage()
+        .instance()
+        .set(&DataKey::Stake(user.clone()), &stake_position);
+
     // Update total staked
-    let total_staked: i128 = env.storage().instance()
+    let total_staked: i128 = env
+        .storage()
+        .instance()
         .get(&DataKey::TotalStaked)
         .unwrap_or(0);
     let new_total = total_staked
         .checked_add(amount)
         .ok_or(StakingError::Overflow)?;
-    env.storage().instance().set(&DataKey::TotalStaked, &new_total);
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalStaked, &new_total);
 
     // Register user in the staker list (used by get_all_stakers)
     let mut stakers: Vec<Address> = env
@@ -103,7 +112,7 @@ pub fn stake(
     env.storage()
         .persistent()
         .set(&DataKey::StakerList, &stakers);
-    
+
     // Emit event
     Staked {
         user: user.clone(),
@@ -111,8 +120,9 @@ pub fn stake(
         period: period_months,
         multiplier,
         voting_power,
-    }.publish(env);
-    
+    }
+    .publish(env);
+
     Ok(())
 }
 
@@ -120,40 +130,46 @@ pub fn stake(
 pub fn unstake(env: &Env, user: &Address) -> Result<(), StakingError> {
     // Check if contract is paused
     pause::when_not_paused(env).map_err(|_| StakingError::ContractPaused)?;
-    
+
     user.require_auth();
-    
+
     // Get stake position
-    let stake_position: StakePosition = env.storage().instance()
+    let stake_position: StakePosition = env
+        .storage()
+        .instance()
         .get(&DataKey::Stake(user.clone()))
         .ok_or(StakingError::NoActiveStake)?;
-    
+
     // Check if stake is already unlocked (optional - allow unstaking even if not unlocked)
     // If you want to enforce unlock time, uncomment:
     // let current_time = env.ledger().timestamp();
     // if current_time < stake_position.unlock_time {
     //     return Err(StakingError::StakeNotUnlocked);
     // }
-    
+
     // Calculate unbonding times
     let current_time = env.ledger().timestamp();
     let claimable_time = current_time
         .checked_add(UNBONDING_PERIOD_SECONDS)
         .ok_or(StakingError::Overflow)?;
-    
+
     // Create unbonding position
     let unbonding_position = UnbondingPosition {
         amount: stake_position.amount,
         unbonding_start_time: current_time,
         claimable_time,
     };
-    
+
     // Store unbonding position
-    env.storage().instance().set(&DataKey::Unbonding(user.clone()), &unbonding_position);
-    
+    env.storage()
+        .instance()
+        .set(&DataKey::Unbonding(user.clone()), &unbonding_position);
+
     // Remove stake position
-    env.storage().instance().remove(&DataKey::Stake(user.clone()));
-    
+    env.storage()
+        .instance()
+        .remove(&DataKey::Stake(user.clone()));
+
     // Remove user from staker list
     let stakers: Vec<Address> = env
         .storage()
@@ -171,21 +187,26 @@ pub fn unstake(env: &Env, user: &Address) -> Result<(), StakingError> {
         .set(&DataKey::StakerList, &updated);
 
     // Update total staked
-    let total_staked: i128 = env.storage().instance()
+    let total_staked: i128 = env
+        .storage()
+        .instance()
         .get(&DataKey::TotalStaked)
         .unwrap_or(0);
     let new_total = total_staked
         .checked_sub(stake_position.amount)
         .ok_or(StakingError::InsufficientBalance)?;
-    env.storage().instance().set(&DataKey::TotalStaked, &new_total);
-    
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalStaked, &new_total);
+
     // Emit event
     UnstakeInitiated {
         user: user.clone(),
         amount: stake_position.amount,
         claimable_time,
-    }.publish(env);
-    
+    }
+    .publish(env);
+
     Ok(())
 }
 
@@ -197,7 +218,9 @@ pub fn claim(env: &Env, user: &Address) -> Result<(), StakingError> {
     user.require_auth();
 
     // Get unbonding position
-    let unbonding_position: UnbondingPosition = env.storage().instance()
+    let unbonding_position: UnbondingPosition = env
+        .storage()
+        .instance()
         .get(&DataKey::Unbonding(user.clone()))
         .ok_or(StakingError::NoUnbondingPosition)?;
 
@@ -208,7 +231,9 @@ pub fn claim(env: &Env, user: &Address) -> Result<(), StakingError> {
     }
 
     // Get token address
-    let token_address: Address = env.storage().instance()
+    let token_address: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Token)
         .ok_or(StakingError::NotInitialized)?;
 
@@ -236,13 +261,16 @@ pub fn claim(env: &Env, user: &Address) -> Result<(), StakingError> {
 
     // Remove unbonding position only after the transfer has returned
     // successfully (reaching this line means the host call did not panic).
-    env.storage().instance().remove(&DataKey::Unbonding(user.clone()));
+    env.storage()
+        .instance()
+        .remove(&DataKey::Unbonding(user.clone()));
 
     // Emit event
     Claimed {
         user: user.clone(),
         amount: unbonding_position.amount,
-    }.publish(env);
+    }
+    .publish(env);
 
     Ok(())
 }
@@ -250,34 +278,43 @@ pub fn claim(env: &Env, user: &Address) -> Result<(), StakingError> {
 /// Get user's current voting power for governance
 pub fn get_voting_power(env: &Env, user: &Address) -> i128 {
     // Check for active stake
-    if let Some(stake_position) = env.storage().instance()
+    if let Some(stake_position) = env
+        .storage()
+        .instance()
         .get::<DataKey, StakePosition>(&DataKey::Stake(user.clone()))
     {
         // Emit event for governance indexing
         VotingPowerQueried {
             user: user.clone(),
             voting_power: stake_position.voting_power,
-        }.publish(env);
-        
+        }
+        .publish(env);
+
         return stake_position.voting_power;
     }
-    
+
     // Check for unbonding position (no voting power during unbonding)
-    if env.storage().instance().has(&DataKey::Unbonding(user.clone())) {
+    if env
+        .storage()
+        .instance()
+        .has(&DataKey::Unbonding(user.clone()))
+    {
         VotingPowerQueried {
             user: user.clone(),
             voting_power: 0,
-        }.publish(env);
-        
+        }
+        .publish(env);
+
         return 0;
     }
-    
+
     // No stake or unbonding position
     VotingPowerQueried {
         user: user.clone(),
         voting_power: 0,
-    }.publish(env);
-    
+    }
+    .publish(env);
+
     0
 }
 
@@ -315,12 +352,17 @@ pub fn get_all_stakers(env: &Env) -> Vec<Address> {
 
 /// Get user's unbonding position
 pub fn get_unbonding(env: &Env, user: &Address) -> Option<UnbondingPosition> {
-    env.storage().instance().get(&DataKey::Unbonding(user.clone()))
+    env.storage()
+        .instance()
+        .get(&DataKey::Unbonding(user.clone()))
 }
 
 /// Get total staked amount
 pub fn get_total_staked(env: &Env) -> i128 {
-    env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0)
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalStaked)
+        .unwrap_or(0)
 }
 
 /// #445 — Return a page of active stakers starting at `cursor`, up to `limit` entries.
@@ -356,47 +398,61 @@ pub fn query_stakers_page(env: &Env, cursor: u32, limit: u32) -> StakersPage {
         i += 1;
     }
 
-    StakersPage { entries, next_cursor: end, total }
+    StakersPage {
+        entries,
+        next_cursor: end,
+        total,
+    }
 }
 
 /// Pause the contract (admin only)
 pub fn pause(env: &Env, admin: &Address) -> Result<(), StakingError> {
-    let stored_admin: Address = env.storage().instance()
+    let stored_admin: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
-    
+
     pause::pause(env, admin).map_err(|_| StakingError::ContractPaused)?;
     Ok(())
 }
 
 /// Unpause the contract (admin only)
 pub fn unpause(env: &Env, admin: &Address) -> Result<(), StakingError> {
-    let stored_admin: Address = env.storage().instance()
+    let stored_admin: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
-    
+
     pause::unpause(env, admin).map_err(|_| StakingError::ContractPaused)?;
     Ok(())
 }
 
 /// Update admin (admin only)
-pub fn update_admin(env: &Env, current_admin: &Address, new_admin: &Address) -> Result<(), StakingError> {
-    let stored_admin: Address = env.storage().instance()
+pub fn update_admin(
+    env: &Env,
+    current_admin: &Address,
+    new_admin: &Address,
+) -> Result<(), StakingError> {
+    let stored_admin: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if current_admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
-    
+
     current_admin.require_auth();
     env.storage().instance().set(&DataKey::Admin, new_admin);
     Ok(())

@@ -5,9 +5,9 @@ use soroban_sdk::{contracterror, contractevent, contracttype, Address, Vec};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum StakingPeriod {
-    OneMonth = 1,   // 1 month = 1x multiplier
-    ThreeMonths = 3, // 3 months = 2x multiplier
-    SixMonths = 6,   // 6 months = 3x multiplier
+    OneMonth = 1,      // 1 month = 1x multiplier
+    ThreeMonths = 3,   // 3 months = 2x multiplier
+    SixMonths = 6,     // 6 months = 3x multiplier
     TwelveMonths = 12, // 12 months = 5x multiplier
 }
 
@@ -47,6 +47,11 @@ impl StakingPeriod {
 
 /// Unbonding period in seconds (14 days)
 pub const UNBONDING_PERIOD_SECONDS: u64 = 14 * 24 * 60 * 60;
+
+/// Minimum stake accepted by the contract, expressed in stroop-like token units.
+/// Rejecting smaller "dust" positions keeps voting snapshots and staker pages
+/// from being spammed with economically meaningless entries.
+pub const MIN_STAKE_AMOUNT: i128 = 1_0000000;
 
 /// Storage keys for the staking contract
 #[derive(Clone)]

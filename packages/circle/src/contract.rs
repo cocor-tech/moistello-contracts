@@ -12,7 +12,9 @@ use common::{math, pause};
 use reputation_registry::scoring;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    symbol_short, xdr::ToXdr, Address, BytesN, Env, IntoVal, Map, Symbol, Vec,
+    symbol_short,
+    xdr::ToXdr,
+    Address, BytesN, Env, IntoVal, Map, Symbol, Vec,
 };
 
 /// Initializes a new circle contract with the provided configuration.
@@ -288,10 +290,15 @@ pub fn contribute(
                     m.set((c.member.clone(), c.round), true);
                 }
             }
-            env.storage().persistent().set(&symbol_short!("contribs"), &m);
+            env.storage()
+                .persistent()
+                .set(&symbol_short!("contribs"), &m);
             m
         });
-    if contribution_map.get((member.clone(), round)).unwrap_or(false) {
+    if contribution_map
+        .get((member.clone(), round))
+        .unwrap_or(false)
+    {
         return Err(CircleError::AlreadyContributed);
     }
     let now = env.ledger().timestamp();
@@ -334,6 +341,7 @@ pub fn contribute(
             }
             circle.total_fees = math::safe_add(circle.total_fees, penalty)
                 .map_err(|_| CircleError::InvalidAmount)?;
+            record_round_fee(env, round, 0, penalty)?;
             env.storage().instance().set(&DataKey::Circle, &circle);
             env.events().publish(
                 (env.current_contract_address(), symbol_short!("late_pen")),
@@ -453,6 +461,38 @@ fn deposit_protocol_fee(
         }),
     ]);
     treasury::TreasuryClient::new(env, treasury).deposit_fee(circle_id, &amount, circle_id);
+}
+
+fn empty_round_fee_ledger(round: u32) -> RoundFeeLedger {
+    RoundFeeLedger {
+        round,
+        payout_fee: 0,
+        late_penalty_fee: 0,
+        total_fee: 0,
+    }
+}
+
+fn record_round_fee(
+    env: &Env,
+    round: u32,
+    payout_fee_delta: i128,
+    late_penalty_fee_delta: i128,
+) -> Result<(), CircleError> {
+    let mut ledger: RoundFeeLedger = env
+        .storage()
+        .persistent()
+        .get(&DataKey::RoundFeeLedger(round))
+        .unwrap_or_else(|| empty_round_fee_ledger(round));
+    ledger.payout_fee = math::safe_add(ledger.payout_fee, payout_fee_delta)
+        .map_err(|_| CircleError::InvalidAmount)?;
+    ledger.late_penalty_fee = math::safe_add(ledger.late_penalty_fee, late_penalty_fee_delta)
+        .map_err(|_| CircleError::InvalidAmount)?;
+    ledger.total_fee = math::safe_add(ledger.payout_fee, ledger.late_penalty_fee)
+        .map_err(|_| CircleError::InvalidAmount)?;
+    env.storage()
+        .persistent()
+        .set(&DataKey::RoundFeeLedger(round), &ledger);
+    Ok(())
 }
 
 pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
@@ -689,6 +729,7 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         {
             deposit_protocol_fee(env, &circle.token, &treasury, &circle.id, fee);
         }
+        record_round_fee(env, round, fee, 0)?;
     }
     if distributed < net {
         let dust = math::safe_sub(net, distributed).map_err(|_| CircleError::InvalidAmount)?;
@@ -903,7 +944,11 @@ pub fn init_dutch_auction(
     if round != circle.current_round {
         return Err(CircleError::RoundNotCurrent);
     }
-    if start_bips > 10000 || floor_bips > start_bips || decay_bips_per_ledger == 0 || expiry_ledgers == 0 {
+    if start_bips > 10000
+        || floor_bips > start_bips
+        || decay_bips_per_ledger == 0
+        || expiry_ledgers == 0
+    {
         return Err(CircleError::InvalidDutchConfig);
     }
     let bids: Vec<AuctionBid> = env
@@ -1438,11 +1483,7 @@ pub fn raise_dispute(
     Ok(())
 }
 
-pub fn dispute(
-    env: &Env,
-    member: &Address,
-    evidence_hash: &BytesN<32>,
-) -> Result<(), CircleError> {
+pub fn dispute(env: &Env, member: &Address, evidence_hash: &BytesN<32>) -> Result<(), CircleError> {
     raise_dispute(env, member, evidence_hash)
 }
 /// Resolves an active dispute and restores circle to ACTIVE status.
@@ -1504,7 +1545,11 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
                     .instance()
                     .get::<DataKey, Address>(&DataKey::Treasury)
                 {
-                    token_client.transfer(&env.current_contract_address(), &treasury, &circle.collateral_amount);
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &treasury,
+                        &circle.collateral_amount,
+                    );
                 }
             }
             let mut members: Vec<Member> = env
@@ -1986,11 +2031,7 @@ pub fn batch_payout(
     }
 
     // Get fee_bps from storage (#256)
-    let fee_bps: u32 = env
-        .storage()
-        .instance()
-        .get(&DataKey::FeeBps)
-        .unwrap_or(0);
+    let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
 
     let token_client = soroban_sdk::token::Client::new(env, &circle.token);
     let now = env.ledger().timestamp();
@@ -2004,7 +2045,7 @@ pub fn batch_payout(
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
-    
+
     for i in 0..recipients.len() {
         let recipient = recipients.get(i).ok_or(CircleError::VecAccessError)?;
         let amount = amounts.get(i).ok_or(CircleError::VecAccessError)?;
@@ -2136,10 +2177,7 @@ pub fn register_referral(
     );
     Ok(())
 }
-pub fn claim_referral_bonus(
-    env: &Env,
-    referrer: &Address,
-) -> Result<(), CircleError> {
+pub fn claim_referral_bonus(env: &Env, referrer: &Address) -> Result<(), CircleError> {
     let token_address: Address = if let Some(t) = env.storage().instance().get(&DataKey::Token) {
         t
     } else {
@@ -2208,10 +2246,7 @@ pub fn update_streak(env: &Env, member: &Address, round: u32) -> Result<(), Circ
     update_streak_internal(env, member, round)
 }
 
-pub fn claim_streak_bonus(
-    env: &Env,
-    member: &Address,
-) -> Result<(), CircleError> {
+pub fn claim_streak_bonus(env: &Env, member: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     member.require_auth();
     let token_address: Address = if let Some(t) = env.storage().instance().get(&DataKey::Token) {
@@ -2564,6 +2599,13 @@ pub fn query_round_config(env: &Env, round: u32) -> Result<BytesN<32>, CircleErr
         .ok_or(CircleError::InvalidRound)
 }
 
+pub fn get_round_fee_ledger(env: &Env, round: u32) -> RoundFeeLedger {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RoundFeeLedger(round))
+        .unwrap_or_else(|| empty_round_fee_ledger(round))
+}
+
 pub fn schedule_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
@@ -2599,4 +2641,3 @@ pub fn is_payout_scheduled(env: &Env, round: u32) -> bool {
         .get(&DataKey::PayoutScheduled(round))
         .unwrap_or(false)
 }
-
