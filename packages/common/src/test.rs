@@ -117,7 +117,7 @@ mod vrf_rotation {
         let env = Env::default();
         let (contract_id, owner, old_key) = setup(&env);
         let new_key = BytesN::from_array(&env, &[2u8; 32]);
-        let sig = BytesN::from_array(&env, &[0u8; 64]);
+        let _sig = BytesN::from_array(&env, &[0u8; 64]);
 
         env.as_contract(&contract_id, || {
             // Evaluate + verify against the OLD key before proposing.
@@ -172,6 +172,8 @@ mod vrf_rotation {
 
         env.as_contract(&contract_id, || {
             vrf::propose_key_rotation(&env, &owner, &new_key, 1000).unwrap();
+        });
+        env.as_contract(&contract_id, || {
             let result = vrf::activate_key_rotation(&env, &owner);
             assert_eq!(result, Err(VrfError::ActivationNotReady));
         });
@@ -199,6 +201,8 @@ mod vrf_rotation {
 
         env.as_contract(&contract_id, || {
             vrf::propose_key_rotation(&env, &owner, &new_key, 0).unwrap();
+        });
+        env.as_contract(&contract_id, || {
             let result = vrf::activate_key_rotation(&env, &not_owner);
             assert_eq!(result, Err(VrfError::Unauthorized));
         });
@@ -250,4 +254,29 @@ mod vrf_rotation {
             assert_eq!(stored_admin, new_key);
         });
     }
+}
+
+#[soroban_sdk::contract]
+pub struct TestVrfContract;
+
+#[soroban_sdk::contractimpl]
+impl TestVrfContract {
+    pub fn run_vrf(env: soroban_sdk::Env, owner: soroban_sdk::Address, seed1: u32, seed2: u32) -> (u32, u32) {
+        crate::vrf::init_vrf(&env, None, &owner).unwrap();
+        let out1 = crate::vrf::evaluate_vrf(&env, seed1).unwrap();
+        let out2 = crate::vrf::evaluate_vrf(&env, seed2).unwrap();
+        (out1, out2)
+    }
+}
+
+#[test]
+fn test_vrf_init_and_evaluate_emits_fulfilled() {
+    use soroban_sdk::testutils::Address as _;
+    let env = soroban_sdk::Env::default();
+    let owner = soroban_sdk::Address::generate(&env);
+    let contract_id = env.register(TestVrfContract, ());
+    let client = TestVrfContractClient::new(&env, &contract_id);
+    let (out1, out2) = client.run_vrf(&owner, &42, &43);
+    assert_ne!(out1, 0);
+    assert_ne!(out2, 0);
 }

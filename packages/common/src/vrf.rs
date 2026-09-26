@@ -102,6 +102,14 @@ pub struct VrfKeyRotated {
     pub new_key: BytesN<32>,
 }
 
+/// Emitted when a VRF request has been fulfilled with request id and seed.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct VrfFulfilled {
+    pub request_id: u32,
+    pub seed: u32,
+}
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 /// Initialize the VRF with an optional Ed25519 public key for signature verification.
@@ -272,6 +280,12 @@ pub fn evaluate_vrf(env: &Env, input_seed: u32) -> Result<u32, VrfError> {
         input_seed,
         vrf_output: output,
         counter,
+    }
+    .publish(env);
+
+    VrfFulfilled {
+        request_id: counter,
+        seed: input_seed,
     }
     .publish(env);
 
