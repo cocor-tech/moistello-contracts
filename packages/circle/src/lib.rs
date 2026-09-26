@@ -26,6 +26,7 @@ pub use types::CircleError;
     pub fn get_status(env:Env)->types::Circle{contract::get_status(&env)}
     pub fn get_members(env:Env)->soroban_sdk::Vec<types::Member>{contract::get_members(&env)}
     pub fn get_contributions(env:Env,member:Address,page:u32,page_size:u32)->soroban_sdk::Vec<types::Contribution>{contract::get_contributions(&env,&member,page,page_size)}
+    pub fn query_round_config(env:Env,round:u32)->Result<BytesN<32>,types::CircleError>{contract::query_round_config(&env,round)}
 
     pub fn pause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::pause_circle(&env,&admin)}
     pub fn unpause_circle(env:Env,admin:Address)->Result<(),types::CircleError>{contract::unpause_circle(&env,&admin)}

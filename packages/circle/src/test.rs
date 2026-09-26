@@ -830,9 +830,42 @@ mod tests {
         assert!(client.try_unpause_circle(&unauthorized).is_err());
     }
 
-    // ===== Issue 1: Allowlist Tests =====
+    #[test]
+    fn test_round_config_snapshot_recorded_on_advance_and_queried() {
+        let env = Env::default();
+        let (client, admin, token, _treasury, m1) = setup_active_circle_with_token(&env);
+        let members = client.get_members();
+        let m2 = members.get(1).unwrap().address;
 
+        // Round 0 snapshot was recorded at initialization
+        let round_0_hash = client.query_round_config(&0u32);
+        assert_eq!(round_0_hash.len(), 32);
 
+        // Future round 1 has not advanced yet -> InvalidRound
+        let round_1_unadvanced = client.try_query_round_config(&1u32);
+        assert_eq!(round_1_unadvanced, Err(Ok(CircleError::InvalidRound)));
+
+        // Fund members and contribute for round 0
+        mint_tokens(&env, &token, &m1, 200_0000000);
+        mint_tokens(&env, &token, &m2, 200_0000000);
+        client.contribute(&m1, &100_0000000_i128, &0u32);
+        client.contribute(&m2, &100_0000000_i128, &0u32);
+
+        // Trigger payout advances round from 0 to 1
+        client.trigger_payout(&admin, &0u32);
+        let status = client.get_status();
+        assert_eq!(status.current_round, 1u32);
+
+        // Verify round 0 snapshot is preserved and round 1 snapshot is recorded
+        let stored_round_0 = client.query_round_config(&0u32);
+        let stored_round_1 = client.query_round_config(&1u32);
+        assert_eq!(stored_round_0, round_0_hash);
+        assert_eq!(stored_round_1.len(), 32);
+
+        // Round 99 was never recorded -> InvalidRound
+        let round_99 = client.try_query_round_config(&99u32);
+        assert_eq!(round_99, Err(Ok(CircleError::InvalidRound)));
+    }
 }
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
@@ -1033,3 +1066,5 @@ fn test_trigger_payout_transfers_tokens_and_deposits_fee() {
         190_i128
     );
 }
+
+
