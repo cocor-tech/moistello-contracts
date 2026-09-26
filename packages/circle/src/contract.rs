@@ -247,6 +247,9 @@ pub fn contribute(
     if round != circle.current_round {
         return Err(CircleError::RoundNotCurrent);
     }
+    if is_payout_scheduled(env, round) {
+        return Err(CircleError::PayoutAlreadyScheduled);
+    }
     if amount != circle.contribution_amount {
         return Err(CircleError::ContributionMismatch);
     }
@@ -2028,3 +2031,40 @@ pub fn query_round_config(env: &Env, round: u32) -> Result<BytesN<32>, CircleErr
         .get(&DataKey::RoundConfigSnapshot(round))
         .ok_or(CircleError::InvalidRound)
 }
+
+pub fn schedule_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    caller.require_auth();
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if caller != &circle.organizer && caller != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    if circle.status != STATUS_ACTIVE {
+        return Err(CircleError::NotActive);
+    }
+    if round != circle.current_round {
+        return Err(CircleError::RoundNotCurrent);
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::PayoutScheduled(round), &true);
+    Ok(())
+}
+
+pub fn is_payout_scheduled(env: &Env, round: u32) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PayoutScheduled(round))
+        .unwrap_or(false)
+}
+

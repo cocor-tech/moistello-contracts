@@ -866,6 +866,39 @@ mod tests {
         let round_99 = client.try_query_round_config(&99u32);
         assert_eq!(round_99, Err(Ok(CircleError::InvalidRound)));
     }
+
+    #[test]
+    fn test_contribute_rejected_after_payout_scheduled() {
+        let env = Env::default();
+        let (client, admin, token, _treasury, m1) = setup_active_circle_with_token(&env);
+        let members = client.get_members();
+        let m2 = members.get(1).unwrap().address;
+
+        mint_tokens(&env, &token, &m1, 200_0000000);
+        mint_tokens(&env, &token, &m2, 200_0000000);
+
+        // Member 1 contributes
+        client.contribute(&m1, &100_0000000_i128, &0u32);
+
+        // Schedule payout for round 0
+        assert!(!client.is_payout_scheduled(&0u32));
+        let sched_result = client.try_schedule_payout(&admin, &0u32);
+        assert!(sched_result.is_ok());
+        assert!(client.is_payout_scheduled(&0u32));
+
+        // Member 2 attempts late contribution after payout scheduled
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        let m2_balance_before = token_client.balance(&m2);
+        let late_result = client.try_contribute(&m2, &100_0000000_i128, &0u32);
+        assert_eq!(late_result, Err(Ok(CircleError::PayoutAlreadyScheduled)));
+
+        // State remains unchanged and funds are not deducted
+        let m2_balance_after = token_client.balance(&m2);
+        assert_eq!(m2_balance_before, m2_balance_after);
+
+        let m2_contributions = client.get_contributions(&m2, &0u32, &10u32);
+        assert_eq!(m2_contributions.len(), 0);
+    }
 }
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
