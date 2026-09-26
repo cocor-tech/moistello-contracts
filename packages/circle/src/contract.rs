@@ -1415,8 +1415,38 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
         return Err(CircleError::InvalidAmount);
     }
     match resolution {
-        RESOLVE_DISMISS | RESOLVE_PENALIZE | RESOLVE_FORCE_PAYOUT => {
+        RESOLVE_DISMISS | RESOLVE_FORCE_PAYOUT => {
             circle.status = STATUS_ACTIVE;
+        }
+        RESOLVE_PENALIZE => {
+            circle.status = STATUS_ACTIVE;
+            if circle.collateral_amount > 0 {
+                let token_address = circle.token.clone();
+                let token_client = soroban_sdk::token::Client::new(env, &token_address);
+                if let Some(treasury) = env
+                    .storage()
+                    .instance()
+                    .get::<DataKey, Address>(&DataKey::Treasury)
+                {
+                    token_client.transfer(&env.current_contract_address(), &treasury, &circle.collateral_amount);
+                }
+            }
+            let mut members: Vec<Member> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Members)
+                .unwrap_or_else(|| Vec::new(env));
+            for i in 0..members.len() {
+                if let Some(mut m) = members.get(i) {
+                    if m.address == dispute.raised_by {
+                        m.strikes = m.strikes.saturating_add(1);
+                        m.status = MEMBER_DEFAULTED;
+                        members.set(i, m);
+                        break;
+                    }
+                }
+            }
+            env.storage().persistent().set(&DataKey::Members, &members);
         }
         4 => {
             circle.status = STATUS_CANCELLED;
