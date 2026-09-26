@@ -405,6 +405,33 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "RoundConfigSnapshot"
+                  },
+                  {
+                    "u32": 0
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "bytes": "c7704240c8e4ce955d07d9e45081b5bdc5232471f5554aeb1ec61e0dd5912b44"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "Votes"
                   }
                 ]

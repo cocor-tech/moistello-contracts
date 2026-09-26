@@ -236,7 +236,7 @@ pub fn contribute(
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     member.require_auth();
-    let circle: Circle = env
+    let mut circle: Circle = env
         .storage()
         .instance()
         .get(&DataKey::Circle)
@@ -293,14 +293,58 @@ pub fn contribute(
     if contribution_map.get((member.clone(), round)).unwrap_or(false) {
         return Err(CircleError::AlreadyContributed);
     }
-    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
-    token_client.transfer(member, &circle.id, &amount);
     let now = env.ledger().timestamp();
-    let on_time = now
-        <= circle
+    let on_time = if circle.contribution_deadline_seconds > 0 {
+        let deadline = circle
             .started_at
             .checked_add(circle.contribution_deadline_seconds)
             .ok_or(CircleError::InvalidAmount)?;
+        if now <= deadline {
+            true
+        } else if circle.grace_period_seconds > 0 {
+            let grace_deadline = deadline
+                .checked_add(circle.grace_period_seconds)
+                .ok_or(CircleError::InvalidAmount)?;
+            if now <= grace_deadline {
+                false
+            } else {
+                return Err(CircleError::PaymentDeadlinePassed);
+            }
+        } else {
+            return Err(CircleError::PaymentDeadlinePassed);
+        }
+    } else {
+        true
+    };
+
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    token_client.transfer(member, &circle.id, &amount);
+
+    if !on_time && circle.penalty_bps > 0 {
+        let penalty = math::calculate_penalty(amount, circle.penalty_bps as i128)
+            .map_err(|_| CircleError::InvalidAmount)?;
+        if penalty > 0 {
+            if let Some(treasury) = env
+                .storage()
+                .instance()
+                .get::<DataKey, Address>(&DataKey::Treasury)
+            {
+                token_client.transfer(&circle.id, &treasury, &penalty);
+            }
+            circle.total_fees = math::safe_add(circle.total_fees, penalty)
+                .map_err(|_| CircleError::InvalidAmount)?;
+            env.storage().instance().set(&DataKey::Circle, &circle);
+            env.events().publish(
+                (env.current_contract_address(), symbol_short!("late_pen")),
+                LatePenaltyApplied {
+                    member: member.clone(),
+                    round,
+                    penalty,
+                },
+            );
+        }
+    }
+
     contributions.push_back(Contribution {
         member: member.clone(),
         round,
@@ -325,7 +369,10 @@ pub fn contribute(
             on_time,
         },
     );
-    scoring::record_on_time_payment(env, member, &circle.id, amount, round);
+    if on_time {
+        scoring::record_on_time_payment(env, member, &circle.id, amount, round);
+        let _ = update_streak_internal(env, member, round);
+    }
     Ok(())
 }
 /// Triggers payout for the current round based on the circle's payout type.
@@ -1368,8 +1415,38 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
         return Err(CircleError::InvalidAmount);
     }
     match resolution {
-        RESOLVE_DISMISS | RESOLVE_PENALIZE | RESOLVE_FORCE_PAYOUT => {
+        RESOLVE_DISMISS | RESOLVE_FORCE_PAYOUT => {
             circle.status = STATUS_ACTIVE;
+        }
+        RESOLVE_PENALIZE => {
+            circle.status = STATUS_ACTIVE;
+            if circle.collateral_amount > 0 {
+                let token_address = circle.token.clone();
+                let token_client = soroban_sdk::token::Client::new(env, &token_address);
+                if let Some(treasury) = env
+                    .storage()
+                    .instance()
+                    .get::<DataKey, Address>(&DataKey::Treasury)
+                {
+                    token_client.transfer(&env.current_contract_address(), &treasury, &circle.collateral_amount);
+                }
+            }
+            let mut members: Vec<Member> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Members)
+                .unwrap_or_else(|| Vec::new(env));
+            for i in 0..members.len() {
+                if let Some(mut m) = members.get(i) {
+                    if m.address == dispute.raised_by {
+                        m.strikes = m.strikes.saturating_add(1);
+                        m.status = MEMBER_DEFAULTED;
+                        members.set(i, m);
+                        break;
+                    }
+                }
+            }
+            env.storage().persistent().set(&DataKey::Members, &members);
         }
         4 => {
             circle.status = STATUS_CANCELLED;
@@ -1986,11 +2063,16 @@ pub fn claim_referral_bonus(
     env: &Env,
     referrer: &Address,
 ) -> Result<(), CircleError> {
-    let token_address: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Token)
-        .ok_or(CircleError::NotInitialized)?;
+    let token_address: Address = if let Some(t) = env.storage().instance().get(&DataKey::Token) {
+        t
+    } else {
+        let circle: Circle = env
+            .storage()
+            .instance()
+            .get(&DataKey::Circle)
+            .ok_or(CircleError::NotInitialized)?;
+        circle.token
+    };
     let token_client = soroban_sdk::token::Client::new(env, &token_address);
     let contract_balance = token_client.balance(&env.current_contract_address());
     if contract_balance <= 0 {
@@ -1999,18 +2081,72 @@ pub fn claim_referral_bonus(
     token_client.transfer(&env.current_contract_address(), referrer, &contract_balance);
     Ok(())
 }
-pub fn update_streak(_env: &Env, _member: &Address, _round: u32) -> Result<(), CircleError> {
-    Err(CircleError::NotImplemented)
+pub fn update_streak_internal(env: &Env, member: &Address, round: u32) -> Result<(), CircleError> {
+    let mut streaks: Vec<Streak> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut found = false;
+    for i in 0..streaks.len() {
+        let mut s = streaks.get(i).ok_or(CircleError::VecAccessError)?;
+        if s.member == *member {
+            found = true;
+            if s.current_streak == 0 {
+                s.current_streak = 1;
+                if s.longest_streak == 0 {
+                    s.longest_streak = 1;
+                }
+                s.last_round = round;
+            } else if round == s.last_round + 1 {
+                s.current_streak += 1;
+                if s.current_streak > s.longest_streak {
+                    s.longest_streak = s.current_streak;
+                }
+                s.last_round = round;
+            } else if round > s.last_round + 1 {
+                s.current_streak = 1;
+                s.last_round = round;
+            }
+            streaks.set(i, s);
+            break;
+        }
+    }
+    if !found {
+        streaks.push_back(Streak {
+            member: member.clone(),
+            current_streak: 1,
+            longest_streak: 1,
+            last_round: round,
+        });
+    }
+    env.storage().persistent().set(&DataKey::Streaks, &streaks);
+    Ok(())
 }
+
+pub fn update_streak(env: &Env, member: &Address, round: u32) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    member.require_auth();
+    update_streak_internal(env, member, round)
+}
+
 pub fn claim_streak_bonus(
     env: &Env,
     member: &Address,
 ) -> Result<(), CircleError> {
-    let token_address: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Token)
-        .ok_or(CircleError::NotInitialized)?;
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    member.require_auth();
+    let token_address: Address = if let Some(t) = env.storage().instance().get(&DataKey::Token) {
+        t
+    } else {
+        let circle: Circle = env
+            .storage()
+            .instance()
+            .get(&DataKey::Circle)
+            .ok_or(CircleError::NotInitialized)?;
+        circle.token
+    };
     let token_client = soroban_sdk::token::Client::new(env, &token_address);
     let contract_balance = token_client.balance(&env.current_contract_address());
     if contract_balance <= 0 {
@@ -2026,11 +2162,26 @@ pub fn get_referrals(env: &Env) -> Vec<Referral> {
         .unwrap_or_else(|| Vec::new(env))
 }
 pub fn get_streaks(env: &Env) -> Vec<Streak> {
-    Vec::new(env)
+    env.storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env))
 }
-pub fn get_member_streak(_env: &Env, _member: &Address) -> Streak {
+pub fn get_member_streak(env: &Env, member: &Address) -> Streak {
+    let streaks: Vec<Streak> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Streaks)
+        .unwrap_or_else(|| Vec::new(env));
+    for i in 0..streaks.len() {
+        if let Some(s) = streaks.get(i) {
+            if s.member == *member {
+                return s;
+            }
+        }
+    }
     Streak {
-        member: _member.clone(),
+        member: member.clone(),
         current_streak: 0,
         longest_streak: 0,
         last_round: 0,

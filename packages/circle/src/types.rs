@@ -20,7 +20,7 @@ pub struct Circle{pub id:Address,pub token:Address,pub name:String,pub organizer
 #[contracttype]#[derive(Clone,Debug)]pub struct DutchAuctionConfig{pub round:u32,pub start_bips:u32,pub floor_bips:u32,pub decay_bips_per_ledger:u32,pub start_ledger:u32,pub expiry_ledgers:u32,pub resolved:bool}
 #[contracttype]#[derive(Clone,Debug)]pub struct VoteEntry{pub voter:Address,pub vote_for:Address,pub round:u32,pub timestamp:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct DisputeEntry{pub raised_by:Address,pub evidence_hash:BytesN<32>,pub raised_at:u64,pub resolved_at:u64,pub resolution:u32,pub resolved_by:Address}
-#[contracttype]#[derive(Clone)]pub enum DataKey{Circle,Admin,Factory,Members,Contributions,Payouts,Bids,Votes,Dispute,FeeBps,Treasury,Allowlist,Token,Referrals,ReputationRegistry,OracleContract,FallbackOracle,RoundConfigSnapshot(u32),PayoutScheduled(u32),DutchAuction(u32)}
+#[contracttype]#[derive(Clone)]pub enum DataKey{Circle,Admin,Factory,Members,Contributions,Payouts,Bids,Votes,Dispute,FeeBps,Treasury,Allowlist,Token,Referrals,Streaks,ReputationRegistry,OracleContract,FallbackOracle,RoundConfigSnapshot(u32),PayoutScheduled(u32),DutchAuction(u32)}
 pub use common::types::ErrorEnvelope;
 #[contracterror]#[derive(Debug,Clone,PartialEq,Eq)]pub enum CircleError{NotInitialized=1,NotActive=2,CircleFull=3,AlreadyMember=4,NotMember=5,InsufficientMoiScore=6,RoundNotCurrent=7,InvalidAmount=8,PaymentDeadlinePassed=9,MaxStrikesReached=10,NotOrganizer=11,ContractPaused=12,InvalidInviteCode=13,AuctionAlreadyResolved=14,VoteQuorumNotMet=15,AlreadyContributed=16,AlreadyVoted=17,AlreadyBidded=18,PayoutAlreadyExecuted=19,InvalidPayoutType=20,InvalidRound=21,ContributionMismatch=22,CircleNotFull=23,NotEnoughVotes=24,DisputeAlreadyRaised=25,NoActiveDispute=26,Unauthorized=27,InvalidBid=28,InvalidMemberStatus=29,EmptyPayoutOrder=30,CircleSizeExceedsTier=31,ContributionExceedsTier=32,VecAccessError=33,AllowlistNotPermitted=34,InsufficientContractBalance=35,SelfReferral=36,OracleUnavailable=37,NotImplemented=38,ZeroPayoutAmount=39,PayoutAlreadyScheduled=59,DutchAuctionNotConfigured=60,DutchAuctionExpired=61,InvalidDutchConfig=62}
 
@@ -137,6 +137,7 @@ pub struct CircleCompleted{pub total_payouts:i128}
 #[contracttype]#[derive(Clone,Debug)]pub struct VoteCast{pub voter:Address,pub vote_for:Address,pub round:u32}
 #[contracttype]#[derive(Clone,Debug)]pub struct ReferralRegistered{pub referrer:Address,pub referred:Address,pub bonus_pct:u32}
 #[contracttype]#[derive(Clone,Debug)]pub struct OracleFallbackUsed{pub round:u32,pub primary_oracle:Address,pub fallback_oracle:Address}
+#[contracttype]#[derive(Clone,Debug)]pub struct LatePenaltyApplied{pub member:Address,pub round:u32,pub penalty:i128}
 #[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum PayoutType{Random=0,Fixed=1,Auction=2,Vote=3}
 #[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum CircleStatus{Pending=0,Active=1,Completed=2,Cancelled=3,Disputed=4}
 #[contracttype]#[derive(Clone,Debug,PartialEq)]pub enum MemberStatus{Active=0,Exited=1,Defaulted=2}
