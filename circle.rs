@@ -194,3 +194,158 @@ mod tests {
         );
     }
 }
+
+// src/contracts/circle.rs
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CircleConfig {
+    pub token: Address,
+    pub collateral_amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemberState {
+    Active = 1,
+    Defaulted = 2,
+    Completed = 3,
+    Exited = 4,
+}
+
+#[contracttype]
+pub enum DataKey {
+    Config,
+    Collateral(Address),
+    MemberState(Address),
+}
+
+#[contract]
+pub struct CircleContract;
+
+#[contractimpl]
+impl CircleContract {
+    /// Allows a member to join the circle by staking the required collateral amount.
+    /// Transfers collateral tokens from the member to the circle contract.
+    pub fn join_with_collateral(env: Env, member: Address) {
+        member.require_auth();
+
+        let config: CircleConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::Config)
+            .unwrap_or_else(|| panic!("Circle config not found"));
+
+        if config.collateral_amount <= 0 {
+            return; // No collateral required
+        }
+
+        // Check if member already staked
+        let existing_collateral: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(member.clone()))
+            .unwrap_or(0);
+
+        if existing_collateral > 0 {
+            panic!("Collateral already staked for member");
+        }
+
+        // Transfer collateral tokens from member to contract via token client
+        let token_client = soroban_sdk::token::Client::new(&env, &config.token);
+        token_client.transfer(&member, &env.current_contract_address(), &config.collateral_amount);
+
+        // Record staked collateral and set initial member state
+        env.storage().persistent().set(&DataKey::Collateral(member.clone()), &config.collateral_amount);
+        env.storage().persistent().set(&DataKey::MemberState(member.clone()), &MemberState::Active);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "CollateralStaked"), member),
+            config.collateral_amount,
+        );
+    }
+
+    /// Slashes member collateral upon reaching default limit (max_strikes).
+    pub fn slash_collateral(env: Env, member: Address, treasury: Address) {
+        let state: MemberState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MemberState(member.clone()))
+            .unwrap_or_else(|| panic!("Member record not found"));
+
+        if state != MemberState::Defaulted {
+            panic!("Member is not in defaulted state; cannot slash collateral");
+        }
+
+        let collateral: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(member.clone()))
+            .unwrap_or(0);
+
+        if collateral <= 0 {
+            panic!("No collateral balance to slash");
+        }
+
+        let config: CircleConfig = env
+            .storage().instance()
+            .get(&DataKey::Config)
+            .unwrap_or_else(|| panic!("Config not found"));
+
+        // Clear staked collateral balance
+        env.storage().persistent().set(&DataKey::Collateral(member.clone()), &0i128);
+
+        // Transfer slashed collateral to designated protocol treasury
+        let token_client = soroban_sdk::token::Client::new(&env, &config.token);
+        token_client.transfer(&env.current_contract_address(), &treasury, &collateral);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "CollateralSlashed"), member),
+            collateral,
+        );
+    }
+
+    /// Returns staked collateral to member upon successful circle completion or voluntary exit.
+    pub fn refund_collateral(env: Env, member: Address) {
+        member.require_auth();
+
+        let state: MemberState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MemberState(member.clone()))
+            .unwrap_or_else(|| panic!("Member record not found"));
+
+        if state != MemberState::Completed && state != MemberState::Exited {
+            panic!("Collateral refund only permitted after successful completion or approved exit");
+        }
+
+        let collateral: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(member.clone()))
+            .unwrap_or(0);
+
+        if collateral <= 0 {
+            panic!("No collateral available for refund");
+        }
+
+        let config: CircleConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::Config)
+            .unwrap_or_else(|| panic!("Config not found"));
+
+        // Clear collateral balance
+        env.storage().persistent().set(&DataKey::Collateral(member.clone()), &0i128);
+
+        // Refund collateral tokens to member
+        let token_client = soroban_sdk::token::Client::new(&env, &config.token);
+        token_client.transfer(&env.current_contract_address(), &member, &collateral);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "CollateralRefunded"), member),
+            collateral,
+        );
+    }
+}
