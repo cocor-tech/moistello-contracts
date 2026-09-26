@@ -21,6 +21,8 @@ use soroban_sdk::{contract,contractimpl,Address,BytesN,Env,Vec};
     pub fn get_config(env:Env)->Result<types::GovernanceConfig,types::GovernanceError>{contract::get_config(&env)}
     pub fn pause(env:Env,admin:Address)->Result<(),types::GovernanceError>{contract::pause(&env,&admin)}
     pub fn unpause(env:Env,admin:Address)->Result<(),types::GovernanceError>{contract::unpause(&env,&admin)}
+    pub fn delegate(env:Env,delegator:Address,delegatee:Address)->Result<(),types::GovernanceError>{contract::delegate(&env,&delegator,&delegatee)}
+    pub fn revoke_delegation(env:Env,delegator:Address)->Result<(),types::GovernanceError>{contract::revoke_delegation(&env,&delegator)}
 }
 
 #[cfg(test)]

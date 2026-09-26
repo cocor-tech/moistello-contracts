@@ -280,3 +280,25 @@ fn test_vrf_init_and_evaluate_emits_fulfilled() {
     assert_ne!(out1, 0);
     assert_ne!(out2, 0);
 }
+
+#[test]
+fn test_vrf_rejects_replayed_nonce() {
+    use soroban_sdk::testutils::Address as _;
+    let env = soroban_sdk::Env::default();
+    let owner = soroban_sdk::Address::generate(&env);
+    let contract_id = env.register(TestVrfContract, ());
+    env.mock_all_auths();
+    env.as_contract(&contract_id, || {
+        crate::vrf::init_vrf(&env, None, &owner).unwrap();
+        crate::vrf::evaluate_vrf(&env, 7).unwrap();
+        assert_eq!(
+            crate::vrf::evaluate_vrf(&env, 7),
+            Err(crate::vrf::VrfError::Replay)
+        );
+        assert_eq!(
+            crate::vrf::evaluate_vrf(&env, 6),
+            Err(crate::vrf::VrfError::Replay)
+        );
+        crate::vrf::evaluate_vrf(&env, 8).unwrap();
+    });
+}

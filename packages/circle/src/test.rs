@@ -621,6 +621,7 @@ mod tests {
         let other = Address::generate(&env);
 
         env.mock_all_auths();
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
         client.try_join(&bidder).unwrap().unwrap();
         mint_tokens(&env, &token, &other, 100000_0000000);
         client.try_join(&other).unwrap().unwrap();
@@ -642,6 +643,7 @@ mod tests {
         let other = Address::generate(&env);
 
         env.mock_all_auths();
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
         client.try_join(&bidder).unwrap().unwrap();
         mint_tokens(&env, &token, &other, 100000_0000000);
         client.try_join(&other).unwrap().unwrap();
@@ -667,6 +669,7 @@ mod tests {
         let other = Address::generate(&env);
 
         env.mock_all_auths();
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
         client.try_join(&bidder).unwrap().unwrap();
         mint_tokens(&env, &token, &other, 100000_0000000);
         client.try_join(&other).unwrap().unwrap();
@@ -688,6 +691,7 @@ mod tests {
         let other = Address::generate(&env);
 
         env.mock_all_auths();
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
         client.try_join(&bidder).unwrap().unwrap();
         mint_tokens(&env, &token, &other, 100000_0000000);
         client.try_join(&other).unwrap().unwrap();
@@ -733,6 +737,7 @@ mod tests {
         let other = Address::generate(&env);
 
         env.mock_all_auths();
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
         client.try_join(&bidder).unwrap().unwrap();
         mint_tokens(&env, &token, &other, 100000_0000000);
         client.try_join(&other).unwrap().unwrap();
@@ -773,6 +778,7 @@ mod tests {
         let other = Address::generate(&env);
 
         env.mock_all_auths();
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
         client.try_join(&bidder).unwrap().unwrap();
         mint_tokens(&env, &token, &other, 100000_0000000);
         client.try_join(&other).unwrap().unwrap();
@@ -809,6 +815,7 @@ mod tests {
         let other = Address::generate(&env);
 
         env.mock_all_auths();
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
         client.try_join(&bidder).unwrap().unwrap();
         mint_tokens(&env, &token, &other, 100000_0000000);
         client.try_join(&other).unwrap().unwrap();
@@ -1935,4 +1942,59 @@ fn test_year_long_lifecycle_simulation() {
         initial_total - total_contributed + (total_contributed - total_fee_expected)
     );
     assert_eq!(initial_total - final_total, total_fee_expected);
+}
+
+/// #436: 50+ losing deposits are refunded across capped continuation calls.
+#[test]
+fn test_refund_losing_bids_fifty_bidders_in_batches() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract(token_admin);
+    let mut config = create_config(&env, &token);
+    config.payout_type = crate::types::PAYOUT_AUCTION;
+    config.total_rounds = 1;
+    config.contribution_amount = 100_i128;
+    let organizer = config.organizer.clone();
+    let factory = Address::generate(&env);
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&organizer, &factory, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    let winner = Address::generate(&env);
+    let other = Address::generate(&env);
+    let deposit = config.contribution_amount;
+    for member in [&winner, &other] {
+        mint_tokens(&env, &token, member, 10_000);
+        client.join(member);
+    }
+    for member in [&winner, &other] {
+        client.contribute(member, &deposit, &0u32);
+    }
+    client.auction_bid(&winner, &9000u32, &0u32);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+    let mut losers: Vec<Address> = Vec::new(&env);
+    for i in 0..52u32 {
+        let bidder = Address::generate(&env);
+        mint_tokens(&env, &token, &bidder, deposit);
+        client.auction_bid(&bidder, &(100 + i), &0u32);
+        assert_eq!(token_client.balance(&bidder), 0);
+        losers.push_back(bidder);
+    }
+
+    client.trigger_payout(&organizer, &0u32);
+
+    let mut remaining = u32::MAX;
+    let mut calls = 0u32;
+    while remaining > 0 {
+        remaining = client.refund_losing_bids(&organizer, &0u32, &10u32);
+        calls += 1;
+        assert!(calls < 20, "continuation did not drain the loser queue");
+    }
+    assert!(calls >= 6, "52 losers at 10 per call must span multiple invocations");
+    for i in 0..losers.len() {
+        let bidder = losers.get(i).unwrap();
+        assert_eq!(token_client.balance(&bidder), deposit);
+    }
+    assert_eq!(client.refund_losing_bids(&organizer, &0u32, &10u32), 0);
 }

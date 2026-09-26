@@ -42,6 +42,12 @@ impl Staking {
         contract::get_stake(&env, &user)
     }
 
+    /// Query path for unlock eligibility. Uses the same inclusive boundary
+    /// as `unstake` (`now >= unlock_time`).
+    pub fn is_stake_unlocked(env: Env, user: Address) -> bool {
+        contract::is_stake_unlocked(&env, &user)
+    }
+
     pub fn get_unbonding(env: Env, user: Address) -> Option<types::UnbondingPosition> {
         contract::get_unbonding(&env, &user)
     }

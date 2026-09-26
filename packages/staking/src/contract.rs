@@ -126,7 +126,11 @@ pub fn stake(
     Ok(())
 }
 
-/// Initiate unstake - tokens enter 14-day unbonding period
+/// Initiate unstake - tokens enter 14-day unbonding period.
+///
+/// The stake's lock period must have elapsed before unstaking is permitted.
+/// Uses `is_period_elapsed` for consistent boundary semantics across
+/// the contract: `current_time >= unlock_time` (inclusive boundary).
 pub fn unstake(env: &Env, user: &Address) -> Result<(), StakingError> {
     // Check if contract is paused
     pause::when_not_paused(env).map_err(|_| StakingError::ContractPaused)?;
@@ -140,15 +144,14 @@ pub fn unstake(env: &Env, user: &Address) -> Result<(), StakingError> {
         .get(&DataKey::Stake(user.clone()))
         .ok_or(StakingError::NoActiveStake)?;
 
-    // Check if stake is already unlocked (optional - allow unstaking even if not unlocked)
-    // If you want to enforce unlock time, uncomment:
-    // let current_time = env.ledger().timestamp();
-    // if current_time < stake_position.unlock_time {
-    //     return Err(StakingError::StakeNotUnlocked);
-    // }
+    // #433: Enforce lock period — use >= (inclusive) so that staking for
+    // exactly N months unlocks at the exact boundary timestamp.
+    let current_time = env.ledger().timestamp();
+    if !is_period_elapsed(current_time, stake_position.unlock_time) {
+        return Err(StakingError::StakeNotUnlocked);
+    }
 
     // Calculate unbonding times
-    let current_time = env.ledger().timestamp();
     let claimable_time = current_time
         .checked_add(UNBONDING_PERIOD_SECONDS)
         .ok_or(StakingError::Overflow)?;
@@ -224,9 +227,9 @@ pub fn claim(env: &Env, user: &Address) -> Result<(), StakingError> {
         .get(&DataKey::Unbonding(user.clone()))
         .ok_or(StakingError::NoUnbondingPosition)?;
 
-    // Check if unbonding period is complete
+    // #433: Use unified boundary helper — same inclusive semantics as unstake.
     let current_time = env.ledger().timestamp();
-    if current_time < unbonding_position.claimable_time {
+    if !is_period_elapsed(current_time, unbonding_position.claimable_time) {
         return Err(StakingError::UnbondingNotComplete);
     }
 
@@ -321,6 +324,15 @@ pub fn get_voting_power(env: &Env, user: &Address) -> i128 {
 /// Get user's stake position
 pub fn get_stake(env: &Env, user: &Address) -> Option<StakePosition> {
     env.storage().instance().get(&DataKey::Stake(user.clone()))
+}
+
+/// Query-path unlock check. Shares `is_period_elapsed` with `unstake` and
+/// `claim`, so the exact boundary timestamp is eligible on both paths.
+pub fn is_stake_unlocked(env: &Env, user: &Address) -> bool {
+    match get_stake(env, user) {
+        Some(stake) => is_period_elapsed(env.ledger().timestamp(), stake.unlock_time),
+        None => false,
+    }
 }
 
 /// Get the raw staked token amount for a user.
@@ -456,4 +468,16 @@ pub fn update_admin(
     current_admin.require_auth();
     env.storage().instance().set(&DataKey::Admin, new_admin);
     Ok(())
+}
+
+/// #433 — Unified period-boundary check.
+///
+/// Returns `true` when `now >= deadline` (inclusive). This single helper is
+/// the **only** place where the boundary comparison lives, so every call site
+/// (unstake lock check, unbonding claim check) uses the same semantics:
+/// the action is permitted **at** the exact deadline timestamp, not just
+/// strictly after.
+#[inline]
+pub(crate) fn is_period_elapsed(now: u64, deadline: u64) -> bool {
+    now >= deadline
 }

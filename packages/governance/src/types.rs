@@ -86,6 +86,8 @@ pub enum DataKey{
     PendingConfig,
     ProposalsByStatus(ProposalStatus),
     StakingContract,
+    Delegation(Address),
+    Delegators(Address),
 }
 
 #[contracterror]
@@ -109,7 +111,16 @@ pub enum GovernanceError{
     VotingAlreadyStarted=16,
     ConfigUpdateAlreadyQueued=17,
     NoPendingConfigUpdate=18,
+    CircularDelegation=19,
 }
+
+#[contractevent(topics=["delegate"])]
+#[derive(Clone,Debug)]
+pub struct Delegated{#[topic]pub delegator:Address,#[topic]pub delegatee:Address}
+
+#[contractevent(topics=["revoke"])]
+#[derive(Clone,Debug)]
+pub struct DelegationRevoked{#[topic]pub delegator:Address}
 
 #[contractevent(topics=["proposal"])]
 #[derive(Clone,Debug)]

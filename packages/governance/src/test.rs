@@ -254,4 +254,50 @@ mod tests {
             Err(GovernanceError::InvalidConfig)
         );
     }
+
+    #[test]
+    fn test_delegation_applies_at_vote_time_and_rejects_chains() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let action = governance::types::ProposalAction {
+            target_contract: admin.clone(),
+            method: Symbol::new(&env, "noop"),
+            args: Vec::new(&env),
+        };
+        let description = BytesN::from_array(&env, &[9u8; 32]);
+        let id = client.create_proposal(&admin, &create_config().proposal_deposit, &action, &description);
+
+        let delegator = Address::generate(&env);
+        let delegatee = Address::generate(&env);
+        let third = Address::generate(&env);
+
+        assert_eq!(
+            client.try_delegate(&delegator, &delegator),
+            Err(Ok(GovernanceError::CircularDelegation))
+        );
+        client.delegate(&delegator, &delegatee);
+        assert_eq!(
+            client.try_delegate(&delegatee, &third),
+            Err(Ok(GovernanceError::CircularDelegation))
+        );
+        assert_eq!(
+            client.try_delegate(&third, &delegator),
+            Err(Ok(GovernanceError::CircularDelegation))
+        );
+        assert_eq!(
+            client.try_cast_vote(&delegator, &id, &VoteType::For),
+            Err(Ok(GovernanceError::Unauthorized))
+        );
+
+        client.cast_vote(&delegatee, &id, &VoteType::For);
+        let proposal = client.get_proposal(&id);
+        assert_eq!(proposal.votes_for, 2);
+
+        client.revoke_delegation(&delegator);
+        let id2 = client.create_proposal(&admin, &create_config().proposal_deposit, &action, &description);
+        client.cast_vote(&delegatee, &id2, &VoteType::For);
+        assert_eq!(client.get_proposal(&id2).votes_for, 1);
+        client.cast_vote(&delegator, &id2, &VoteType::Against);
+        assert_eq!(client.get_proposal(&id2).votes_against, 1);
+    }
 }

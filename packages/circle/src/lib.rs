@@ -49,6 +49,16 @@ impl Circle {
     ) -> Result<(), types::CircleError> {
         contract::auction_bid(&env, &bidder, discount_bips, round)
     }
+    /// Refunds a capped batch of losing auction deposits. Returns how many
+    /// losers remain; call again until the result is 0 (#436).
+    pub fn refund_losing_bids(
+        env: Env,
+        caller: Address,
+        round: u32,
+        limit: u32,
+    ) -> Result<u32, types::CircleError> {
+        contract::refund_losing_bids(&env, &caller, round, limit)
+    }
     pub fn init_dutch_auction(
         env: Env,
         caller: Address,

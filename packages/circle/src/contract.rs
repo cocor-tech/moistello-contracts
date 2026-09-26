@@ -523,6 +523,11 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         PAYOUT_FIXED => (payout::resolve_fixed(env, &circle, round)?, PAYOUT_FIXED),
         PAYOUT_AUCTION => {
             let (w, _) = payout::resolve_auction(env, &circle, round)?;
+            // #436: record the winner so losing deposits can be refunded in
+            // capped continuation calls instead of inside this payout.
+            env.storage()
+                .persistent()
+                .set(&DataKey::AuctionWinner(round), &w);
             (w, PAYOUT_AUCTION)
         }
         PAYOUT_VOTE => (payout::resolve_vote(env, &circle, round)?, PAYOUT_VOTE),
@@ -893,11 +898,17 @@ pub fn auction_bid(
             return Err(CircleError::AlreadyBidded);
         }
     }
+    let deposit = circle.contribution_amount;
+    if deposit > 0 {
+        let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+        token_client.transfer(bidder, &circle.id, &deposit);
+    }
     bids.push_back(AuctionBid {
         bidder: bidder.clone(),
         discount_bips,
         round,
         timestamp: env.ledger().timestamp(),
+        deposit,
     });
     env.storage().persistent().set(&DataKey::Bids, &bids);
     env.events().publish(
@@ -909,6 +920,83 @@ pub fn auction_bid(
         },
     );
     Ok(())
+}
+
+/// Hard cap on losing-bid refunds performed in one invocation (#436).
+/// Callers pass a smaller `limit`; anything above this is clamped so a
+/// single transaction cannot walk an unbounded bidder list.
+pub const LOSER_REFUND_BATCH_CAP: u32 = 20;
+
+/// Refunds up to `limit` losing bidders for a resolved auction round.
+///
+/// Returns how many losing bids are still unpaid. When the return value is
+/// greater than zero, call again (a continuation) until it returns zero.
+/// The winner's deposit stays in the circle; only non-winners for `round`
+/// are paid back, each at most once.
+pub fn refund_losing_bids(
+    env: &Env,
+    caller: &Address,
+    round: u32,
+    limit: u32,
+) -> Result<u32, CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    caller.require_auth();
+    if limit == 0 {
+        return Err(CircleError::InvalidAmount);
+    }
+    let winner: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::AuctionWinner(round))
+        .ok_or(CircleError::AuctionNotResolved)?;
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    let cap = if limit > LOSER_REFUND_BATCH_CAP {
+        LOSER_REFUND_BATCH_CAP
+    } else {
+        limit
+    };
+    let bids: Vec<AuctionBid> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Bids)
+        .unwrap_or_else(|| Vec::new(env));
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    let mut kept: Vec<AuctionBid> = Vec::new(env);
+    let mut refunded: u32 = 0;
+    let mut remaining: u32 = 0;
+    for i in 0..bids.len() {
+        let bid = bids.get(i).ok_or(CircleError::VecAccessError)?;
+        let is_loser = bid.round == round && bid.bidder != winner;
+        if is_loser && refunded < cap {
+            if bid.deposit > 0 {
+                token_client.transfer(&circle.id, &bid.bidder, &bid.deposit);
+            }
+            env.events().publish(
+                (env.current_contract_address(), symbol_short!("refund")),
+                AuctionLoserRefunded {
+                    bidder: bid.bidder.clone(),
+                    round,
+                    amount: bid.deposit,
+                },
+            );
+            refunded = refunded
+                .checked_add(1)
+                .ok_or(CircleError::InvalidAmount)?;
+        } else {
+            if is_loser {
+                remaining = remaining
+                    .checked_add(1)
+                    .ok_or(CircleError::InvalidAmount)?;
+            }
+            kept.push_back(bid);
+        }
+    }
+    env.storage().persistent().set(&DataKey::Bids, &kept);
+    Ok(remaining)
 }
 
 /// Configures round `round`'s auction to clear via Dutch (decaying-price)
@@ -1039,6 +1127,7 @@ pub fn dutch_auction_bid(env: &Env, bidder: &Address, round: u32) -> Result<u32,
         discount_bips: clearing_bips,
         round,
         timestamp: env.ledger().timestamp(),
+        deposit: 0,
     });
     env.storage().persistent().set(&DataKey::Bids, &bids);
 

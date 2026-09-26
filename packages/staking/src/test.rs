@@ -29,6 +29,12 @@ fn setup_test_env() -> (Env, Address, Address, Address) {
     (env, admin, user, token_contract_id)
 }
 
+fn at_unlock(env: &Env, client: &StakingClient, user: &Address) {
+    if let Some(stake) = client.get_stake(user) {
+        env.ledger().set_timestamp(stake.unlock_time);
+    }
+}
+
 fn deploy_staking_contract<'a>(
     env: &'a Env,
     admin: &Address,
@@ -211,8 +217,8 @@ fn test_unstake_happy_path() {
     // Stake first
     let amount = 100_0000000;
     staking_client.stake(&user, &amount, &1);
+    at_unlock(&env, &staking_client, &user);
 
-    // Unstake
     let result = staking_client.try_unstake(&user);
     assert!(result.is_ok());
 
@@ -249,6 +255,7 @@ fn test_claim_happy_path() {
     // Stake
     let amount = 100_0000000;
     staking_client.stake(&user, &amount, &1);
+    at_unlock(&env, &staking_client, &user);
 
     // Unstake
     staking_client.unstake(&user);
@@ -277,8 +284,8 @@ fn test_claim_unbonding_not_complete() {
     // Stake
     let amount = 100_0000000;
     staking_client.stake(&user, &amount, &1);
+    at_unlock(&env, &staking_client, &user);
 
-    // Unstake
     staking_client.unstake(&user);
 
     // Try to claim immediately (unbonding not complete)
@@ -403,6 +410,7 @@ fn test_get_voting_power_during_unbonding() {
 
     // Stake
     staking_client.stake(&user, &100_0000000, &3);
+    at_unlock(&env, &staking_client, &user);
 
     // Unstake
     staking_client.unstake(&user);
@@ -426,6 +434,7 @@ fn test_full_staking_lifecycle() {
     assert_eq!(voting_power, amount * 3);
 
     // 2. Unstake
+    at_unlock(&env, &staking_client, &user);
     staking_client.unstake(&user);
 
     // Verify voting power is 0
@@ -523,6 +532,7 @@ fn test_get_stake_amount_after_unstake_returns_zero() {
     client.stake(&user, &100_0000000, &1);
     assert_eq!(client.get_stake_amount(&user), 100_0000000);
 
+    at_unlock(&env, &client, &user);
     client.unstake(&user);
     assert_eq!(client.get_stake_amount(&user), 0);
 }
@@ -548,6 +558,7 @@ fn test_get_stake_amount_after_full_lifecycle() {
     let client = deploy_staking_contract(&env, &admin, &token);
 
     client.stake(&user, &100_0000000, &1);
+    at_unlock(&env, &client, &user);
     client.unstake(&user);
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + UNBONDING_PERIOD_SECONDS + 1);
@@ -621,6 +632,7 @@ fn test_get_all_stakers_after_unstake_removes_entry() {
     client.stake(&user, &100_0000000, &1);
     assert_eq!(client.get_all_stakers().len(), 1);
 
+    at_unlock(&env, &client, &user);
     client.unstake(&user);
     assert_eq!(client.get_all_stakers().len(), 0);
 }
@@ -644,7 +656,8 @@ fn test_get_all_stakers_partial_unstake() {
     client.stake(&user2, &100_0000000, &1);
     client.stake(&user3, &100_0000000, &1);
 
-    // user2 unstakes
+    // user2 unstakes at the lock boundary
+    at_unlock(&env, &client, &user2);
     client.unstake(&user2);
 
     let stakers = client.get_all_stakers();
@@ -662,6 +675,7 @@ fn test_get_all_stakers_restake_after_full_lifecycle() {
 
     // First stake cycle
     client.stake(&user, &100_0000000, &1);
+    at_unlock(&env, &client, &user);
     client.unstake(&user);
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + UNBONDING_PERIOD_SECONDS + 1);
@@ -849,4 +863,32 @@ fn test_query_stakers_page_two_hundred_stakers() {
     assert_eq!(total_seen, n, "paginating over all pages must yield exactly {n} entries");
     // We needed exactly ceil(200/50) = 4 pages.
     assert_eq!(cursor, n);
+}
+
+/// #433: query and withdraw agree at the exact unlock timestamp, and one
+/// second earlier both reject.
+#[test]
+fn test_unstake_exact_unlock_boundary() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+    client.stake(&user, &100_0000000, &1);
+    let unlock_time = client.get_stake(&user).unwrap().unlock_time;
+
+    env.ledger().set_timestamp(unlock_time - 1);
+    assert!(!client.is_stake_unlocked(&user));
+    assert_eq!(
+        client.try_unstake(&user),
+        Err(Ok(StakingError::StakeNotUnlocked))
+    );
+
+    env.ledger().set_timestamp(unlock_time);
+    assert!(client.is_stake_unlocked(&user));
+    client.unstake(&user);
+
+    let unbonding = client.get_unbonding(&user).unwrap();
+    env.ledger().set_timestamp(unbonding.claimable_time - 1);
+    assert!(client.try_claim(&user).is_err());
+    env.ledger().set_timestamp(unbonding.claimable_time);
+    client.claim(&user);
+    assert!(client.get_unbonding(&user).is_none());
 }

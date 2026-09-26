@@ -110,6 +110,9 @@ pub struct AuctionBid {
     pub discount_bips: u32,
     pub round: u32,
     pub timestamp: u64,
+    /// Tokens escrowed with the bid. Refunded to losing bidders in batches
+    /// after the auction resolves (`refund_losing_bids`).
+    pub deposit: i128,
 }
 /// Configuration for a Dutch-style auction on `round`: `discount_bips` starts at
 /// `start_bips` at `start_ledger` and decays by `decay_bips_per_ledger` per elapsed
@@ -170,6 +173,9 @@ pub enum DataKey {
     PayoutScheduled(u32),
     DutchAuction(u32),
     RoundFeeLedger(u32),
+    /// Winner of a resolved English auction for this round. Presence means
+    /// losing-bid refunds may begin.
+    AuctionWinner(u32),
 }
 pub use common::types::ErrorEnvelope;
 #[contracterror]
@@ -218,6 +224,8 @@ pub enum CircleError {
     DutchAuctionNotConfigured = 60,
     DutchAuctionExpired = 61,
     InvalidDutchConfig = 62,
+    /// Losing-bid refunds were requested before the auction winner was recorded.
+    AuctionNotResolved = 63,
 }
 
 impl CircleError {
@@ -271,6 +279,7 @@ impl CircleError {
             CircleError::DutchAuctionNotConfigured => (60, "Dutch auction not configured"),
             CircleError::DutchAuctionExpired => (61, "Dutch auction expired"),
             CircleError::InvalidDutchConfig => (62, "Invalid Dutch auction config"),
+            CircleError::AuctionNotResolved => (63, "Auction not resolved"),
         };
         ErrorEnvelope::new(env, code, msg, details, request_id)
     }
@@ -320,6 +329,7 @@ impl CircleError {
             60 => Some(CircleError::DutchAuctionNotConfigured),
             61 => Some(CircleError::DutchAuctionExpired),
             62 => Some(CircleError::InvalidDutchConfig),
+            63 => Some(CircleError::AuctionNotResolved),
             _ => None,
         }
     }
@@ -397,6 +407,13 @@ pub struct AuctionBidPlaced {
     pub bidder: Address,
     pub discount_bips: u32,
     pub round: u32,
+}
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AuctionLoserRefunded {
+    pub bidder: Address,
+    pub round: u32,
+    pub amount: i128,
 }
 #[contracttype]
 #[derive(Clone, Debug)]
