@@ -899,6 +899,40 @@ mod tests {
         let m2_contributions = client.get_contributions(&m2, &0u32, &10u32);
         assert_eq!(m2_contributions.len(), 0);
     }
+
+    #[test]
+    fn test_error_envelope_for_all_circle_errors() {
+        let env = Env::default();
+        let all_codes: [u32; 40] = [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+            31, 32, 33, 34, 35, 36, 37, 38, 39, 59,
+        ];
+        for code in all_codes {
+            let err = CircleError::from_code(code).expect("valid code mapping");
+            let env_result = err.to_envelope(&env, "Test details", 42u64);
+            assert_eq!(env_result.code, code);
+            assert_eq!(env_result.request_id, 42u64);
+            assert_eq!(env_result.details, String::from_str(&env, "Test details"));
+            assert!(env_result.message.len() > 0);
+        }
+        assert_eq!(CircleError::from_code(999u32), None);
+    }
+
+    #[test]
+    fn test_paginated_member_contributions_boundary_cases() {
+        let env = Env::default();
+        let (client, _admin, _token, _treasury, m1) = setup_active_circle_with_token(&env);
+
+        // Page 0 with page_size 10 on empty contributions returns empty list
+        let empty_page = client.get_contributions(&m1, &0u32, &10u32);
+        assert_eq!(empty_page.len(), 0);
+
+        // High page index out of range returns empty list
+        let out_of_range = client.get_contributions(&m1, &100u32, &10u32);
+        assert_eq!(out_of_range.len(), 0);
+    }
 }
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;

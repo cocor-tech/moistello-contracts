@@ -14,7 +14,103 @@ pub struct Circle{pub id:Address,pub token:Address,pub name:String,pub organizer
 #[contracttype]#[derive(Clone,Debug)]pub struct VoteEntry{pub voter:Address,pub vote_for:Address,pub round:u32,pub timestamp:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct DisputeEntry{pub raised_by:Address,pub evidence_hash:BytesN<32>,pub raised_at:u64,pub resolved_at:u64,pub resolution:u32,pub resolved_by:Address}
 #[contracttype]#[derive(Clone)]pub enum DataKey{Circle,Admin,Factory,Members,Contributions,Payouts,Bids,Votes,Dispute,FeeBps,Treasury,Allowlist,Token,Referrals,ReputationRegistry,OracleContract,FallbackOracle,RoundConfigSnapshot(u32),PayoutScheduled(u32)}
+pub use common::types::ErrorEnvelope;
 #[contracterror]#[derive(Debug,Clone,PartialEq,Eq)]pub enum CircleError{NotInitialized=1,NotActive=2,CircleFull=3,AlreadyMember=4,NotMember=5,InsufficientMoiScore=6,RoundNotCurrent=7,InvalidAmount=8,PaymentDeadlinePassed=9,MaxStrikesReached=10,NotOrganizer=11,ContractPaused=12,InvalidInviteCode=13,AuctionAlreadyResolved=14,VoteQuorumNotMet=15,AlreadyContributed=16,AlreadyVoted=17,AlreadyBidded=18,PayoutAlreadyExecuted=19,InvalidPayoutType=20,InvalidRound=21,ContributionMismatch=22,CircleNotFull=23,NotEnoughVotes=24,DisputeAlreadyRaised=25,NoActiveDispute=26,Unauthorized=27,InvalidBid=28,InvalidMemberStatus=29,EmptyPayoutOrder=30,CircleSizeExceedsTier=31,ContributionExceedsTier=32,VecAccessError=33,AllowlistNotPermitted=34,InsufficientContractBalance=35,SelfReferral=36,OracleUnavailable=37,NotImplemented=38,ZeroPayoutAmount=39,PayoutAlreadyScheduled=59}
+
+impl CircleError {
+    pub fn to_envelope(&self, env: &soroban_sdk::Env, details: &str, request_id: u64) -> ErrorEnvelope {
+        let (code, msg) = match self {
+            CircleError::NotInitialized => (1, "Circle not initialized"),
+            CircleError::NotActive => (2, "Circle not active"),
+            CircleError::CircleFull => (3, "Circle is full"),
+            CircleError::AlreadyMember => (4, "Already a member"),
+            CircleError::NotMember => (5, "Not a member"),
+            CircleError::InsufficientMoiScore => (6, "Insufficient MoiScore"),
+            CircleError::RoundNotCurrent => (7, "Round not current"),
+            CircleError::InvalidAmount => (8, "Invalid amount"),
+            CircleError::PaymentDeadlinePassed => (9, "Payment deadline passed"),
+            CircleError::MaxStrikesReached => (10, "Max strikes reached"),
+            CircleError::NotOrganizer => (11, "Not organizer"),
+            CircleError::ContractPaused => (12, "Contract paused"),
+            CircleError::InvalidInviteCode => (13, "Invalid invite code"),
+            CircleError::AuctionAlreadyResolved => (14, "Auction already resolved"),
+            CircleError::VoteQuorumNotMet => (15, "Vote quorum not met"),
+            CircleError::AlreadyContributed => (16, "Already contributed"),
+            CircleError::AlreadyVoted => (17, "Already voted"),
+            CircleError::AlreadyBidded => (18, "Already placed bid"),
+            CircleError::PayoutAlreadyExecuted => (19, "Payout already executed"),
+            CircleError::InvalidPayoutType => (20, "Invalid payout type"),
+            CircleError::InvalidRound => (21, "Invalid round"),
+            CircleError::ContributionMismatch => (22, "Contribution mismatch"),
+            CircleError::CircleNotFull => (23, "Circle not full"),
+            CircleError::NotEnoughVotes => (24, "Not enough votes"),
+            CircleError::DisputeAlreadyRaised => (25, "Dispute already raised"),
+            CircleError::NoActiveDispute => (26, "No active dispute"),
+            CircleError::Unauthorized => (27, "Unauthorized"),
+            CircleError::InvalidBid => (28, "Invalid bid"),
+            CircleError::InvalidMemberStatus => (29, "Invalid member status"),
+            CircleError::EmptyPayoutOrder => (30, "Empty payout order"),
+            CircleError::CircleSizeExceedsTier => (31, "Circle size exceeds tier"),
+            CircleError::ContributionExceedsTier => (32, "Contribution exceeds tier"),
+            CircleError::VecAccessError => (33, "Vector access error"),
+            CircleError::AllowlistNotPermitted => (34, "Allowlist not permitted"),
+            CircleError::InsufficientContractBalance => (35, "Insufficient contract balance"),
+            CircleError::SelfReferral => (36, "Self referral not allowed"),
+            CircleError::OracleUnavailable => (37, "Oracle unavailable"),
+            CircleError::NotImplemented => (38, "Not implemented"),
+            CircleError::ZeroPayoutAmount => (39, "Zero payout amount"),
+            CircleError::PayoutAlreadyScheduled => (59, "Payout already scheduled"),
+        };
+        ErrorEnvelope::new(env, code, msg, details, request_id)
+    }
+
+    pub fn from_code(code: u32) -> Option<Self> {
+        match code {
+            1 => Some(CircleError::NotInitialized),
+            2 => Some(CircleError::NotActive),
+            3 => Some(CircleError::CircleFull),
+            4 => Some(CircleError::AlreadyMember),
+            5 => Some(CircleError::NotMember),
+            6 => Some(CircleError::InsufficientMoiScore),
+            7 => Some(CircleError::RoundNotCurrent),
+            8 => Some(CircleError::InvalidAmount),
+            9 => Some(CircleError::PaymentDeadlinePassed),
+            10 => Some(CircleError::MaxStrikesReached),
+            11 => Some(CircleError::NotOrganizer),
+            12 => Some(CircleError::ContractPaused),
+            13 => Some(CircleError::InvalidInviteCode),
+            14 => Some(CircleError::AuctionAlreadyResolved),
+            15 => Some(CircleError::VoteQuorumNotMet),
+            16 => Some(CircleError::AlreadyContributed),
+            17 => Some(CircleError::AlreadyVoted),
+            18 => Some(CircleError::AlreadyBidded),
+            19 => Some(CircleError::PayoutAlreadyExecuted),
+            20 => Some(CircleError::InvalidPayoutType),
+            21 => Some(CircleError::InvalidRound),
+            22 => Some(CircleError::ContributionMismatch),
+            23 => Some(CircleError::CircleNotFull),
+            24 => Some(CircleError::NotEnoughVotes),
+            25 => Some(CircleError::DisputeAlreadyRaised),
+            26 => Some(CircleError::NoActiveDispute),
+            27 => Some(CircleError::Unauthorized),
+            28 => Some(CircleError::InvalidBid),
+            29 => Some(CircleError::InvalidMemberStatus),
+            30 => Some(CircleError::EmptyPayoutOrder),
+            31 => Some(CircleError::CircleSizeExceedsTier),
+            32 => Some(CircleError::ContributionExceedsTier),
+            33 => Some(CircleError::VecAccessError),
+            34 => Some(CircleError::AllowlistNotPermitted),
+            35 => Some(CircleError::InsufficientContractBalance),
+            36 => Some(CircleError::SelfReferral),
+            37 => Some(CircleError::OracleUnavailable),
+            38 => Some(CircleError::NotImplemented),
+            39 => Some(CircleError::ZeroPayoutAmount),
+            59 => Some(CircleError::PayoutAlreadyScheduled),
+            _ => None,
+        }
+    }
+}
+
 #[contracttype]#[derive(Clone,Debug)]pub struct MemberJoined{pub member:Address,pub position:u32}
 #[contracttype]#[derive(Clone,Debug)]pub struct ContributionRecorded{pub member:Address,pub round:u32,pub amount:i128,pub on_time:bool}
 #[contracttype]#[derive(Clone,Debug)]pub struct PayoutExecuted{pub recipient:Address,pub round:u32,pub amount:i128,pub fee:i128,pub payout_type:u32}
