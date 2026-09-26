@@ -85,7 +85,7 @@ pub fn init(
     env.storage()
         .persistent()
         .set(&DataKey::Contributions, &Vec::<Contribution>::new(env));
-    common::vrf::init_vrf(env, None).map_err(|_| CircleError::InvalidAmount)?;
+    common::vrf::init_vrf(env, None, admin).map_err(|_| CircleError::InvalidAmount)?;
     env.storage()
         .persistent()
         .set(&DataKey::Payouts, &Vec::<PayoutRecipient>::new(env));

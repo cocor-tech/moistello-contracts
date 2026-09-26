@@ -38,13 +38,19 @@
 /// For enhanced security, the admin can sign VRF outputs off-chain and callers
 /// can verify via `verify_vrf()` before accepting the shuffled order.
 
-use soroban_sdk::{contracterror, contractevent, symbol_short, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contracterror, contractevent, symbol_short, Address, Bytes, BytesN, Env, Vec};
 
 // ── Storage keys ──────────────────────────────────────────────────────────
 
 const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("vrf_admin");
 const SALT_KEY: soroban_sdk::Symbol = symbol_short!("vrf_salt");
 const COUNTER_KEY: soroban_sdk::Symbol = symbol_short!("vrf_ctr");
+/// Address authorized to propose/activate VRF key rotations.
+const OWNER_KEY: soroban_sdk::Symbol = symbol_short!("vrf_ownr");
+/// Proposed (pending) new Ed25519 admin public key, awaiting activation.
+const PENDING_KEY: soroban_sdk::Symbol = symbol_short!("vrf_pend");
+/// Ledger timestamp at/after which the pending key rotation may be activated.
+const PENDING_AT_KEY: soroban_sdk::Symbol = symbol_short!("vrf_pndat");
 
 // ── Errors ────────────────────────────────────────────────────────────────
 
@@ -59,6 +65,13 @@ pub enum VrfError {
     AlreadyInitialized = 3,
     /// Math overflow during counter or range computation.
     Overflow = 4,
+    /// Caller is not the VRF owner, or there is no pending rotation, or the
+    /// activation delay has not elapsed yet.
+    Unauthorized = 5,
+    /// No key rotation has been proposed.
+    NoPendingRotation = 6,
+    /// The proposed rotation's activation delay has not elapsed yet.
+    ActivationNotReady = 7,
 }
 
 // ── Events ────────────────────────────────────────────────────────────────
@@ -71,6 +84,22 @@ pub struct VrfEvaluated {
     pub input_seed: u32,
     pub vrf_output: u32,
     pub counter: u32,
+}
+
+/// Emitted when a key rotation is proposed. The old admin key remains active
+/// (and usable by `verify_vrf`) until `activate_key_rotation` is called.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct VrfKeyRotationProposed {
+    pub new_key: BytesN<32>,
+    pub activation_time: u64,
+}
+
+/// Emitted when a proposed key rotation is activated, retiring the old key.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct VrfKeyRotated {
+    pub new_key: BytesN<32>,
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -89,19 +118,119 @@ pub struct VrfEvaluated {
 /// # Arguments
 /// * `env` - Soroban environment
 /// * `admin_key` - Optional Ed25519 public key (32 bytes) for signature verification
+/// * `owner` - Address authorized to propose and activate future key rotations
+///   (see `propose_key_rotation` / `activate_key_rotation`). Stored once at init
+///   time since the Ed25519 admin key itself is not a Soroban `Address` and
+///   cannot authorize transactions on its own.
 ///
 /// # Errors
 /// * `VrfError::AlreadyInitialized` if called more than once
-pub fn init_vrf(env: &Env, admin_key: Option<&BytesN<32>>) -> Result<(), VrfError> {
-    if env.storage().instance().has(&ADMIN_KEY) {
+pub fn init_vrf(env: &Env, admin_key: Option<&BytesN<32>>, owner: &Address) -> Result<(), VrfError> {
+    if env.storage().instance().has(&ADMIN_KEY) || env.storage().instance().has(&OWNER_KEY) {
         return Err(VrfError::AlreadyInitialized);
     }
     let salt: BytesN<32> = env.prng().gen();
     env.storage().instance().set(&SALT_KEY, &salt);
     env.storage().instance().set(&COUNTER_KEY, &0u32);
+    env.storage().instance().set(&OWNER_KEY, owner);
     if let Some(key) = admin_key {
         env.storage().instance().set(&ADMIN_KEY, key);
     }
+    Ok(())
+}
+
+/// Propose a rotation of the VRF Ed25519 admin key, without touching the
+/// currently active key.
+///
+/// The proposed key only becomes active once `activate_key_rotation` is
+/// called after `activation_delay_secs` have elapsed. Until then, `ADMIN_KEY`
+/// is untouched, so any in-flight `verify_vrf` call continues to check
+/// signatures against the OLD key — rotation causes no interruption.
+///
+/// # Arguments
+/// * `env` - Soroban environment
+/// * `caller` - Must match the stored VRF owner address
+/// * `new_key` - The proposed Ed25519 public key (32 bytes)
+/// * `activation_delay_secs` - Seconds from now before the rotation can be activated
+///
+/// # Authorization
+/// Requires `caller.require_auth()` and `caller` must equal the stored owner.
+///
+/// # Errors
+/// * `VrfError::Unauthorized` if `caller` is not the stored owner
+pub fn propose_key_rotation(
+    env: &Env,
+    caller: &Address,
+    new_key: &BytesN<32>,
+    activation_delay_secs: u64,
+) -> Result<(), VrfError> {
+    caller.require_auth();
+    let owner: Address = env
+        .storage()
+        .instance()
+        .get(&OWNER_KEY)
+        .ok_or(VrfError::Unauthorized)?;
+    if caller != &owner {
+        return Err(VrfError::Unauthorized);
+    }
+    let activation_time = env
+        .ledger()
+        .timestamp()
+        .checked_add(activation_delay_secs)
+        .ok_or(VrfError::Overflow)?;
+    env.storage().instance().set(&PENDING_KEY, new_key);
+    env.storage().instance().set(&PENDING_AT_KEY, &activation_time);
+    VrfKeyRotationProposed {
+        new_key: new_key.clone(),
+        activation_time,
+    }
+    .publish(env);
+    Ok(())
+}
+
+/// Activate a previously proposed VRF key rotation, retiring the old key.
+///
+/// # Arguments
+/// * `env` - Soroban environment
+/// * `caller` - Must match the stored VRF owner address
+///
+/// # Authorization
+/// Requires `caller.require_auth()` and `caller` must equal the stored owner.
+///
+/// # Errors
+/// * `VrfError::Unauthorized` if `caller` is not the stored owner
+/// * `VrfError::NoPendingRotation` if no rotation has been proposed
+/// * `VrfError::ActivationNotReady` if the activation delay has not elapsed
+pub fn activate_key_rotation(env: &Env, caller: &Address) -> Result<(), VrfError> {
+    caller.require_auth();
+    let owner: Address = env
+        .storage()
+        .instance()
+        .get(&OWNER_KEY)
+        .ok_or(VrfError::Unauthorized)?;
+    if caller != &owner {
+        return Err(VrfError::Unauthorized);
+    }
+    let pending_key: BytesN<32> = env
+        .storage()
+        .instance()
+        .get(&PENDING_KEY)
+        .ok_or(VrfError::NoPendingRotation)?;
+    let activation_time: u64 = env
+        .storage()
+        .instance()
+        .get(&PENDING_AT_KEY)
+        .ok_or(VrfError::NoPendingRotation)?;
+    if env.ledger().timestamp() < activation_time {
+        return Err(VrfError::ActivationNotReady);
+    }
+    env.storage().instance().set(&ADMIN_KEY, &pending_key);
+    env.storage().instance().remove(&PENDING_KEY);
+    env.storage().instance().remove(&PENDING_AT_KEY);
+    VrfKeyRotated {
+        new_key: pending_key,
+    }
+    .publish(env);
     Ok(())
 }
 

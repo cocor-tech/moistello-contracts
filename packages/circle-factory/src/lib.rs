@@ -4,12 +4,13 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 #[contract] pub struct CircleFactory;
 #[contractimpl]
 impl CircleFactory {
-    pub fn init(env: Env, admin: Address, fee_bps: i128, circle_wasm_hash: BytesN<32>) -> Result<(), types::FactoryError> { contract::init(&env, &admin, fee_bps, &circle_wasm_hash) }
+    pub fn init(env: Env, admin: Address, fee_bps: i128, circle_wasm_hash: BytesN<32>, organizer_rate_limit: u32, rate_limit_period_secs: u64) -> Result<(), types::FactoryError> { contract::init(&env, &admin, fee_bps, &circle_wasm_hash, organizer_rate_limit, rate_limit_period_secs) }
     pub fn deploy_circle(env: Env, config: types::CircleConfig) -> Result<Address, types::FactoryError> { contract::deploy_circle(&env, &config) }
     pub fn get_circles(env: Env) -> types::CircleRegistry { contract::get_circles(&env) }
     pub fn get_circle_config(env: Env, cid: Address) -> Result<types::CircleConfig, types::FactoryError> { contract::get_circle_config(&env, &cid) }
     pub fn get_circle_count(env: Env) -> u32 { contract::get_circle_count(&env) }
     pub fn get_fee_config(env: Env) -> types::FeeConfig { contract::get_fee_config(&env) }
+    pub fn get_rate_limit_config(env: Env) -> types::RateLimitConfig { contract::get_rate_limit_config(&env) }
     pub fn set_fee_config(env: Env, admin: Address, fee_bps: i128) -> Result<(), types::FactoryError> { contract::set_fee_config(&env, &admin, fee_bps) }
     pub fn pause(env: Env, admin: Address) -> Result<(), types::FactoryError> { contract::pause(&env, &admin) }
     pub fn unpause(env: Env, admin: Address) -> Result<(), types::FactoryError> { contract::unpause(&env, &admin) }

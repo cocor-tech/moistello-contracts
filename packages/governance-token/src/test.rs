@@ -401,4 +401,79 @@ mod tests {
         let result = client.try_mint(&admin, &client.address, &1_000_0000000i128);
         assert_eq!(result, Err(Ok(crate::types::TokenError::CannotTransferToSelf)));
     }
+
+    #[test]
+    fn test_allowlist_mode_default_off() {
+        let env = Env::default();
+        let (_, client) = setup(&env);
+        assert!(!client.is_allowlist_mode_enabled());
+    }
+
+    #[test]
+    fn test_set_allowlist_mode_toggles_and_takes_effect() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        env.mock_all_auths();
+        client.mint(&admin, &alice, &1_000_0000000i128);
+
+        client.set_allowlist_mode(&admin, &true);
+        assert!(client.is_allowlist_mode_enabled());
+
+        // bob not allowlisted -> transfer fails
+        let result = client.try_transfer(&alice, &bob, &100i128);
+        assert!(result.is_err());
+
+        // allowlist bob -> transfer succeeds
+        client.add_to_allowlist(&admin, &bob);
+        assert!(client.is_allowlisted(&bob));
+        client.transfer(&alice, &bob, &100i128);
+        assert_eq!(client.balance(&bob), 100i128);
+
+        // remove bob -> transfer fails again
+        client.remove_from_allowlist(&admin, &bob);
+        assert!(!client.is_allowlisted(&bob));
+        let result = client.try_transfer(&alice, &bob, &100i128);
+        assert!(result.is_err());
+
+        // disable mode -> transfer succeeds normally
+        client.set_allowlist_mode(&admin, &false);
+        assert!(!client.is_allowlist_mode_enabled());
+        client.transfer(&alice, &bob, &100i128);
+        assert_eq!(client.balance(&bob), 200i128);
+    }
+
+    #[test]
+    fn test_allowlist_mode_transfer_from_gated() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        env.mock_all_auths();
+        client.mint(&admin, &owner, &1_000_0000000i128);
+        client.approve(&owner, &spender, &500_0000000i128, &0u32);
+        client.set_allowlist_mode(&admin, &true);
+
+        let result = client.try_transfer_from(&spender, &owner, &recipient, &100i128);
+        assert!(result.is_err());
+
+        client.add_to_allowlist(&admin, &recipient);
+        client.transfer_from(&spender, &owner, &recipient, &100i128);
+        assert_eq!(client.balance(&recipient), 100i128);
+    }
+
+    #[test]
+    fn test_allowlist_management_unauthorized() {
+        let env = Env::default();
+        let (_, client) = setup(&env);
+        let not_admin = Address::generate(&env);
+        let account = Address::generate(&env);
+        env.mock_all_auths();
+
+        assert!(client.try_set_allowlist_mode(&not_admin, &true).is_err());
+        assert!(client.try_add_to_allowlist(&not_admin, &account).is_err());
+        assert!(client.try_remove_from_allowlist(&not_admin, &account).is_err());
+    }
 }

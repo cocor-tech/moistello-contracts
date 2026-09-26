@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, BytesN, Env};
 use crate::{CircleFactory, CircleFactoryClient}; use crate::types::{CircleConfig, FactoryError};
 
@@ -37,7 +37,17 @@ fn setup(env: &Env) -> (CircleFactoryClient, Address, BytesN<32>) {
     let client = CircleFactoryClient::new(env, &contract_id);
     let admin = Address::generate(env);
     let wh = install_wasm_hash(env);
-    client.init(&admin, &500i128, &wh);
+    client.init(&admin, &500i128, &wh, &0u32, &0u64);
+    (client, admin, wh)
+}
+
+fn setup_with_rate_limit(env: &Env, limit: u32, period_secs: u64) -> (CircleFactoryClient, Address, BytesN<32>) {
+    env.mock_all_auths();
+    let contract_id = env.register(CircleFactory, ());
+    let client = CircleFactoryClient::new(env, &contract_id);
+    let admin = Address::generate(env);
+    let wh = install_wasm_hash(env);
+    client.init(&admin, &500i128, &wh, &limit, &period_secs);
     (client, admin, wh)
 }
 
@@ -50,7 +60,7 @@ fn test_init_stores_admin_and_config() {
     let admin = Address::generate(&env);
     let wh = install_wasm_hash(&env);
 
-    client.init(&admin, &300i128, &wh);
+    client.init(&admin, &300i128, &wh, &0u32, &0u64);
 
     assert_eq!(client.get_circle_count(), 0);
     let fc = client.get_fee_config();
@@ -76,7 +86,7 @@ fn test_init_rejects_invalid_fee_bps() {
     let admin = Address::generate(&env);
     let wh = install_wasm_hash(&env);
 
-    let result = client.try_init(&admin, &10001i128, &wh);
+    let result = client.try_init(&admin, &10001i128, &wh, &0u32, &0u64);
     assert_eq!(result, Err(Ok(FactoryError::InvalidFeeBps)));
 }
 
@@ -231,4 +241,65 @@ fn test_storage_isolation_across_100_deployed_circles() {
             assert_ne!(circle_ids[i], circle_ids[j], "circles {i} and {j} deployed to the same address");
         }
     }
+}
+
+#[test]
+fn test_rate_limit_zero_is_unlimited() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup_with_rate_limit(&env, 0, 0);
+    let organizer = Address::generate(&env);
+    let config = sample_config(&env, &organizer);
+
+    for _ in 0..10 {
+        assert!(client.try_deploy_circle(&config).is_ok());
+    }
+    assert_eq!(client.get_circle_count(), 10);
+}
+
+#[test]
+fn test_rate_limit_exceeded_rejected() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup_with_rate_limit(&env, 2, 3600);
+    let organizer = Address::generate(&env);
+    let config = sample_config(&env, &organizer);
+
+    assert!(client.try_deploy_circle(&config).is_ok());
+    assert!(client.try_deploy_circle(&config).is_ok());
+    let result = client.try_deploy_circle(&config);
+    assert_eq!(result, Err(Ok(FactoryError::RateLimitExceeded)));
+}
+
+#[test]
+fn test_rate_limit_resets_next_period() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup_with_rate_limit(&env, 1, 3600);
+    let organizer = Address::generate(&env);
+    let config = sample_config(&env, &organizer);
+
+    assert!(client.try_deploy_circle(&config).is_ok());
+    let result = client.try_deploy_circle(&config);
+    assert_eq!(result, Err(Ok(FactoryError::RateLimitExceeded)));
+
+    // Advance the ledger timestamp into the next rate-limit period.
+    env.ledger().set_timestamp(env.ledger().timestamp() + 3600);
+
+    assert!(client.try_deploy_circle(&config).is_ok());
+    assert_eq!(client.get_circle_count(), 2);
+}
+
+#[test]
+fn test_rate_limit_independent_per_organizer() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup_with_rate_limit(&env, 1, 3600);
+    let org1 = Address::generate(&env);
+    let org2 = Address::generate(&env);
+
+    assert!(client.try_deploy_circle(&sample_config(&env, &org1)).is_ok());
+    assert_eq!(
+        client.try_deploy_circle(&sample_config(&env, &org1)),
+        Err(Ok(FactoryError::RateLimitExceeded))
+    );
+    // A different organizer has an independent counter and can still deploy.
+    assert!(client.try_deploy_circle(&sample_config(&env, &org2)).is_ok());
+    assert_eq!(client.get_circle_count(), 2);
 }

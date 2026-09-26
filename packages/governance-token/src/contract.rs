@@ -7,6 +7,8 @@ const BALANCES_KEY: soroban_sdk::Symbol = symbol_short!("bal");
 const ALLOWANCES_KEY: soroban_sdk::Symbol = symbol_short!("alw");
 const TOTAL_KEY: soroban_sdk::Symbol = symbol_short!("total");
 const FROZEN_KEY: soroban_sdk::Symbol = symbol_short!("frz");
+const ALLOWLIST_MODE_KEY: soroban_sdk::Symbol = symbol_short!("alw_mode");
+const ALLOWLIST_KEY: soroban_sdk::Symbol = symbol_short!("alw_list");
 
 pub fn initialize(
     env: &Env,
@@ -38,6 +40,7 @@ pub fn transfer(env: &Env, from: &Address, to: &Address, amount: i128) -> Result
     }
     validate_non_frozen(env, from)?;
     validate_non_frozen(env, to)?;
+    validate_allowlisted(env, to)?;
     if amount <= 0 {
         return Err(TokenError::InvalidAmount);
     }
@@ -67,6 +70,7 @@ pub fn transfer_from(
     }
     validate_non_frozen(env, from)?;
     validate_non_frozen(env, to)?;
+    validate_allowlisted(env, to)?;
     if amount <= 0 {
         return Err(TokenError::InvalidAmount);
     }
@@ -271,6 +275,70 @@ fn require_admin(env: &Env, caller: &Address) -> Result<(), TokenError> {
 fn validate_non_frozen(env: &Env, account: &Address) -> Result<(), TokenError> {
     if is_frozen(env, account) {
         return Err(TokenError::Frozen);
+    }
+    Ok(())
+}
+
+/// Enable or disable allowlist mode for transfer recipients (admin-only).
+///
+/// When enabled, `transfer` and `transfer_from` reject any transfer whose
+/// recipient is not on the allowlist (see `add_to_allowlist`). Default is
+/// off. Emits `AllowlistModeChanged`.
+///
+/// # Authorization
+/// Requires `admin.require_auth()` and `admin` must be the stored admin.
+pub fn set_allowlist_mode(env: &Env, admin: &Address, enabled: bool) -> Result<(), TokenError> {
+    admin.require_auth();
+    require_admin(env, admin)?;
+    env.storage().instance().set(&ALLOWLIST_MODE_KEY, &enabled);
+    AllowlistModeChanged { enabled }.publish(env);
+    Ok(())
+}
+
+/// Returns whether allowlist mode is currently enabled. Defaults to `false`
+/// when never toggled.
+pub fn is_allowlist_mode_enabled(env: &Env) -> bool {
+    env.storage().instance().get(&ALLOWLIST_MODE_KEY).unwrap_or(false)
+}
+
+/// Add `account` to the recipient allowlist (admin-only). Emits `AllowlistAdded`.
+///
+/// # Authorization
+/// Requires `admin.require_auth()` and `admin` must be the stored admin.
+pub fn add_to_allowlist(env: &Env, admin: &Address, account: &Address) -> Result<(), TokenError> {
+    admin.require_auth();
+    require_admin(env, admin)?;
+    let mut list: Map<Address, bool> = env.storage().persistent().get(&ALLOWLIST_KEY).unwrap_or_else(|| Map::new(env));
+    list.set(account.clone(), true);
+    env.storage().persistent().set(&ALLOWLIST_KEY, &list);
+    AllowlistAdded { account: account.clone() }.publish(env);
+    Ok(())
+}
+
+/// Remove `account` from the recipient allowlist (admin-only). Emits `AllowlistRemoved`.
+///
+/// # Authorization
+/// Requires `admin.require_auth()` and `admin` must be the stored admin.
+pub fn remove_from_allowlist(env: &Env, admin: &Address, account: &Address) -> Result<(), TokenError> {
+    admin.require_auth();
+    require_admin(env, admin)?;
+    let mut list: Map<Address, bool> = env.storage().persistent().get(&ALLOWLIST_KEY).unwrap_or_else(|| Map::new(env));
+    list.set(account.clone(), false);
+    env.storage().persistent().set(&ALLOWLIST_KEY, &list);
+    AllowlistRemoved { account: account.clone() }.publish(env);
+    Ok(())
+}
+
+/// Returns whether `account` is currently on the recipient allowlist.
+pub fn is_allowlisted(env: &Env, account: &Address) -> bool {
+    let list: Map<Address, bool> = env.storage().persistent().get(&ALLOWLIST_KEY).unwrap_or_else(|| Map::new(env));
+    list.get(account.clone()).unwrap_or(false)
+}
+
+/// When allowlist mode is enabled, reject transfers to a non-allowlisted `to`.
+fn validate_allowlisted(env: &Env, to: &Address) -> Result<(), TokenError> {
+    if is_allowlist_mode_enabled(env) && !is_allowlisted(env, to) {
+        return Err(TokenError::RecipientNotAllowlisted);
     }
     Ok(())
 }
