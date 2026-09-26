@@ -7,7 +7,7 @@ pub const AUCTION_MODE_ENGLISH:u32=0;pub const AUCTION_MODE_DUTCH:u32=1;
 #[contracttype]#[derive(Clone,Debug)]
 pub struct CircleConfig{pub organizer:Address,pub token:Address,pub name:String,pub contribution_amount:i128,pub max_members:u32,pub payout_type:u32,pub total_rounds:u32,pub contribution_deadline_seconds:u64,pub min_moi_score:u32,pub collateral_amount:i128,pub penalty_bps:u32,pub grace_period_seconds:u64,pub max_strikes:u32,pub slug:String}
 #[contracttype]#[derive(Clone,Debug)]
-pub struct Circle{pub id:Address,pub token:Address,pub name:String,pub organizer:Address,pub factory:Address,pub contribution_amount:i128,pub max_members:u32,pub member_count:u32,pub payout_type:u32,pub total_rounds:u32,pub current_round:u32,pub status:u32,pub started_at:u64,pub created_at:u64,pub contribution_deadline_seconds:u64,pub min_moi_score:u32,pub collateral_amount:i128,pub penalty_bps:u32,pub grace_period_seconds:u64,pub max_strikes:u32,pub payout_bitmap:u128,pub total_payouts:i128,pub total_fees:i128,pub slug:String}
+pub struct Circle{pub id:Address,pub token:Address,pub name:String,pub organizer:Address,pub factory:Address,pub contribution_amount:i128,pub max_members:u32,pub member_count:u32,pub payout_type:u32,pub total_rounds:u32,pub current_round:u32,pub status:u32,pub started_at:u64,pub created_at:u64,pub contribution_deadline_seconds:u64,pub min_moi_score:u32,pub collateral_amount:i128,pub penalty_bps:u32,pub grace_period_seconds:u64,pub max_strikes:u32,pub payout_bitmap:u128,pub total_payouts:i128,pub total_fees:i128,pub slug:String,pub health_score:u32}
 #[contracttype]#[derive(Clone,Debug)]pub struct Member{pub address:Address,pub position:u32,pub joined_at:u64,pub strikes:u32,pub status:u32,pub exited_at:u64,pub total_contributions:i128,pub total_received:i128}
 #[contracttype]#[derive(Clone,Debug)]pub struct Contribution{pub member:Address,pub round:u32,pub amount:i128,pub timestamp:u64,pub on_time:bool,pub time_weight:u64}
 #[contracttype]#[derive(Clone,Debug)]pub struct PayoutRecipient{pub recipient:Address,pub round:u32,pub amount:i128,pub fee:i128,pub payout_type:u32,pub timestamp:u64}
@@ -127,6 +127,11 @@ impl CircleError {
 #[contracttype]#[derive(Clone,Debug)]pub struct MemberJoined{pub member:Address,pub position:u32}
 #[contracttype]#[derive(Clone,Debug)]pub struct ContributionRecorded{pub member:Address,pub round:u32,pub amount:i128,pub on_time:bool}
 #[contracttype]#[derive(Clone,Debug)]pub struct PayoutExecuted{pub recipient:Address,pub round:u32,pub amount:i128,pub fee:i128,pub payout_type:u32}
+/// Issue #369: emitted whenever the circle's health score is recomputed
+/// (currently: after every trigger_payout). `on_time_rate`, `completion_rate`,
+/// and `member_retention` are basis points (0-10000) so off-chain consumers
+/// don't need to guess a fixed-point scale.
+#[contracttype]#[derive(Clone,Debug)]pub struct CircleHealthUpdated{pub health_score:u32,pub on_time_rate_bps:u32,pub completion_rate_bps:u32,pub member_retention_bps:u32,pub round:u32}
 #[contracttype]#[derive(Clone,Debug)]pub struct MemberExited{pub member:Address,pub penalty:i128}
 #[contracttype]#[derive(Clone,Debug)]pub struct MemberDefaulted{pub member:Address,pub strikes:u32}
 #[contracttype]#[derive(Clone,Debug)]#[derive(Default)]
