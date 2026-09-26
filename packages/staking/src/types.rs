@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contractevent, contracttype, Address};
+use soroban_sdk::{contracterror, contractevent, contracttype, Address, Vec};
 
 /// Staking period options with corresponding voting power multipliers
 #[contracttype]
@@ -150,4 +150,29 @@ pub struct VotingPowerQueried {
     pub voting_power: i128,
 }
 
-// aligned staking reward type definitions
+// ── #445 — Paginated staker query ────────────────────────────────────────────
+
+/// Maximum number of entries returned by a single `query_stakers_page` call.
+/// Callers that pass a higher `limit` will silently receive at most this many.
+pub const MAX_STAKERS_PAGE_SIZE: u32 = 50;
+
+/// One entry in a `StakersPage`: the staker's address and their current staked amount.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakerEntry {
+    pub address: Address,
+    pub amount: i128,
+}
+
+/// Result of `query_stakers_page`.
+///
+/// - `entries`     — up to `MAX_STAKERS_PAGE_SIZE` entries starting at the requested cursor.
+/// - `next_cursor` — pass this as `cursor` in the next call; equals `total` when exhausted.
+/// - `total`       — total number of active stakers at query time.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakersPage {
+    pub entries: Vec<StakerEntry>,
+    pub next_cursor: u32,
+    pub total: u32,
+}

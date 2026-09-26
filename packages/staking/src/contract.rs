@@ -325,6 +325,42 @@ pub fn get_total_staked(env: &Env) -> i128 {
     env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0)
 }
 
+/// #445 — Return a page of active stakers starting at `cursor`, up to `limit` entries.
+///
+/// Iteration order is stable (insertion order of the `StakerList`).  `limit` is
+/// silently capped at `MAX_STAKERS_PAGE_SIZE` so a single call can never return an
+/// unbounded result.  Pass the returned `next_cursor` as the next call's `cursor`
+/// to walk the full list; the list is exhausted when `next_cursor == total`.
+pub fn query_stakers_page(env: &Env, cursor: u32, limit: u32) -> StakersPage {
+    let stakers: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::StakerList)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let total = stakers.len();
+    let page_size = limit.min(MAX_STAKERS_PAGE_SIZE);
+
+    let start = cursor.min(total);
+    let end = start.saturating_add(page_size).min(total);
+
+    let mut entries: Vec<StakerEntry> = Vec::new(env);
+    let mut i = start;
+    while i < end {
+        let address = stakers.get(i).unwrap();
+        let amount: i128 = env
+            .storage()
+            .instance()
+            .get::<DataKey, StakePosition>(&DataKey::Stake(address.clone()))
+            .map(|pos| pos.amount)
+            .unwrap_or(0);
+        entries.push_back(StakerEntry { address, amount });
+        i += 1;
+    }
+
+    StakersPage { entries, next_cursor: end, total }
+}
+
 
 /// Pause the contract (admin only)
 pub fn pause(env: &Env, admin: &Address) -> Result<(), StakingError> {

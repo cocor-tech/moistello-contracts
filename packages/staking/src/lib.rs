@@ -63,6 +63,16 @@ impl Staking {
         contract::get_all_stakers(&env)
     }
 
+    /// #445 — Return a page of active stakers for indexer sync.
+    ///
+    /// `cursor` is the zero-based start index; `limit` is capped at
+    /// `MAX_STAKERS_PAGE_SIZE` (50).  Each entry carries the staker's address
+    /// and their current staked token amount.  When `page.next_cursor == page.total`
+    /// the list is exhausted.
+    pub fn query_stakers_page(env: Env, cursor: u32, limit: u32) -> types::StakersPage {
+        contract::query_stakers_page(&env, cursor, limit)
+    }
+
     pub fn pause(env: Env, admin: Address) -> Result<(), types::StakingError> {
         contract::pause(&env, &admin)
     }

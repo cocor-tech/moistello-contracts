@@ -4,7 +4,7 @@ use soroban_sdk::{Address, Env};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::token::StellarAssetClient;
 use crate::Staking;
-use crate::types::{StakingError, StakingPeriod, DataKey, UNBONDING_PERIOD_SECONDS};
+use crate::types::{StakingError, StakingPeriod, DataKey, UNBONDING_PERIOD_SECONDS, MAX_STAKERS_PAGE_SIZE};
 use crate::StakingClient;
 
 fn setup_test_env() -> (Env, Address, Address, Address) {
@@ -643,4 +643,177 @@ fn test_get_all_stakers_restake_after_full_lifecycle() {
     let stakers = client.get_all_stakers();
     assert_eq!(stakers.len(), 1);
     assert_eq!(stakers.get(0).unwrap(), user);
+}
+
+// ── #445 — query_stakers_page ─────────────────────────────────────────────────
+
+/// Empty list → page has zero entries, next_cursor and total are both 0.
+#[test]
+fn test_query_stakers_page_empty_list() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let page = client.query_stakers_page(&0, &10);
+    assert_eq!(page.total, 0);
+    assert_eq!(page.entries.len(), 0);
+    assert_eq!(page.next_cursor, 0);
+}
+
+/// Single staker — full page fetch returns the staker with the correct amount.
+#[test]
+fn test_query_stakers_page_single_staker() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let amount = 100_0000000i128;
+    client.stake(&user, &amount, &1);
+
+    let page = client.query_stakers_page(&0, &10);
+    assert_eq!(page.total, 1);
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries.get(0).unwrap().address, user);
+    assert_eq!(page.entries.get(0).unwrap().amount, amount);
+    assert_eq!(page.next_cursor, 1);
+}
+
+/// `limit` above `MAX_STAKERS_PAGE_SIZE` is silently capped.
+#[test]
+fn test_query_stakers_page_limit_capped() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let token_admin = StellarAssetClient::new(&env, &token);
+    let per_user_balance = 1_000_0000000i128;
+    let stake_amount = 10_0000000i128;
+
+    // Stake (MAX_STAKERS_PAGE_SIZE + 5) users so the cap is observable.
+    let n = (MAX_STAKERS_PAGE_SIZE + 5) as usize;
+    for _ in 0..n {
+        let u = Address::generate(&env);
+        token_admin.mint(&u, &per_user_balance);
+        client.stake(&u, &stake_amount, &1);
+    }
+
+    // Request more than the cap — must receive exactly MAX_STAKERS_PAGE_SIZE entries.
+    let page = client.query_stakers_page(&0, &(MAX_STAKERS_PAGE_SIZE + 100));
+    assert_eq!(page.entries.len(), MAX_STAKERS_PAGE_SIZE);
+    assert_eq!(page.total, n as u32);
+    assert_eq!(page.next_cursor, MAX_STAKERS_PAGE_SIZE);
+}
+
+/// Pagination is stable: walking all pages with limit=10 covers every staker exactly once.
+#[test]
+fn test_query_stakers_page_stable_order_across_pages() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let token_admin = StellarAssetClient::new(&env, &token);
+    let stake_amount = 10_0000000i128;
+    let n: u32 = 35; // intentionally not a multiple of page size
+
+    let mut expected_order: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    for _ in 0..n {
+        let u = Address::generate(&env);
+        token_admin.mint(&u, &1_000_0000000i128);
+        client.stake(&u, &stake_amount, &1);
+        expected_order.push_back(u);
+    }
+
+    let page_size: u32 = 10;
+    let mut cursor: u32 = 0;
+    let mut collected: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+
+    loop {
+        let page = client.query_stakers_page(&cursor, &page_size);
+        for entry in page.entries.iter() {
+            collected.push_back(entry.address.clone());
+        }
+        cursor = page.next_cursor;
+        if cursor >= page.total {
+            break;
+        }
+    }
+
+    assert_eq!(collected.len(), n);
+    for i in 0..n {
+        assert_eq!(
+            collected.get(i).unwrap(),
+            expected_order.get(i).unwrap(),
+            "staker at position {i} does not match insertion order"
+        );
+    }
+}
+
+/// cursor beyond the end of the list returns an empty page with next_cursor == total.
+#[test]
+fn test_query_stakers_page_cursor_past_end() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    client.stake(&user, &50_0000000, &1);
+
+    let page = client.query_stakers_page(&999, &10);
+    assert_eq!(page.total, 1);
+    assert_eq!(page.entries.len(), 0);
+    assert_eq!(page.next_cursor, 1); // clamped to total
+}
+
+/// Each entry carries the correct staked amount (not voting power).
+#[test]
+fn test_query_stakers_page_amounts_correct() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let token_admin = StellarAssetClient::new(&env, &token);
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_admin.mint(&user_a, &1_000_0000000i128);
+    token_admin.mint(&user_b, &1_000_0000000i128);
+
+    // Different periods → different voting power but same raw amounts.
+    client.stake(&user_a, &200_0000000, &3); // 2x VP, but amount = 200
+    client.stake(&user_b, &300_0000000, &6); // 3x VP, but amount = 300
+
+    let page = client.query_stakers_page(&0, &10);
+    assert_eq!(page.total, 2);
+
+    let entry_a = page.entries.get(0).unwrap();
+    let entry_b = page.entries.get(1).unwrap();
+    assert_eq!(entry_a.amount, 200_0000000);
+    assert_eq!(entry_b.amount, 300_0000000);
+}
+
+/// 200-staker scenario: all pages together equal exactly 200 unique entries (#445 AC).
+#[test]
+fn test_query_stakers_page_two_hundred_stakers() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    let token_admin = StellarAssetClient::new(&env, &token);
+    let n: u32 = 200;
+
+    for _ in 0..n {
+        let u = Address::generate(&env);
+        token_admin.mint(&u, &1_000_0000000i128);
+        client.stake(&u, &10_0000000, &1);
+    }
+
+    // Walk all pages and count unique entries.
+    let mut total_seen: u32 = 0;
+    let mut cursor: u32 = 0;
+
+    loop {
+        let page = client.query_stakers_page(&cursor, &MAX_STAKERS_PAGE_SIZE);
+        assert_eq!(page.total, n, "total must remain stable across pages");
+        total_seen += page.entries.len();
+        cursor = page.next_cursor;
+        if cursor >= page.total {
+            break;
+        }
+    }
+
+    assert_eq!(total_seen, n, "paginating over all pages must yield exactly {n} entries");
+    // We needed exactly ceil(200/50) = 4 pages.
+    assert_eq!(cursor, n);
 }
