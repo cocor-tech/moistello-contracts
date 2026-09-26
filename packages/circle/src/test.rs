@@ -1137,7 +1137,7 @@ use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
 use soroban_sdk::{Address, Env, String, Vec};
 
-use crate::{Circle, CircleArgs, CircleClient, CircleError};
+use crate::{types::CircleConfig, Circle, CircleArgs, CircleClient, CircleError};
 
 fn mint_tokens(env: &Env, token: &Address, recipient: &Address, amount: i128) {
     let token_client = soroban_sdk::token::StellarAssetClient::new(env, token);
@@ -1331,6 +1331,145 @@ fn test_trigger_payout_transfers_tokens_and_deposits_fee() {
         token_client.balance(&member_one) + token_client.balance(&member_two),
         190_i128
     );
+}
+
+#[test]
+fn test_late_contribution_within_grace_period_incurs_penalty_split() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin);
+    let treasury = Address::generate(&env);
+
+    let config = CircleConfig {
+        organizer: admin.clone(),
+        token: token.address(),
+        name: String::from_str(&env, "Grace Circle"),
+        contribution_amount: 1000,
+        max_members: 2,
+        payout_type: 1,
+        total_rounds: 1,
+        contribution_deadline_seconds: 100,
+        min_moi_score: 0,
+        collateral_amount: 0,
+        penalty_bps: 500, // 5%
+        grace_period_seconds: 50,
+        max_strikes: 3,
+        slug: String::from_str(&env, "grace-circle"),
+    };
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
+    let client = CircleClient::new(&env, &contract_id);
+    client.set_treasury(&admin, &treasury);
+
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+    env.ledger().set_timestamp(10);
+    client.join(&member_one);
+    client.join(&member_two);
+
+    mint_tokens(&env, &token.address(), &member_one, 1000);
+    mint_tokens(&env, &token.address(), &member_two, 1000);
+
+    // Advance time into grace window: deadline is 10 + 100 = 110, grace is 110 + 50 = 160.
+    env.ledger().set_timestamp(120);
+
+    client.contribute(&member_one, &1000_i128, &0_u32);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token.address());
+    // Penalty is 500 bps (5%) of 1000 = 50 routed to treasury
+    assert_eq!(token_client.balance(&treasury), 50_i128);
+    // Contract keeps 950
+    assert_eq!(token_client.balance(&client.address), 950_i128);
+
+    let contributions = client.get_contributions(&member_one, &0, &10);
+    assert_eq!(contributions.len(), 1);
+    let c = contributions.get(0).unwrap();
+    assert!(!c.on_time);
+}
+
+#[test]
+fn test_late_contribution_outside_grace_period_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin);
+
+    let config = CircleConfig {
+        organizer: admin.clone(),
+        token: token.address(),
+        name: String::from_str(&env, "Grace Circle 2"),
+        contribution_amount: 1000,
+        max_members: 2,
+        payout_type: 1,
+        total_rounds: 1,
+        contribution_deadline_seconds: 100,
+        min_moi_score: 0,
+        collateral_amount: 0,
+        penalty_bps: 500,
+        grace_period_seconds: 50,
+        max_strikes: 3,
+        slug: String::from_str(&env, "grace-circle-2"),
+    };
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+    env.ledger().set_timestamp(10);
+    client.join(&member_one);
+    client.join(&member_two);
+
+    mint_tokens(&env, &token.address(), &member_one, 1000);
+
+    // Advance past grace deadline: 10 + 100 + 50 = 160. Set to 161.
+    env.ledger().set_timestamp(161);
+
+    let res = client.try_contribute(&member_one, &1000_i128, &0_u32);
+    assert_eq!(res, Err(Ok(CircleError::PaymentDeadlinePassed)));
+}
+
+#[test]
+fn test_default_grace_period_zero_rejects_past_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = env.register_stellar_asset_contract_v2(token_admin);
+
+    let config = CircleConfig {
+        organizer: admin.clone(),
+        token: token.address(),
+        name: String::from_str(&env, "No Grace"),
+        contribution_amount: 1000,
+        max_members: 2,
+        payout_type: 1,
+        total_rounds: 1,
+        contribution_deadline_seconds: 100,
+        min_moi_score: 0,
+        collateral_amount: 0,
+        penalty_bps: 500,
+        grace_period_seconds: 0, // default off
+        max_strikes: 3,
+        slug: String::from_str(&env, "no-grace"),
+    };
+    let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
+    let client = CircleClient::new(&env, &contract_id);
+
+    let member_one = Address::generate(&env);
+    let member_two = Address::generate(&env);
+    env.ledger().set_timestamp(10);
+    client.join(&member_one);
+    client.join(&member_two);
+
+    mint_tokens(&env, &token.address(), &member_one, 1000);
+
+    // Advance past deadline: 10 + 100 = 110. Set to 111.
+    env.ledger().set_timestamp(111);
+
+    let res = client.try_contribute(&member_one, &1000_i128, &0_u32);
+    assert_eq!(res, Err(Ok(CircleError::PaymentDeadlinePassed)));
 }
 
 

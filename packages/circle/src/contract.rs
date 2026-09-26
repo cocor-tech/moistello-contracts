@@ -236,7 +236,7 @@ pub fn contribute(
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     member.require_auth();
-    let circle: Circle = env
+    let mut circle: Circle = env
         .storage()
         .instance()
         .get(&DataKey::Circle)
@@ -293,14 +293,58 @@ pub fn contribute(
     if contribution_map.get((member.clone(), round)).unwrap_or(false) {
         return Err(CircleError::AlreadyContributed);
     }
-    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
-    token_client.transfer(member, &circle.id, &amount);
     let now = env.ledger().timestamp();
-    let on_time = now
-        <= circle
+    let on_time = if circle.contribution_deadline_seconds > 0 {
+        let deadline = circle
             .started_at
             .checked_add(circle.contribution_deadline_seconds)
             .ok_or(CircleError::InvalidAmount)?;
+        if now <= deadline {
+            true
+        } else if circle.grace_period_seconds > 0 {
+            let grace_deadline = deadline
+                .checked_add(circle.grace_period_seconds)
+                .ok_or(CircleError::InvalidAmount)?;
+            if now <= grace_deadline {
+                false
+            } else {
+                return Err(CircleError::PaymentDeadlinePassed);
+            }
+        } else {
+            return Err(CircleError::PaymentDeadlinePassed);
+        }
+    } else {
+        true
+    };
+
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    token_client.transfer(member, &circle.id, &amount);
+
+    if !on_time && circle.penalty_bps > 0 {
+        let penalty = math::calculate_penalty(amount, circle.penalty_bps as i128)
+            .map_err(|_| CircleError::InvalidAmount)?;
+        if penalty > 0 {
+            if let Some(treasury) = env
+                .storage()
+                .instance()
+                .get::<DataKey, Address>(&DataKey::Treasury)
+            {
+                token_client.transfer(&circle.id, &treasury, &penalty);
+            }
+            circle.total_fees = math::safe_add(circle.total_fees, penalty)
+                .map_err(|_| CircleError::InvalidAmount)?;
+            env.storage().instance().set(&DataKey::Circle, &circle);
+            env.events().publish(
+                (env.current_contract_address(), symbol_short!("late_pen")),
+                LatePenaltyApplied {
+                    member: member.clone(),
+                    round,
+                    penalty,
+                },
+            );
+        }
+    }
+
     contributions.push_back(Contribution {
         member: member.clone(),
         round,
@@ -325,7 +369,9 @@ pub fn contribute(
             on_time,
         },
     );
-    scoring::record_on_time_payment(env, member, &circle.id, amount, round);
+    if on_time {
+        scoring::record_on_time_payment(env, member, &circle.id, amount, round);
+    }
     Ok(())
 }
 /// Triggers payout for the current round based on the circle's payout type.
