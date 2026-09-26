@@ -132,6 +132,12 @@ pub fn record(env: &Env, user: &Address, t: u32, impact: u32) -> Result<(), Repu
     Ok(())
 }
 
+// Issue #220: filed against a version of this contract that stored scores
+// under a single shared `DataKey::Scores` key, so every user's `record()`
+// overwrote the same slot. That's already been fixed here — the key is
+// `DataKey::Score(Address)`, one persistent entry per user — confirmed by
+// reading both this function and `record()` above, which write/read the
+// same per-user key. No behavior change in this PR.
 pub fn get_score(env: &Env, u: &Address) -> Result<MoiScore, ReputationError> {
     pause::when_not_paused(env).map_err(|_| ReputationError::ContractPaused)?;
     Ok(env
