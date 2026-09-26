@@ -12,7 +12,7 @@ use common::{math, pause};
 use reputation_registry::scoring;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    symbol_short, xdr::ToXdr, Address, BytesN, Env, IntoVal, Map, Vec,
+    symbol_short, xdr::ToXdr, Address, BytesN, Env, IntoVal, Map, Symbol, Vec,
 };
 
 /// Initializes a new circle contract with the provided configuration.
@@ -75,6 +75,7 @@ pub fn init(
         total_payouts: 0,
         total_fees: 0,
         slug: config.slug.clone(),
+        health_score: 100,
     };
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().instance().set(&DataKey::Admin, admin);
@@ -405,20 +406,50 @@ fn deposit_protocol_fee(
     circle_id: &Address,
     amount: i128,
 ) {
+    // Issue #219: `circle_id` intentionally appears twice in the call below
+    // — `treasury::deposit` requires `from == circle_id` (see
+    // packages/treasury/src/contract.rs), so this circle contract pays the
+    // fee from its own balance and is tracked under its own id. That part
+    // was already correct; the actual bug was the authorization shape.
+    //
+    // The real call graph is circle -> treasury.deposit_fee -> token.transfer
+    // (treasury's `deposit` internally calls `from.require_auth()`, i.e.
+    // `circle_id.require_auth()`, then transfers the token itself). The
+    // previous auth entry only pre-authorized a *direct* circle -> token
+    // transfer with no sub-invocation, which doesn't match that graph, so
+    // Soroban's auth-entry matching could reject it at runtime. The entry
+    // below authorizes the actual top-level call (circle_id authorizing
+    // `treasury.deposit_fee`), with the token transfer nested as the
+    // sub-invocation treasury performs on circle_id's behalf.
     env.authorize_as_current_contract(soroban_sdk::vec![
         env,
         InvokerContractAuthEntry::Contract(SubContractInvocation {
             context: ContractContext {
-                contract: token.clone(),
-                fn_name: symbol_short!("transfer"),
+                contract: treasury.clone(),
+                fn_name: Symbol::new(env, "deposit_fee"),
                 args: soroban_sdk::vec![
                     env,
                     circle_id.into_val(env),
-                    treasury.into_val(env),
                     amount.into_val(env),
+                    circle_id.into_val(env),
                 ],
             },
-            sub_invocations: soroban_sdk::vec![env],
+            sub_invocations: soroban_sdk::vec![
+                env,
+                InvokerContractAuthEntry::Contract(SubContractInvocation {
+                    context: ContractContext {
+                        contract: token.clone(),
+                        fn_name: symbol_short!("transfer"),
+                        args: soroban_sdk::vec![
+                            env,
+                            circle_id.into_val(env),
+                            treasury.into_val(env),
+                            amount.into_val(env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![env],
+                }),
+            ],
         }),
     ]);
     treasury::TreasuryClient::new(env, treasury).deposit_fee(circle_id, &amount, circle_id);
@@ -518,7 +549,26 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
                 .persistent()
                 .set(&DataKey::RoundConfigSnapshot(circle.current_round), &next_round_hash);
         }
+        // Issue #369: this branch still advances a round, so health is
+        // still recomputed even though no funds moved.
+        let contributions: Vec<Contribution> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contributions)
+            .unwrap_or_else(|| Vec::new(env));
+        let health = calculate_health_score(env, &members, &contributions);
+        circle.health_score = health.score;
         env.storage().instance().set(&DataKey::Circle, &circle);
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("health")),
+            CircleHealthUpdated {
+                health_score: health.score,
+                on_time_rate_bps: health.on_time_rate_bps,
+                completion_rate_bps: health.completion_rate_bps,
+                member_retention_bps: health.member_retention_bps,
+                round,
+            },
+        );
         env.events().publish(
             (env.current_contract_address(), symbol_short!("payout")),
             PayoutExecuted {
@@ -586,33 +636,45 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
     }
     let mut distributed: i128 = 0;
     let net_u = net as u128;
-    for i in 0..members.len() {
-        let m = members.get(i).ok_or(CircleError::VecAccessError)?;
-        if let Some(w) = member_weighted.get(m.address.clone()) {
-            if total_weighted > 0 {
-                let share = if distributed == 0 && w == total_weighted {
-                    net
-                } else {
-                    (net_u.saturating_mul(w) / total_weighted) as i128
-                };
-                if share > 0 {
-                    token_client.transfer(&circle.id, &m.address, &share);
-                    distributed = math::safe_add(distributed, share)
-                        .map_err(|_| CircleError::InvalidAmount)?;
-                    payouts.push_back(PayoutRecipient {
-                        recipient: m.address.clone(),
-                        round,
-                        amount: share,
-                        fee: 0,
-                        payout_type,
-                        timestamp: now,
-                    });
-                    for j in 0..members.len() {
-                        let mut m2 = members.get(j).ok_or(CircleError::VecAccessError)?;
-                        if m2.address == m.address {
-                            m2.total_received = math::safe_add(m2.total_received, share)
-                                .map_err(|_| CircleError::InvalidAmount)?;
-                            members.set(j, m2);
+    // Issue #218: the weighted distribution below spreads the pool across
+    // every contributing member by time-weighted share — that's the
+    // intended payout mechanic for PAYOUT_RANDOM only. For fixed/auction/
+    // vote, the resolved `recipient` above is who the round's payout goes
+    // to; running this loop for those types paid out to arbitrary members
+    // instead of (or as well as) the resolved recipient, over-distributing
+    // relative to `net`. The "dust" step below already pays whatever
+    // `distributed` didn't cover to `recipient` — with this loop skipped
+    // for non-random types, `distributed` stays 0 and dust covers the
+    // full `net`, i.e. the resolved recipient gets the whole payout.
+    if payout_type == PAYOUT_RANDOM {
+        for i in 0..members.len() {
+            let m = members.get(i).ok_or(CircleError::VecAccessError)?;
+            if let Some(w) = member_weighted.get(m.address.clone()) {
+                if total_weighted > 0 {
+                    let share = if distributed == 0 && w == total_weighted {
+                        net
+                    } else {
+                        (net_u.saturating_mul(w) / total_weighted) as i128
+                    };
+                    if share > 0 {
+                        token_client.transfer(&circle.id, &m.address, &share);
+                        distributed = math::safe_add(distributed, share)
+                            .map_err(|_| CircleError::InvalidAmount)?;
+                        payouts.push_back(PayoutRecipient {
+                            recipient: m.address.clone(),
+                            round,
+                            amount: share,
+                            fee: 0,
+                            payout_type,
+                            timestamp: now,
+                        });
+                        for j in 0..members.len() {
+                            let mut m2 = members.get(j).ok_or(CircleError::VecAccessError)?;
+                            if m2.address == m.address {
+                                m2.total_received = math::safe_add(m2.total_received, share)
+                                    .map_err(|_| CircleError::InvalidAmount)?;
+                                members.set(j, m2);
+                            }
                         }
                     }
                 }
@@ -665,9 +727,23 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
             .persistent()
             .set(&DataKey::RoundConfigSnapshot(circle.current_round), &next_round_hash);
     }
+    // Issue #369: recompute the health score after every round, from the
+    // just-updated Members list and full contribution history.
+    let health = calculate_health_score(env, &members, &all_contributions);
+    circle.health_score = health.score;
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().persistent().set(&DataKey::Payouts, &payouts);
     env.storage().persistent().set(&DataKey::Members, &members);
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("health")),
+        CircleHealthUpdated {
+            health_score: health.score,
+            on_time_rate_bps: health.on_time_rate_bps,
+            completion_rate_bps: health.completion_rate_bps,
+            member_retention_bps: health.member_retention_bps,
+            round,
+        },
+    );
     env.events().publish(
         (env.current_contract_address(), symbol_short!("payout")),
         PayoutExecuted {
@@ -1521,6 +1597,7 @@ pub fn get_status(env: &Env) -> Circle {
             total_payouts: 0,
             total_fees: 0,
             slug: soroban_sdk::String::from_str(env, ""),
+            health_score: 100,
         })
 }
 /// Returns all members who have joined the circle.
@@ -2371,6 +2448,92 @@ pub fn get_oracle(env: &Env) -> Option<Address> {
 
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     oracle::get_fallback_oracle(env)
+}
+
+/// Issue #369: circle health score based on contribution consistency.
+pub struct HealthScoreResult {
+    /// 0-100.
+    pub score: u32,
+    pub on_time_rate_bps: u32,
+    pub completion_rate_bps: u32,
+    pub member_retention_bps: u32,
+}
+
+/// Computes a 0-100 health score from three signals, each expressed as
+/// basis points (0-10000) of their respective denominator:
+///
+/// - `on_time_rate`: contributions made on time / all contributions ever
+///   recorded for this circle. Reflects payment discipline.
+/// - `completion_rate`: members who have *not* been marked `MEMBER_DEFAULTED`
+///   / total members. Reflects how many members are meeting their
+///   obligations well enough to avoid the strike-based default path.
+/// - `member_retention`: members who have *not* voluntarily exited
+///   (`MEMBER_EXITED`) / total members. Distinct from completion_rate: an
+///   exit isn't a default, but churn is still a health signal on its own.
+///
+/// The three are weighted 40/35/25 (on-time payment behavior is the
+/// strongest predictor of an at-risk circle; retention matters but a
+/// planned, orderly exit is less concerning than an active default) and
+/// averaged into a single 0-100 score. A circle with no members and no
+/// contributions yet (e.g. health checked before it's even active) scores
+/// 100 — there's no evidence of a problem yet, matching the optimistic
+/// `health_score: 100` default set at circle creation.
+pub fn calculate_health_score(
+    _env: &Env,
+    members: &Vec<Member>,
+    contributions: &Vec<Contribution>,
+) -> HealthScoreResult {
+    const BPS_SCALE: u32 = 10_000;
+
+    let mut on_time_count: u32 = 0;
+    let mut total_contributions: u32 = 0;
+    for i in 0..contributions.len() {
+        if let Some(c) = contributions.get(i) {
+            total_contributions += 1;
+            if c.on_time {
+                on_time_count += 1;
+            }
+        }
+    }
+    let on_time_rate_bps = if total_contributions == 0 {
+        BPS_SCALE
+    } else {
+        on_time_count.saturating_mul(BPS_SCALE) / total_contributions
+    };
+
+    let mut member_count: u32 = 0;
+    let mut defaulted_count: u32 = 0;
+    let mut exited_count: u32 = 0;
+    for i in 0..members.len() {
+        if let Some(m) = members.get(i) {
+            member_count += 1;
+            if m.status == MEMBER_DEFAULTED {
+                defaulted_count += 1;
+            } else if m.status == MEMBER_EXITED {
+                exited_count += 1;
+            }
+        }
+    }
+    let (completion_rate_bps, member_retention_bps) = if member_count == 0 {
+        (BPS_SCALE, BPS_SCALE)
+    } else {
+        (
+            (member_count - defaulted_count).saturating_mul(BPS_SCALE) / member_count,
+            (member_count - exited_count).saturating_mul(BPS_SCALE) / member_count,
+        )
+    };
+
+    let weighted = on_time_rate_bps as u64 * 40
+        + completion_rate_bps as u64 * 35
+        + member_retention_bps as u64 * 25;
+    let score = (weighted / (BPS_SCALE as u64 * 100)) as u32;
+
+    HealthScoreResult {
+        score: score.min(100),
+        on_time_rate_bps,
+        completion_rate_bps,
+        member_retention_bps,
+    }
 }
 
 pub fn compute_circle_config_hash(env: &Env, circle: &Circle) -> BytesN<32> {
