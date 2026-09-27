@@ -10,6 +10,9 @@ mod payout;
 mod test;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "../../../circle.rs"]
+pub mod circle_rs;
 mod types;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 

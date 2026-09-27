@@ -209,6 +209,15 @@ pub fn burn(env: &Env, from: &Address, amount: i128) -> Result<(), TokenError> {
     Ok(())
 }
 
+/// Claws back tokens from an account balance and reduces total supply.
+///
+/// # Intentional Design: Frozen Account Bypass
+/// Clawback is an administrative action intended for regulatory compliance, fraud
+/// mitigation, and legal enforcement (aligning with Stellar SEP-0041 asset standards).
+/// An administrator is intentionally permitted to claw back tokens from an account even
+/// if that account is frozen. Requiring unfreezing prior to clawback would create a race
+/// condition allowing unauthorized outbound transfers before the clawback completes.
+/// Regular user operations (`transfer`, `burn`) strictly enforce non-frozen checks.
 pub fn clawback(env: &Env, admin: &Address, from: &Address, amount: i128) -> Result<(), TokenError> {
     admin.require_auth();
     require_admin(env, admin)?;

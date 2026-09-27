@@ -568,6 +568,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "vrf_ownr"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "vrf_salt"
                       },
                       "val": {
@@ -650,6 +658,14 @@
                             },
                             "val": {
                               "u64": "86400"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "health_score"
+                            },
+                            "val": {
+                              "u32": 100
                             }
                           },
                           {

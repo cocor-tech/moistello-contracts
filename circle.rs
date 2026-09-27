@@ -1,207 +1,35 @@
 // src/contracts/circle.rs
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, token, Address, Env,
+};
+
+#[contracterror]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CircleError {
+    AlreadyInitialized = 1,
+    InvalidToken = 2,
+    InvalidFeeBps = 3,
+    Overflow = 4,
+    FeeExceedsLimit = 5,
+    DiscountBipsExceeded = 6,
+    InvalidAmount = 7,
+    InsufficientBalance = 8,
+    CircleConfigNotFound = 9,
+    CollateralAlreadyStaked = 10,
+    MemberRecordNotFound = 11,
+    NotDefaulted = 12,
+    NoCollateralToSlash = 13,
+    RefundNotPermitted = 14,
+    NoCollateralToRefund = 15,
+    Unauthorized = 16,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CircleConfig {
     pub token: Address,
     pub base_amount: i128,
-}
-
-#[contracttype]
-pub enum DataKey {
-    Config,
-}
-
-#[contract]
-pub struct CircleContract;
-
-#[contractimpl]
-impl CircleContract {
-    pub fn initialize(env: Env, config: CircleConfig) {
-        if env.storage().instance().has(&DataKey::Config) {
-            panic!("Contract is already initialized");
-        }
-
-        // FIX: Validate that the token address exists on-chain and is a valid deployed contract/asset
-        if !config.token.exists() {
-            panic!("Invalid token address: contract or asset does not exist on-chain");
-        }
-
-        env.storage().instance().set(&DataKey::Config, &config);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::{Env, Address};
-
-    #[test]
-    #[should_panic(expected = "Invalid token address: contract or asset does not exist on-chain")]
-    fn test_init_rejects_non_existent_token() {
-        let env = Env::default();
-        let contract_id = env.register(CircleContract, ());
-        
-        // Generate a valid-looking dummy contract address that hasn't been deployed/created
-        let fake_token = Address::generate(&env);
-
-        let config = CircleConfig {
-            token: fake_token,
-            base_amount: 1000,
-        };
-
-        // Should panic because fake_token.exists() is false
-        env.invoke_contract(&contract_id, &soroban_sdk::Symbol::new(&env, "initialize"), soroban_sdk::vec![&env, config.into_val(&env)]);
-    }
-}
-
-// src/contracts/circle.rs
-use soroban_sdk::{contract, contractimpl, contracttype, Env};
-
-#[contracttype]
-pub enum DataKey {
-    FeeBps,
-}
-
-#[contract]
-pub struct CircleContract;
-
-#[contractimpl]
-impl CircleContract {
-    pub fn set_fee_bps(env: Env, fee_bps: u32) {
-        // FIX: Enforce strict fee basis point bounds (0 to 10,000 representing 0% to 100%)
-        if fee_bps > 10000 {
-            panic!("Fee basis points cannot exceed 10,000 (100%)");
-        }
-
-        env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
-    }
-
-    pub fn calculate_payout_fee(env: Env, contribution_amount: i128) -> i128 {
-        let fee_bps: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::FeeBps)
-            .unwrap_or(0);
-
-        if contribution_amount <= 0 || fee_bps == 0 {
-            return 0;
-        }
-
-        // FIX: Use checked multiplication to prevent overflow when contribution_amount * fee_bps exceeds i128::MAX
-        let amount_u128 = contribution_amount as u128;
-        let fee_bps_u128 = fee_bps as u128;
-
-        let product = amount_u128.checked_mul(fee_bps_u128).unwrap_or_else(|| {
-            panic!("Overflow detected in payout fee calculation: amount and fee product exceeds u128 limit");
-        });
-
-        let fee = product / 10000u128;
-
-        if fee > i128::MAX as u128 {
-            panic!("Calculated fee exceeds maximum i128 limit");
-        }
-
-        fee as i128
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::Env;
-
-    #[test]
-    #[should_panic(expected = "Fee basis points cannot exceed 10,000 (100%)")]
-    fn test_set_fee_bps_bounds_rejection() {
-        let env = Env::default();
-        let contract_id = env.register(CircleContract, ());
-        
-        // Attempting to set fee above 10000 bps (100%) should panic
-        let _ = env.invoke_contract::<()>(
-            &contract_id,
-            &soroban_sdk::Symbol::new(&env, "set_fee_bps"),
-            soroban_sdk::vec![&env, 10001u32.into_val(&env)],
-        );
-    }
-}
-
-// src/contracts/circle.rs
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
-
-#[contracttype]
-pub enum DataKey {
-    MemberBalance(Address),
-}
-
-#[contract]
-pub struct CircleContract;
-
-#[contractimpl]
-impl CircleContract {
-    pub fn auction_bid(env: Env, bidder: Address, base_amount: i128, discount_bips: u32) -> i128 {
-        bidder.require_auth();
-
-        // FIX: Cap maximum discount_bips at 5000 (50%) to prevent economic griefing and negative/zero payouts
-        if discount_bips > 5000 {
-            panic!("Discount basis points cannot exceed 5000 (50% maximum discount)");
-        }
-
-        if base_amount <= 0 {
-            panic!("Base amount must be greater than zero");
-        }
-
-        // Calculate discounted bid amount: base_amount * (10000 - discount_bips) / 10000
-        let discount_multiplier = 10000u128 - discount_bips as u128;
-        let amount_u128 = base_amount as u128;
-
-        let discounted_amount = (amount_u128 * discount_multiplier) / 10000u128;
-        let final_payable = discounted_amount as i128;
-
-        // Validate bidder has sufficient balance for the calculated discounted amount
-        let balance: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MemberBalance(bidder.clone()))
-            .unwrap_or(0);
-
-        if balance < final_payable {
-            panic!("Insufficient member balance for discounted auction bid amount");
-        }
-
-        final_payable
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::{Env, Address};
-
-    #[test]
-    #[should_panic(expected = "Discount basis points cannot exceed 5000 (50% maximum discount)")]
-    fn test_auction_bid_rejects_excessive_discount() {
-        let env = Env::default();
-        let contract_id = env.register(CircleContract, ());
-        let bidder = Address::generate(&env);
-
-        // Attempting a 100% discount (10000 bips) should be rejected
-        let _ = env.invoke_contract::<i128>(
-            &contract_id,
-            &soroban_sdk::Symbol::new(&env, "auction_bid"),
-            soroban_sdk::vec![&env, bidder.into_val(&env), 1000i128.into_val(&env), 10000u32.into_val(&env)],
-        );
-    }
-}
-
-// src/contracts/circle.rs
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CircleConfig {
-    pub token: Address,
     pub collateral_amount: i128,
 }
 
@@ -217,6 +45,8 @@ pub enum MemberState {
 #[contracttype]
 pub enum DataKey {
     Config,
+    FeeBps,
+    MemberBalance(Address),
     Collateral(Address),
     MemberState(Address),
 }
@@ -226,22 +56,104 @@ pub struct CircleContract;
 
 #[contractimpl]
 impl CircleContract {
-    /// Allows a member to join the circle by staking the required collateral amount.
-    /// Transfers collateral tokens from the member to the circle contract.
-    pub fn join_with_collateral(env: Env, member: Address) {
+    pub fn initialize(env: Env, config: CircleConfig) -> Result<(), CircleError> {
+        if env.storage().instance().has(&DataKey::Config) {
+            return Err(CircleError::AlreadyInitialized);
+        }
+
+        // Validate that the token address exists on-chain and is a valid deployed contract/asset
+        if !Self::token_exists(&env, &config.token) {
+            return Err(CircleError::InvalidToken);
+        }
+
+        env.storage().instance().set(&DataKey::Config, &config);
+        Ok(())
+    }
+
+    pub fn set_fee_bps(env: Env, fee_bps: u32) -> Result<(), CircleError> {
+        if fee_bps > 10000 {
+            return Err(CircleError::InvalidFeeBps);
+        }
+
+        env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+        Ok(())
+    }
+
+    pub fn calculate_payout_fee(env: Env, contribution_amount: i128) -> Result<i128, CircleError> {
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeBps)
+            .unwrap_or(0);
+
+        if contribution_amount <= 0 || fee_bps == 0 {
+            return Ok(0);
+        }
+
+        let amount_u128 = contribution_amount as u128;
+        let fee_bps_u128 = fee_bps as u128;
+
+        let product = amount_u128
+            .checked_mul(fee_bps_u128)
+            .ok_or(CircleError::Overflow)?;
+
+        let fee = product / 10000u128;
+
+        if fee > i128::MAX as u128 {
+            return Err(CircleError::FeeExceedsLimit);
+        }
+
+        Ok(fee as i128)
+    }
+
+    pub fn auction_bid(
+        env: Env,
+        bidder: Address,
+        base_amount: i128,
+        discount_bips: u32,
+    ) -> Result<i128, CircleError> {
+        bidder.require_auth();
+
+        if discount_bips > 5000 {
+            return Err(CircleError::DiscountBipsExceeded);
+        }
+
+        if base_amount <= 0 {
+            return Err(CircleError::InvalidAmount);
+        }
+
+        let discount_multiplier = 10000u128 - discount_bips as u128;
+        let amount_u128 = base_amount as u128;
+
+        let discounted_amount = (amount_u128 * discount_multiplier) / 10000u128;
+        let final_payable = discounted_amount as i128;
+
+        let balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MemberBalance(bidder.clone()))
+            .unwrap_or(0);
+
+        if balance < final_payable {
+            return Err(CircleError::InsufficientBalance);
+        }
+
+        Ok(final_payable)
+    }
+
+    pub fn join_with_collateral(env: Env, member: Address) -> Result<(), CircleError> {
         member.require_auth();
 
         let config: CircleConfig = env
             .storage()
             .instance()
             .get(&DataKey::Config)
-            .unwrap_or_else(|| panic!("Circle config not found"));
+            .ok_or(CircleError::CircleConfigNotFound)?;
 
         if config.collateral_amount <= 0 {
-            return; // No collateral required
+            return Ok(());
         }
 
-        // Check if member already staked
         let existing_collateral: i128 = env
             .storage()
             .persistent()
@@ -249,33 +161,43 @@ impl CircleContract {
             .unwrap_or(0);
 
         if existing_collateral > 0 {
-            panic!("Collateral already staked for member");
+            return Err(CircleError::CollateralAlreadyStaked);
         }
 
-        // Transfer collateral tokens from member to contract via token client
-        let token_client = soroban_sdk::token::Client::new(&env, &config.token);
-        token_client.transfer(&member, &env.current_contract_address(), &config.collateral_amount);
+        let token_client = token::Client::new(&env, &config.token);
+        token_client.transfer(
+            &member,
+            &env.current_contract_address(),
+            &config.collateral_amount,
+        );
 
-        // Record staked collateral and set initial member state
-        env.storage().persistent().set(&DataKey::Collateral(member.clone()), &config.collateral_amount);
-        env.storage().persistent().set(&DataKey::MemberState(member.clone()), &MemberState::Active);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(member.clone()), &config.collateral_amount);
+        env.storage()
+            .persistent()
+            .set(&DataKey::MemberState(member.clone()), &MemberState::Active);
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "CollateralStaked"), member),
             config.collateral_amount,
         );
+        Ok(())
     }
 
-    /// Slashes member collateral upon reaching default limit (max_strikes).
-    pub fn slash_collateral(env: Env, member: Address, treasury: Address) {
+    pub fn slash_collateral(
+        env: Env,
+        member: Address,
+        treasury: Address,
+    ) -> Result<(), CircleError> {
         let state: MemberState = env
             .storage()
             .persistent()
             .get(&DataKey::MemberState(member.clone()))
-            .unwrap_or_else(|| panic!("Member record not found"));
+            .ok_or(CircleError::MemberRecordNotFound)?;
 
         if state != MemberState::Defaulted {
-            panic!("Member is not in defaulted state; cannot slash collateral");
+            return Err(CircleError::NotDefaulted);
         }
 
         let collateral: i128 = env
@@ -285,67 +207,250 @@ impl CircleContract {
             .unwrap_or(0);
 
         if collateral <= 0 {
-            panic!("No collateral balance to slash");
-        }
-
-        let config: CircleConfig = env
-            .storage().instance()
-            .get(&DataKey::Config)
-            .unwrap_or_else(|| panic!("Config not found"));
-
-        // Clear staked collateral balance
-        env.storage().persistent().set(&DataKey::Collateral(member.clone()), &0i128);
-
-        // Transfer slashed collateral to designated protocol treasury
-        let token_client = soroban_sdk::token::Client::new(&env, &config.token);
-        token_client.transfer(&env.current_contract_address(), &treasury, &collateral);
-
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "CollateralSlashed"), member),
-            collateral,
-        );
-    }
-
-    /// Returns staked collateral to member upon successful circle completion or voluntary exit.
-    pub fn refund_collateral(env: Env, member: Address) {
-        member.require_auth();
-
-        let state: MemberState = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MemberState(member.clone()))
-            .unwrap_or_else(|| panic!("Member record not found"));
-
-        if state != MemberState::Completed && state != MemberState::Exited {
-            panic!("Collateral refund only permitted after successful completion or approved exit");
-        }
-
-        let collateral: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Collateral(member.clone()))
-            .unwrap_or(0);
-
-        if collateral <= 0 {
-            panic!("No collateral available for refund");
+            return Err(CircleError::NoCollateralToSlash);
         }
 
         let config: CircleConfig = env
             .storage()
             .instance()
             .get(&DataKey::Config)
-            .unwrap_or_else(|| panic!("Config not found"));
+            .ok_or(CircleError::CircleConfigNotFound)?;
 
-        // Clear collateral balance
-        env.storage().persistent().set(&DataKey::Collateral(member.clone()), &0i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(member.clone()), &0i128);
 
-        // Refund collateral tokens to member
-        let token_client = soroban_sdk::token::Client::new(&env, &config.token);
+        let token_client = token::Client::new(&env, &config.token);
+        token_client.transfer(&env.current_contract_address(), &treasury, &collateral);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "CollateralSlashed"), member),
+            collateral,
+        );
+        Ok(())
+    }
+
+    pub fn refund_collateral(env: Env, member: Address) -> Result<(), CircleError> {
+        member.require_auth();
+
+        let state: MemberState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MemberState(member.clone()))
+            .ok_or(CircleError::MemberRecordNotFound)?;
+
+        if state != MemberState::Completed && state != MemberState::Exited {
+            return Err(CircleError::RefundNotPermitted);
+        }
+
+        let collateral: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(member.clone()))
+            .unwrap_or(0);
+
+        if collateral <= 0 {
+            return Err(CircleError::NoCollateralToRefund);
+        }
+
+        let config: CircleConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::Config)
+            .ok_or(CircleError::CircleConfigNotFound)?;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(member.clone()), &0i128);
+
+        let token_client = token::Client::new(&env, &config.token);
         token_client.transfer(&env.current_contract_address(), &member, &collateral);
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "CollateralRefunded"), member),
             collateral,
         );
+        Ok(())
+    }
+
+    fn token_exists(env: &Env, token: &Address) -> bool {
+        env.try_invoke_contract::<u32, soroban_sdk::Error>(
+            token,
+            &soroban_sdk::Symbol::new(env, "decimals"),
+            soroban_sdk::vec![env],
+        )
+        .is_ok()
+    }
+
+    #[cfg(test)]
+    pub fn set_member_balance(env: Env, member: Address, balance: i128) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::MemberBalance(member), &balance);
+    }
+
+    #[cfg(test)]
+    pub fn set_member_state(env: Env, member: Address, state: MemberState) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::MemberState(member), &state);
+    }
+
+    #[cfg(test)]
+    pub fn set_collateral(env: Env, member: Address, amount: i128) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(member), &amount);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, Env};
+
+    #[test]
+    fn test_init_rejects_non_existent_token() {
+        let env = Env::default();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let fake_token = Address::generate(&env);
+        let config = CircleConfig {
+            token: fake_token,
+            base_amount: 1000,
+            collateral_amount: 0,
+        };
+        let result = client.try_initialize(&config);
+        assert_eq!(result, Err(Ok(CircleError::InvalidToken)));
+    }
+
+    #[test]
+    fn test_init_already_initialized() {
+        let env = Env::default();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let token_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract_v2(token_admin).address();
+        let config = CircleConfig {
+            token,
+            base_amount: 1000,
+            collateral_amount: 0,
+        };
+        assert!(client.try_initialize(&config).is_ok());
+        let result = client.try_initialize(&config);
+        assert_eq!(result, Err(Ok(CircleError::AlreadyInitialized)));
+    }
+
+    #[test]
+    fn test_set_fee_bps_bounds_rejection() {
+        let env = Env::default();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let result = client.try_set_fee_bps(&10001u32);
+        assert_eq!(result, Err(Ok(CircleError::InvalidFeeBps)));
+    }
+
+    #[test]
+    fn test_auction_bid_rejects_excessive_discount() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let bidder = Address::generate(&env);
+        let result = client.try_auction_bid(&bidder, &1000i128, &10000u32);
+        assert_eq!(result, Err(Ok(CircleError::DiscountBipsExceeded)));
+    }
+
+    #[test]
+    fn test_auction_bid_rejects_invalid_amount() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let bidder = Address::generate(&env);
+        let result = client.try_auction_bid(&bidder, &0i128, &1000u32);
+        assert_eq!(result, Err(Ok(CircleError::InvalidAmount)));
+    }
+
+    #[test]
+    fn test_auction_bid_rejects_insufficient_balance() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let bidder = Address::generate(&env);
+        let result = client.try_auction_bid(&bidder, &1000i128, &1000u32);
+        assert_eq!(result, Err(Ok(CircleError::InsufficientBalance)));
+    }
+
+    #[test]
+    fn test_join_with_collateral_already_staked() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let token_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract_v2(token_admin).address();
+        let config = CircleConfig {
+            token,
+            base_amount: 1000,
+            collateral_amount: 50,
+        };
+        client.initialize(&config);
+        let member = Address::generate(&env);
+        client.set_collateral(&member, &50);
+        let result = client.try_join_with_collateral(&member);
+        assert_eq!(result, Err(Ok(CircleError::CollateralAlreadyStaked)));
+    }
+
+    #[test]
+    fn test_slash_collateral_not_defaulted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let member = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        client.set_member_state(&member, &MemberState::Active);
+        let result = client.try_slash_collateral(&member, &treasury);
+        assert_eq!(result, Err(Ok(CircleError::NotDefaulted)));
+    }
+
+    #[test]
+    fn test_slash_collateral_no_collateral() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let member = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        client.set_member_state(&member, &MemberState::Defaulted);
+        let result = client.try_slash_collateral(&member, &treasury);
+        assert_eq!(result, Err(Ok(CircleError::NoCollateralToSlash)));
+    }
+
+    #[test]
+    fn test_refund_collateral_not_permitted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let member = Address::generate(&env);
+        client.set_member_state(&member, &MemberState::Active);
+        let result = client.try_refund_collateral(&member);
+        assert_eq!(result, Err(Ok(CircleError::RefundNotPermitted)));
+    }
+
+    #[test]
+    fn test_refund_collateral_no_collateral() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CircleContract, ());
+        let client = CircleContractClient::new(&env, &contract_id);
+        let member = Address::generate(&env);
+        client.set_member_state(&member, &MemberState::Completed);
+        let result = client.try_refund_collateral(&member);
+        assert_eq!(result, Err(Ok(CircleError::NoCollateralToRefund)));
     }
 }

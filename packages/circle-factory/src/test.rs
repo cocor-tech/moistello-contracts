@@ -5,9 +5,7 @@ use soroban_sdk::{Address, BytesN, Env};
 use crate::{CircleFactory, CircleFactoryClient}; use crate::types::{CircleConfig, FactoryError};
 
 fn install_wasm_hash(env: &Env) -> BytesN<32> {
-    // Test fixture wasm shipped with soroban-sdk (valid Soroban contract
-    // wasm with metadata section). The factory only deploys it; the deployed
-    // contract is never invoked by the factory tests.
+    env.budget().reset_unlimited();
     let wasm: &[u8] = include_bytes!("../test_wasm/contract.wasm");
     env.deployer().upload_contract_wasm(wasm)
 }

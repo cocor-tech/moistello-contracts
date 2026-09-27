@@ -407,7 +407,8 @@ pub fn random_in_range(env: &Env, max: u32, nonce: u32) -> Result<u32, VrfError>
 
 /// Compute the VRF hash deterministically from inputs.
 ///
-/// SHA-256(input_seed:u32 ++ salt:32bytes ++ counter:u32) → first 4 bytes → u32
+/// SHA-256(input_seed:u32 ++ salt:32bytes ++ counter:u32) → folds all 8 4-byte
+/// segments (all 32 bytes) together via XOR to preserve full 256-bit entropy.
 fn compute_vrf_hash(
     env: &Env,
     input_seed: u32,
@@ -417,8 +418,17 @@ fn compute_vrf_hash(
     let hash_bytes = hash_to_bytes(env, input_seed, salt, counter);
     let hash = env.crypto().sha256(&hash_bytes);
     let array = hash.to_array();
-    Ok(u32::from_le_bytes([array[0], array[1], array[2], array[3]])
-        .wrapping_add(u32::from_le_bytes([array[4], array[5], array[6], array[7]])))
+    let mut result = 0u32;
+    for i in 0..8 {
+        let chunk = [
+            array[i * 4],
+            array[i * 4 + 1],
+            array[i * 4 + 2],
+            array[i * 4 + 3],
+        ];
+        result ^= u32::from_le_bytes(chunk);
+    }
+    Ok(result)
 }
 
 /// Build the pre-hash byte sequence: input_seed(4) ++ salt(32) ++ counter(4)

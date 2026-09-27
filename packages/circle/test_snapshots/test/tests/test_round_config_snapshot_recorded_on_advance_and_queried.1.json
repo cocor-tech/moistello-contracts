@@ -890,7 +890,7 @@
                           "symbol": "total_received"
                         },
                         "val": {
-                          "i128": "2000000000"
+                          "i128": "0"
                         }
                       }
                     ]
@@ -958,7 +958,7 @@
                           "symbol": "total_received"
                         },
                         "val": {
-                          "i128": "0"
+                          "i128": "2000000000"
                         }
                       }
                     ]
@@ -1019,7 +1019,7 @@
                           "symbol": "recipient"
                         },
                         "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
                         }
                       },
                       {
@@ -1071,7 +1071,7 @@
                           "symbol": "recipient"
                         },
                         "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
                         }
                       },
                       {
@@ -1224,6 +1224,103 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "Streaks"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "vec": [
+                  {
+                    "map": [
+                      {
+                        "key": {
+                          "symbol": "current_streak"
+                        },
+                        "val": {
+                          "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "last_round"
+                        },
+                        "val": {
+                          "u32": 0
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "longest_streak"
+                        },
+                        "val": {
+                          "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "member"
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "map": [
+                      {
+                        "key": {
+                          "symbol": "current_streak"
+                        },
+                        "val": {
+                          "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "last_round"
+                        },
+                        "val": {
+                          "u32": 0
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "longest_streak"
+                        },
+                        "val": {
+                          "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "member"
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "Votes"
                   }
                 ]
@@ -1259,6 +1356,22 @@
                       },
                       "val": {
                         "u32": 2
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "vrf_nonce"
+                      },
+                      "val": {
+                        "u32": 1
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "vrf_ownr"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                       }
                     },
                     {
@@ -1349,6 +1462,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "health_score"
+                            },
+                            "val": {
+                              "u32": 1
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "id"
                             },
                             "val": {
@@ -1408,7 +1529,7 @@
                               "symbol": "payout_bitmap"
                             },
                             "val": {
-                              "u128": "1"
+                              "u128": "2"
                             }
                           },
                           {
@@ -1716,7 +1837,7 @@
                       "symbol": "amount"
                     },
                     "val": {
-                      "i128": "3000000000"
+                      "i128": "1000000000"
                     }
                   },
                   {
@@ -1768,7 +1889,7 @@
                       "symbol": "amount"
                     },
                     "val": {
-                      "i128": "1000000000"
+                      "i128": "3000000000"
                     }
                   },
                   {

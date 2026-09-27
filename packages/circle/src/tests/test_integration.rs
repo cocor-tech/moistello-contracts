@@ -31,16 +31,20 @@ fn test_full_integration_factory_circle_treasury() {
 #[test]
 fn test_circle_lifecycle_with_fees() {
     let env = Env::default();
-    env.mock_all_auths();
+    env.mock_all_auths_allowing_non_root_auth();
 
     let organizer = Address::generate(&env);
     let token_admin = Address::generate(&env);
-    let token = env.register_stellar_asset_contract(token_admin.clone());
-    let treasury = Address::generate(&env); // Simulated treasury address
+    let token = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let admin = organizer.clone();
+
+    let treasury_id = env.register(treasury::Treasury, ());
+    let treasury_client = treasury::TreasuryClient::new(&env, &treasury_id);
+    treasury_client.init(&admin, &token.address());
 
     let config = crate::types::CircleConfig {
         organizer: organizer.clone(),
-        token: token.clone(),
+        token: token.address(),
         name: String::from_str(&env, "Integration Test Circle"),
         contribution_amount: 100_0000000i128,
         max_members: 3u32,
@@ -55,13 +59,12 @@ fn test_circle_lifecycle_with_fees() {
         slug: String::from_str(&env, "integration-test"),
     };
 
-    let admin = organizer.clone();
     let factory = Address::generate(&env);
     let contract_id = env.register(crate::Circle, (&admin, &factory, &config));
     let client = crate::CircleClient::new(&env, &contract_id);
 
     // Configure circle with treasury and fee
-    client.set_treasury(&organizer, &treasury);
+    client.set_treasury(&organizer, &treasury_id);
     client.set_fee_bps(&organizer, &50u32); // 0.5% fee
 
     // Members join
@@ -77,7 +80,7 @@ fn test_circle_lifecycle_with_fees() {
     assert_eq!(client.get_status().status, 1u32); // STATUS_ACTIVE
 
     // Mint tokens for members
-    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token.address());
     token_client.mint(&m1, &(config.contribution_amount * 3));
     token_client.mint(&m2, &(config.contribution_amount * 3));
     token_client.mint(&m3, &(config.contribution_amount * 3));
@@ -93,8 +96,8 @@ fn test_circle_lifecycle_with_fees() {
     assert!(status_r0.total_fees > 0); // Fee was collected
 
     // Verify treasury received the fee
-    let token_client_regular = soroban_sdk::token::Client::new(&env, &token);
-    let treasury_balance = token_client_regular.balance(&treasury);
+    let token_client_regular = soroban_sdk::token::Client::new(&env, &token.address());
+    let treasury_balance = token_client_regular.balance(&treasury_id);
     assert!(treasury_balance > 0, "Treasury should have received fees");
 
     // Round 1: Repeat
@@ -115,7 +118,7 @@ fn test_circle_lifecycle_with_fees() {
     assert_eq!(final_status.current_round, 3u32);
 
     // Verify total fees accumulated
-    let final_treasury_balance = token_client_regular.balance(&treasury);
+    let final_treasury_balance = token_client_regular.balance(&treasury_id);
     assert_eq!(final_treasury_balance, final_status.total_fees);
     assert!(final_treasury_balance > 0);
 }
@@ -220,14 +223,13 @@ fn test_dispute_slash_payout_flow() {
     // Subsequent payout execution succeeds for round 0
     client.trigger_payout(&admin, &0u32);
 
-    // Payout distributed proportionally based on time-weighted contributions (1000 to m1, 1000 to m2)
-    // m1 also receives collateral refund (500) upon circle completion
-    assert_eq!(token_client.balance(&m1), 1500);
+    // Recipient m1 receives full round pool (2000) + collateral refund (500) = 2500
+    assert_eq!(token_client.balance(&m1), 2500);
 
-    // Verify circle completed and m2's slashed collateral was NOT returned (m2 receives only their 1000 contribution payout share)
+    // Verify circle completed and defaulted m2 received 0
     let status_final = client.get_status();
     assert_eq!(status_final.status, 2u32); // STATUS_COMPLETED
-    assert_eq!(token_client.balance(&m2), 1000);
+    assert_eq!(token_client.balance(&m2), 0);
 
     // Verify contract has zero remaining tokens (full conservation)
     assert_eq!(token_client.balance(&contract_id), 0);

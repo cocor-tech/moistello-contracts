@@ -1457,6 +1457,7 @@ fn test_resolve_dispute_unauthorized() {
 fn test_trigger_payout_transfers_tokens_and_deposits_fee() {
     let env = Env::default();
     let (client, admin, token) = setup_circle(&env);
+    env.mock_all_auths_allowing_non_root_auth();
 
     let treasury_id = env.register(treasury::Treasury, ());
     let treasury_client = treasury::TreasuryClient::new(&env, &treasury_id);

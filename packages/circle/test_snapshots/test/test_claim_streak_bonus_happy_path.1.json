@@ -601,6 +601,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "health_score"
+                            },
+                            "val": {
+                              "u32": 100
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "id"
                             },
                             "val": {
