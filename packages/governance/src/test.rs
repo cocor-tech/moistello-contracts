@@ -265,7 +265,12 @@ mod tests {
             args: Vec::new(&env),
         };
         let description = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.create_proposal(&admin, &create_config().proposal_deposit, &action, &description);
+        let id = client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &description,
+        );
 
         let delegator = Address::generate(&env);
         let delegatee = Address::generate(&env);
@@ -294,10 +299,221 @@ mod tests {
         assert_eq!(proposal.votes_for, 2);
 
         client.revoke_delegation(&delegator);
-        let id2 = client.create_proposal(&admin, &create_config().proposal_deposit, &action, &description);
+        let id2 = client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &description,
+        );
         client.cast_vote(&delegatee, &id2, &VoteType::For);
         assert_eq!(client.get_proposal(&id2).votes_for, 1);
         client.cast_vote(&delegator, &id2, &VoteType::Against);
         assert_eq!(client.get_proposal(&id2).votes_against, 1);
+    }
+
+    // ── Self-delegation guard tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_self_delegation_is_rejected() {
+        // A user must never be able to delegate to themselves — the guard must
+        // fire before any storage write occurs.
+        let env = Env::default();
+        let (client, _) = setup(&env);
+        let alice = Address::generate(&env);
+
+        let result = client.try_delegate(&alice, &alice);
+        assert_eq!(result, Err(Ok(GovernanceError::CircularDelegation)));
+    }
+
+    #[test]
+    fn test_direct_circular_delegation_a_to_b_then_b_to_a_rejected() {
+        // A→B is allowed; B→A must be rejected (would form a cycle).
+        let env = Env::default();
+        let (client, _) = setup(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.delegate(&alice, &bob);
+
+        // Bob already has alice as a delegator, so he cannot delegate outward.
+        let result = client.try_delegate(&bob, &alice);
+        assert_eq!(result, Err(Ok(GovernanceError::CircularDelegation)));
+    }
+
+    #[test]
+    fn test_three_hop_delegation_loop_rejected() {
+        // A→B, B attempts→C: rejected because B already has a delegator (A).
+        // C→A: rejected because A is already being delegated to by none,
+        //      but A has already delegated away; A→B means A has delegation set,
+        //      so C→A is fine IF A's delegators list is empty.  The real guard
+        //      is that B cannot delegate further (B has delegators).
+        let env = Env::default();
+        let (client, _) = setup(&env);
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let c = Address::generate(&env);
+
+        client.delegate(&a, &b);
+
+        // B has A as a delegator → B cannot delegate to anyone.
+        assert_eq!(client.try_delegate(&b, &c), Err(Ok(GovernanceError::CircularDelegation)));
+    }
+
+    #[test]
+    fn test_re_delegation_replaces_previous_delegatee() {
+        // Delegating to a second target after already having one should
+        // cleanly replace the first: the old delegatee must no longer carry
+        // the delegator in their list, and the new delegatee must gain it.
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let delegator = Address::generate(&env);
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.delegate(&delegator, &first);
+        // Redirect to a different delegatee.
+        client.delegate(&delegator, &second);
+
+        // Vote via `second` — delegator's power must now flow to second, not first.
+        let action = governance::types::ProposalAction {
+            target_contract: admin.clone(),
+            method: Symbol::new(&env, "noop"),
+            args: Vec::new(&env),
+        };
+        let description = BytesN::from_array(&env, &[11u8; 32]);
+        let id = client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &description,
+        );
+
+        client.cast_vote(&second, &id, &VoteType::For);
+        // second (1) + delegator (1) = 2 votes
+        assert_eq!(client.get_proposal(&id).votes_for, 2);
+
+        // `first` votes independently — their own vote only (1).
+        client.cast_vote(&first, &id, &VoteType::For);
+        assert_eq!(client.get_proposal(&id).votes_for, 3);
+    }
+
+    #[test]
+    fn test_revoke_delegation_allows_independent_voting() {
+        // After revoking, the former delegator must be able to cast their own
+        // vote, and the former delegatee must not carry their power.
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let delegator = Address::generate(&env);
+        let delegatee = Address::generate(&env);
+
+        client.delegate(&delegator, &delegatee);
+        client.revoke_delegation(&delegator);
+
+        let action = governance::types::ProposalAction {
+            target_contract: admin.clone(),
+            method: Symbol::new(&env, "noop"),
+            args: Vec::new(&env),
+        };
+        let description = BytesN::from_array(&env, &[12u8; 32]);
+        let id = client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &description,
+        );
+
+        // delegatee votes for themselves only (1 vote).
+        client.cast_vote(&delegatee, &id, &VoteType::For);
+        assert_eq!(client.get_proposal(&id).votes_for, 1);
+
+        // Former delegator can now vote independently.
+        client.cast_vote(&delegator, &id, &VoteType::Against);
+        assert_eq!(client.get_proposal(&id).votes_against, 1);
+    }
+
+    #[test]
+    fn test_delegator_cannot_vote_directly_while_delegated() {
+        // A delegator who has an active delegation must not be able to cast a
+        // direct vote — their power is exercised only through the delegatee.
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let delegator = Address::generate(&env);
+        let delegatee = Address::generate(&env);
+
+        client.delegate(&delegator, &delegatee);
+
+        let action = governance::types::ProposalAction {
+            target_contract: admin.clone(),
+            method: Symbol::new(&env, "noop"),
+            args: Vec::new(&env),
+        };
+        let description = BytesN::from_array(&env, &[13u8; 32]);
+        let id = client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &description,
+        );
+
+        assert_eq!(
+            client.try_cast_vote(&delegator, &id, &VoteType::For),
+            Err(Ok(GovernanceError::Unauthorized))
+        );
+    }
+
+    #[test]
+    fn test_delegate_and_revoke_idempotent_on_no_prior_delegation() {
+        // Revoking when no delegation exists must not panic — it is a no-op.
+        let env = Env::default();
+        let (client, _) = setup(&env);
+        let alice = Address::generate(&env);
+
+        // Should succeed silently with no prior delegation set.
+        client.revoke_delegation(&alice);
+    }
+
+    #[test]
+    fn test_delegation_blocked_when_contract_paused() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        client.pause(&admin);
+
+        let delegator = Address::generate(&env);
+        let delegatee = Address::generate(&env);
+
+        let result = client.try_delegate(&delegator, &delegatee);
+        assert_eq!(result, Err(Ok(GovernanceError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_delegation_and_vote_weight_accumulates_for_multiple_delegators() {
+        // Two distinct addresses each delegate to the same delegatee; when
+        // the delegatee votes, the tally should include all three votes (their
+        // own + the two delegators').
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let delegatee = Address::generate(&env);
+
+        client.delegate(&alice, &delegatee);
+        client.delegate(&bob, &delegatee);
+
+        let action = governance::types::ProposalAction {
+            target_contract: admin.clone(),
+            method: Symbol::new(&env, "noop"),
+            args: Vec::new(&env),
+        };
+        let description = BytesN::from_array(&env, &[14u8; 32]);
+        let id = client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &description,
+        );
+
+        client.cast_vote(&delegatee, &id, &VoteType::For);
+        // delegatee (1) + alice (1) + bob (1) = 3
+        assert_eq!(client.get_proposal(&id).votes_for, 3);
     }
 }
