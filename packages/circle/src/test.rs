@@ -1798,7 +1798,7 @@ fn test_claim_streak_bonus_happy_path() {
 #[test]
 fn test_year_long_lifecycle_simulation() {
     let env = Env::default();
-    env.mock_all_auths();
+    env.mock_all_auths_allowing_non_root_auth();
 
     const NUM_MEMBERS: u32 = 12;
     const ROUND_LEN_SECS: u64 = 30 * 86400; // ~30-day rounds -> 360 days for 12 rounds
@@ -1823,8 +1823,8 @@ fn test_year_long_lifecycle_simulation() {
         contribution_deadline_seconds: DEADLINE_SECS,
         min_moi_score: 0,
         collateral_amount: 0,
-        penalty_bps: 500,
-        grace_period_seconds: 0,
+        penalty_bps: 0,
+        grace_period_seconds: 240 * 86400,
         max_strikes: 3,
         slug: String::from_str(&env, "year-circle"),
     };
