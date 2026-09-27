@@ -169,7 +169,11 @@ pub fn cast_vote(
     {
         return Err(GovernanceError::AlreadyVoted);
     }
-    if env.storage().persistent().has(&DataKey::Delegation(voter.clone())) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::Delegation(voter.clone()))
+    {
         return Err(GovernanceError::Unauthorized);
     }
 
@@ -177,8 +181,9 @@ pub fn cast_vote(
 
     // Own power is read live at vote time (#435), not from a proposal snapshot.
     let p = get_vote_power(env, voter);
-    total_vote_power = math::safe_add(total_vote_power, p).map_err(|_| GovernanceError::InvalidConfig)?;
-    
+    total_vote_power =
+        math::safe_add(total_vote_power, p).map_err(|_| GovernanceError::InvalidConfig)?;
+
     env.storage().persistent().set(
         &DataKey::Vote(proposal_id, voter.clone()),
         &VoteRecord {
@@ -197,13 +202,22 @@ pub fn cast_vote(
     .publish(env);
 
     // Process delegators
-    let delegators: Vec<Address> = env.storage().persistent().get(&DataKey::Delegators(voter.clone())).unwrap_or_else(|| Vec::new(env));
+    let delegators: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Delegators(voter.clone()))
+        .unwrap_or_else(|| Vec::new(env));
     for i in 0..delegators.len() {
         if let Some(d) = delegators.get(i) {
-            if !env.storage().persistent().has(&DataKey::Vote(proposal_id, d.clone())) {
+            if !env
+                .storage()
+                .persistent()
+                .has(&DataKey::Vote(proposal_id, d.clone()))
+            {
                 let dp = get_vote_power(env, &d);
-                total_vote_power = math::safe_add(total_vote_power, dp).map_err(|_| GovernanceError::InvalidConfig)?;
-                
+                total_vote_power = math::safe_add(total_vote_power, dp)
+                    .map_err(|_| GovernanceError::InvalidConfig)?;
+
                 env.storage().persistent().set(
                     &DataKey::Vote(proposal_id, d.clone()),
                     &VoteRecord {
@@ -244,7 +258,11 @@ pub fn cast_vote(
     Ok(())
 }
 
-pub fn delegate(env: &Env, delegator: &Address, delegatee: &Address) -> Result<(), GovernanceError> {
+pub fn delegate(
+    env: &Env,
+    delegator: &Address,
+    delegatee: &Address,
+) -> Result<(), GovernanceError> {
     pause::when_not_paused(env).map_err(|_| GovernanceError::ContractPaused)?;
     delegator.require_auth();
 
@@ -253,24 +271,42 @@ pub fn delegate(env: &Env, delegator: &Address, delegatee: &Address) -> Result<(
     }
 
     // Check for transitive delegation (cannot delegate to someone who has already delegated)
-    if env.storage().persistent().has(&DataKey::Delegation(delegatee.clone())) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::Delegation(delegatee.clone()))
+    {
         return Err(GovernanceError::CircularDelegation);
     }
-    
+
     // Check if delegator has delegators of their own (cannot delegate if you act as a delegatee)
-    let delegators: Vec<Address> = env.storage().persistent().get(&DataKey::Delegators(delegator.clone())).unwrap_or_else(|| Vec::new(env));
+    let delegators: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Delegators(delegator.clone()))
+        .unwrap_or_else(|| Vec::new(env));
     if delegators.len() > 0 {
         return Err(GovernanceError::CircularDelegation);
     }
 
-    if let Some(old_delegatee) = env.storage().persistent().get::<DataKey, Address>(&DataKey::Delegation(delegator.clone())) {
+    if let Some(old_delegatee) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, Address>(&DataKey::Delegation(delegator.clone()))
+    {
         remove_delegator(env, &old_delegatee, delegator);
     }
 
-    env.storage().persistent().set(&DataKey::Delegation(delegator.clone()), delegatee);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Delegation(delegator.clone()), delegatee);
     add_delegator(env, delegatee, delegator);
 
-    Delegated { delegator: delegator.clone(), delegatee: delegatee.clone() }.publish(env);
+    Delegated {
+        delegator: delegator.clone(),
+        delegatee: delegatee.clone(),
+    }
+    .publish(env);
     Ok(())
 }
 
@@ -278,22 +314,41 @@ pub fn revoke_delegation(env: &Env, delegator: &Address) -> Result<(), Governanc
     pause::when_not_paused(env).map_err(|_| GovernanceError::ContractPaused)?;
     delegator.require_auth();
 
-    if let Some(old_delegatee) = env.storage().persistent().get::<DataKey, Address>(&DataKey::Delegation(delegator.clone())) {
+    if let Some(old_delegatee) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, Address>(&DataKey::Delegation(delegator.clone()))
+    {
         remove_delegator(env, &old_delegatee, delegator);
-        env.storage().persistent().remove(&DataKey::Delegation(delegator.clone()));
-        DelegationRevoked { delegator: delegator.clone() }.publish(env);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Delegation(delegator.clone()));
+        DelegationRevoked {
+            delegator: delegator.clone(),
+        }
+        .publish(env);
     }
     Ok(())
 }
 
 fn add_delegator(env: &Env, delegatee: &Address, delegator: &Address) {
-    let mut list: Vec<Address> = env.storage().persistent().get(&DataKey::Delegators(delegatee.clone())).unwrap_or_else(|| Vec::new(env));
+    let mut list: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Delegators(delegatee.clone()))
+        .unwrap_or_else(|| Vec::new(env));
     list.push_back(delegator.clone());
-    env.storage().persistent().set(&DataKey::Delegators(delegatee.clone()), &list);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Delegators(delegatee.clone()), &list);
 }
 
 fn remove_delegator(env: &Env, delegatee: &Address, delegator: &Address) {
-    let list: Vec<Address> = env.storage().persistent().get(&DataKey::Delegators(delegatee.clone())).unwrap_or_else(|| Vec::new(env));
+    let list: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Delegators(delegatee.clone()))
+        .unwrap_or_else(|| Vec::new(env));
     let mut new_list = Vec::new(env);
     for i in 0..list.len() {
         if let Some(d) = list.get(i) {
@@ -302,7 +357,9 @@ fn remove_delegator(env: &Env, delegatee: &Address, delegator: &Address) {
             }
         }
     }
-    env.storage().persistent().set(&DataKey::Delegators(delegatee.clone()), &new_list);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Delegators(delegatee.clone()), &new_list);
 }
 
 /// Finalize a proposal after its voting period has ended.
@@ -578,6 +635,44 @@ pub fn get_proposals(env: &Env, status: ProposalStatus, limit: u32) -> Vec<Propo
         i += 1;
     }
     out
+}
+
+fn proposal_metadata(proposal: Proposal) -> ProposalMetadata {
+    ProposalMetadata {
+        id: proposal.id,
+        proposer: proposal.proposer,
+        description: proposal.description,
+        status: proposal.status,
+        created_at: proposal.created_at,
+        voting_ends_at: proposal.voting_ends_at,
+        timelock_ends_at: proposal.timelock_ends_at,
+    }
+}
+
+pub fn get_proposal_metadata_page(env: &Env, cursor: u64, limit: u32) -> ProposalMetadataPage {
+    let total: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ProposalCount)
+        .unwrap_or(0);
+    let capped_limit = if limit > 50 { 50 } else { limit };
+    let mut entries = Vec::new(env);
+    let mut id = cursor;
+    while id < total && (entries.len() as u32) < capped_limit {
+        if let Some(proposal) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Proposal>(&DataKey::Proposal(id))
+        {
+            entries.push_back(proposal_metadata(proposal));
+        }
+        id += 1;
+    }
+    ProposalMetadataPage {
+        entries,
+        next_cursor: id,
+        total,
+    }
 }
 
 pub fn get_vote(env: &Env, proposal_id: u64, voter: &Address) -> Option<VoteRecord> {

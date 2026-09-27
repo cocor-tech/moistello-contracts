@@ -214,7 +214,7 @@ fn test_dispute_slash_payout_flow() {
     let m2_record = members.iter().find(|m| m.address == m2).unwrap();
     assert_eq!(m2_record.strikes, 1);
     assert_eq!(m2_record.status, 2u32); // MEMBER_DEFAULTED
-    // 3. Contract balance reduced by slashed collateral (now has m1 collateral + 2 contributions)
+                                        // 3. Contract balance reduced by slashed collateral (now has m1 collateral + 2 contributions)
     assert_eq!(token_client.balance(&contract_id), collateral + contribution * 2);
 
     // Subsequent payout execution succeeds for round 0
@@ -239,4 +239,3 @@ fn test_dispute_slash_payout_flow() {
         + token_client.balance(&contract_id);
     assert_eq!(total_distributed, initial_mint_total);
 }
-

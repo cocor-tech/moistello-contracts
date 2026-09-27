@@ -1,5 +1,10 @@
-use soroban_sdk::{Address, BytesN, Env, Vec, symbol_short};
-use crate::types::*; use common::pause;
+use crate::types::*;
+use common::pause;
+use soroban_sdk::{symbol_short, xdr::ToXdr, Address, BytesN, Env, Vec};
+
+fn canonical_deployment_salt(env: &Env, config: &CircleConfig) -> BytesN<32> {
+    env.crypto().sha256(&config.to_xdr(env)).into()
+}
 
 /// Initializes the circle factory with admin, fee configuration, and WASM hash.
 ///
@@ -35,13 +40,32 @@ pub fn init(
     rate_limit_period_secs: u64,
 ) -> Result<(), FactoryError> {
     admin.require_auth();
-    if fee_bps < 0 || fee_bps > 10_000 { return Err(FactoryError::InvalidFeeBps); }
-    if organizer_rate_limit > 0 && rate_limit_period_secs == 0 { return Err(FactoryError::InvalidConfig); }
+    if fee_bps < 0 || fee_bps > 10_000 {
+        return Err(FactoryError::InvalidFeeBps);
+    }
+    if organizer_rate_limit > 0 && rate_limit_period_secs == 0 {
+        return Err(FactoryError::InvalidConfig);
+    }
     env.storage().instance().set(&DataKey::Admin, admin);
-    env.storage().instance().set(&DataKey::FeeConfig, &FeeConfig { fee_bps, updated_at: env.ledger().timestamp(), updated_by: admin.clone() });
-    env.storage().instance().set(&DataKey::WasmHash, circle_wasm_hash);
+    env.storage().instance().set(
+        &DataKey::FeeConfig,
+        &FeeConfig {
+            fee_bps,
+            updated_at: env.ledger().timestamp(),
+            updated_by: admin.clone(),
+        },
+    );
+    env.storage()
+        .instance()
+        .set(&DataKey::WasmHash, circle_wasm_hash);
     env.storage().instance().set(&DataKey::CircleCount, &0u32);
-    env.storage().instance().set(&DataKey::RateLimitConfig, &RateLimitConfig { limit: organizer_rate_limit, period_secs: rate_limit_period_secs });
+    env.storage().instance().set(
+        &DataKey::RateLimitConfig,
+        &RateLimitConfig {
+            limit: organizer_rate_limit,
+            period_secs: rate_limit_period_secs,
+        },
+    );
     Ok(())
 }
 /// Deploys a new circle contract with the provided configuration.
@@ -69,28 +93,82 @@ pub fn init(
 pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, FactoryError> {
     pause::when_not_paused(env).map_err(|_| FactoryError::ContractPaused)?;
     config.organizer.require_auth();
-    if config.max_members < 2 || config.contribution_amount <= 0 || config.total_rounds == 0 || config.payout_type > 3 { return Err(FactoryError::InvalidConfig); }
-    let rl: RateLimitConfig = env.storage().instance().get(&DataKey::RateLimitConfig).unwrap_or(RateLimitConfig { limit: 0, period_secs: 0 });
+    if config.max_members < 2
+        || config.contribution_amount <= 0
+        || config.total_rounds == 0
+        || config.payout_type > 3
+    {
+        return Err(FactoryError::InvalidConfig);
+    }
+    let rl: RateLimitConfig = env
+        .storage()
+        .instance()
+        .get(&DataKey::RateLimitConfig)
+        .unwrap_or(RateLimitConfig {
+            limit: 0,
+            period_secs: 0,
+        });
     if rl.limit > 0 {
         let period = env.ledger().timestamp() / rl.period_secs;
         let key = DataKey::OrganizerPeriodCount(config.organizer.clone(), period);
         let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
-        if count >= rl.limit { return Err(FactoryError::RateLimitExceeded); }
-        env.storage().persistent().set(&key, &(count.checked_add(1).ok_or(FactoryError::InvalidConfig)?));
+        if count >= rl.limit {
+            return Err(FactoryError::RateLimitExceeded);
+        }
+        env.storage()
+            .persistent()
+            .set(&key, &(count.checked_add(1).ok_or(FactoryError::InvalidConfig)?));
     }
-    let wh: BytesN<32> = env.storage().instance().get(&DataKey::WasmHash).ok_or(FactoryError::WasmHashNotSet)?;
-    let count: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
-    let mut salt = [0u8; 32];
-    salt[28..32].copy_from_slice(&count.to_be_bytes());
-    let cid = env.deployer().with_current_contract(BytesN::from_array(env, &salt)).deploy_v2(wh, (config.organizer.clone(), env.current_contract_address(), config.clone()));
+    let wh: BytesN<32> = env
+        .storage()
+        .instance()
+        .get(&DataKey::WasmHash)
+        .ok_or(FactoryError::WasmHashNotSet)?;
+    let salt = canonical_deployment_salt(env, config);
+    let deployment_key = DataKey::CanonicalDeployment(salt.clone());
+    if env.storage().persistent().has(&deployment_key) {
+        return Err(FactoryError::CircleDeployFailed);
+    }
+    let cid = env
+        .deployer()
+        .with_current_contract(salt.clone())
+        .deploy_v2(wh, (config.organizer.clone(), env.current_contract_address(), config.clone()));
     let now = env.ledger().timestamp();
-    let mut circles: Vec<CircleEntry> = env.storage().persistent().get(&DataKey::CircleList).unwrap_or_else(|| Vec::new(env));
-    circles.push_back(CircleEntry { circle_id: cid.clone(), name: config.name.clone(), organizer: config.organizer.clone(), deployed_at: now, status: 0 });
-    env.storage().persistent().set(&DataKey::CircleConfig(cid.clone()), config);
-    env.storage().persistent().set(&DataKey::CircleList, &circles);
-    let c: u32 = env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0);
-    env.storage().instance().set(&DataKey::CircleCount, &c.checked_add(1).ok_or(FactoryError::InvalidConfig)?);
-    env.events().publish((env.current_contract_address(), symbol_short!("deploy")), CircleDeployed { creator: config.organizer.clone(), circle_id: cid.clone(), name: config.name.clone() });
+    let mut circles: Vec<CircleEntry> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::CircleList)
+        .unwrap_or_else(|| Vec::new(env));
+    circles.push_back(CircleEntry {
+        circle_id: cid.clone(),
+        name: config.name.clone(),
+        organizer: config.organizer.clone(),
+        deployed_at: now,
+        status: 0,
+    });
+    env.storage().persistent().set(&deployment_key, &cid);
+    env.storage()
+        .persistent()
+        .set(&DataKey::CircleConfig(cid.clone()), config);
+    env.storage()
+        .persistent()
+        .set(&DataKey::CircleList, &circles);
+    let c: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::CircleCount)
+        .unwrap_or(0);
+    env.storage()
+        .instance()
+        .set(&DataKey::CircleCount, &c.checked_add(1).ok_or(FactoryError::InvalidConfig)?);
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("deploy")),
+        CircleDeployed {
+            creator: config.organizer.clone(),
+            circle_id: cid.clone(),
+            name: config.name.clone(),
+        },
+    );
     Ok(cid)
 }
 /// Returns the registry of all circles deployed by this factory.
@@ -110,7 +188,15 @@ pub fn get_circle_config(env: &Env, cid: &Address) -> Result<CircleConfig, Facto
         .ok_or(FactoryError::InvalidConfig)
 }
 
-pub fn get_circles(env: &Env) -> CircleRegistry { CircleRegistry { circles: env.storage().persistent().get(&DataKey::CircleList).unwrap_or_else(|| Vec::new(env)) } }
+pub fn get_circles(env: &Env) -> CircleRegistry {
+    CircleRegistry {
+        circles: env
+            .storage()
+            .persistent()
+            .get(&DataKey::CircleList)
+            .unwrap_or_else(|| Vec::new(env)),
+    }
+}
 /// Returns the total count of circles deployed by this factory.
 ///
 /// # Parameters
@@ -121,7 +207,12 @@ pub fn get_circles(env: &Env) -> CircleRegistry { CircleRegistry { circles: env.
 ///
 /// # Panics
 /// Never panics.
-pub fn get_circle_count(env: &Env) -> u32 { env.storage().instance().get(&DataKey::CircleCount).unwrap_or(0) }
+pub fn get_circle_count(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::CircleCount)
+        .unwrap_or(0)
+}
 /// Returns the current per-organizer rate-limit configuration.
 ///
 /// # Returns
@@ -130,7 +221,15 @@ pub fn get_circle_count(env: &Env) -> u32 { env.storage().instance().get(&DataKe
 ///
 /// # Panics
 /// Never panics.
-pub fn get_rate_limit_config(env: &Env) -> RateLimitConfig { env.storage().instance().get(&DataKey::RateLimitConfig).unwrap_or(RateLimitConfig { limit: 0, period_secs: 0 }) }
+pub fn get_rate_limit_config(env: &Env) -> RateLimitConfig {
+    env.storage()
+        .instance()
+        .get(&DataKey::RateLimitConfig)
+        .unwrap_or(RateLimitConfig {
+            limit: 0,
+            period_secs: 0,
+        })
+}
 /// Returns the current fee configuration.
 ///
 /// # Parameters
@@ -142,7 +241,16 @@ pub fn get_rate_limit_config(env: &Env) -> RateLimitConfig { env.storage().insta
 ///
 /// # Panics
 /// Never panics.
-pub fn get_fee_config(env: &Env) -> FeeConfig { env.storage().instance().get(&DataKey::FeeConfig).unwrap_or_else(|| FeeConfig { fee_bps:0, updated_at:0, updated_by: env.current_contract_address() }) }
+pub fn get_fee_config(env: &Env) -> FeeConfig {
+    env.storage()
+        .instance()
+        .get(&DataKey::FeeConfig)
+        .unwrap_or_else(|| FeeConfig {
+            fee_bps: 0,
+            updated_at: 0,
+            updated_by: env.current_contract_address(),
+        })
+}
 /// Updates the fee configuration for all future circle deployments.
 ///
 /// # Parameters
@@ -168,12 +276,42 @@ pub fn get_fee_config(env: &Env) -> FeeConfig { env.storage().instance().get(&Da
 pub fn set_fee_config(env: &Env, admin: &Address, fee_bps: i128) -> Result<(), FactoryError> {
     pause::when_not_paused(env).map_err(|_| FactoryError::ContractPaused)?;
     admin.require_auth();
-    let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?;
-    if admin != &s { return Err(FactoryError::Unauthorized); }
-    if fee_bps < 0 || fee_bps > 10_000 { return Err(FactoryError::InvalidFeeBps); }
-    let old: FeeConfig = env.storage().instance().get(&DataKey::FeeConfig).unwrap_or_else(|| FeeConfig { fee_bps:0, updated_at:0, updated_by: env.current_contract_address() });
-    env.storage().instance().set(&DataKey::FeeConfig, &FeeConfig { fee_bps, updated_at: env.ledger().timestamp(), updated_by: admin.clone() });
-    env.events().publish((env.current_contract_address(), symbol_short!("fee_cfg")), FeeConfigUpdated { old_fee_bps: old.fee_bps, new_fee_bps: fee_bps, updated_by: admin.clone() });
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(FactoryError::NotInitialized)?;
+    if admin != &s {
+        return Err(FactoryError::Unauthorized);
+    }
+    if fee_bps < 0 || fee_bps > 10_000 {
+        return Err(FactoryError::InvalidFeeBps);
+    }
+    let old: FeeConfig = env
+        .storage()
+        .instance()
+        .get(&DataKey::FeeConfig)
+        .unwrap_or_else(|| FeeConfig {
+            fee_bps: 0,
+            updated_at: 0,
+            updated_by: env.current_contract_address(),
+        });
+    env.storage().instance().set(
+        &DataKey::FeeConfig,
+        &FeeConfig {
+            fee_bps,
+            updated_at: env.ledger().timestamp(),
+            updated_by: admin.clone(),
+        },
+    );
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("fee_cfg")),
+        FeeConfigUpdated {
+            old_fee_bps: old.fee_bps,
+            new_fee_bps: fee_bps,
+            updated_by: admin.clone(),
+        },
+    );
     Ok(())
 }
 /// Pauses the factory, preventing new circle deployments.
@@ -193,7 +331,17 @@ pub fn set_fee_config(env: &Env, admin: &Address, fee_bps: i128) -> Result<(), F
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed FactoryError variants.
-pub fn pause(env: &Env, admin: &Address) -> Result<(), FactoryError> { let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?; if admin != &s { return Err(FactoryError::Unauthorized); } pause::pause(env, admin).map_err(|_| FactoryError::ContractPaused) }
+pub fn pause(env: &Env, admin: &Address) -> Result<(), FactoryError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(FactoryError::NotInitialized)?;
+    if admin != &s {
+        return Err(FactoryError::Unauthorized);
+    }
+    pause::pause(env, admin).map_err(|_| FactoryError::ContractPaused)
+}
 /// Unpauses the factory, allowing new circle deployments.
 ///
 /// # Parameters
@@ -211,4 +359,14 @@ pub fn pause(env: &Env, admin: &Address) -> Result<(), FactoryError> { let s: Ad
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed FactoryError variants.
-pub fn unpause(env: &Env, admin: &Address) -> Result<(), FactoryError> { let s: Address = env.storage().instance().get(&DataKey::Admin).ok_or(FactoryError::NotInitialized)?; if admin != &s { return Err(FactoryError::Unauthorized); } pause::unpause(env, admin).map_err(|_| FactoryError::ContractPaused) }
+pub fn unpause(env: &Env, admin: &Address) -> Result<(), FactoryError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(FactoryError::NotInitialized)?;
+    if admin != &s {
+        return Err(FactoryError::Unauthorized);
+    }
+    pause::unpause(env, admin).map_err(|_| FactoryError::ContractPaused)
+}

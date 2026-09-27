@@ -265,7 +265,12 @@ mod tests {
             args: Vec::new(&env),
         };
         let description = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.create_proposal(&admin, &create_config().proposal_deposit, &action, &description);
+        let id = client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &description,
+        );
 
         let delegator = Address::generate(&env);
         let delegatee = Address::generate(&env);
@@ -294,10 +299,60 @@ mod tests {
         assert_eq!(proposal.votes_for, 2);
 
         client.revoke_delegation(&delegator);
-        let id2 = client.create_proposal(&admin, &create_config().proposal_deposit, &action, &description);
+        let id2 = client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &description,
+        );
         client.cast_vote(&delegatee, &id2, &VoteType::For);
         assert_eq!(client.get_proposal(&id2).votes_for, 1);
         client.cast_vote(&delegator, &id2, &VoteType::Against);
         assert_eq!(client.get_proposal(&id2).votes_against, 1);
+    }
+
+    #[test]
+    fn test_proposal_metadata_page_paginates_without_status_filter() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let action = governance::types::ProposalAction {
+            target_contract: admin.clone(),
+            method: Symbol::new(&env, "noop"),
+            args: Vec::new(&env),
+        };
+
+        let first_description = BytesN::from_array(&env, &[1u8; 32]);
+        let second_description = BytesN::from_array(&env, &[2u8; 32]);
+        let third_description = BytesN::from_array(&env, &[3u8; 32]);
+        client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &first_description,
+        );
+        client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &second_description,
+        );
+        client.create_proposal(
+            &admin,
+            &create_config().proposal_deposit,
+            &action,
+            &third_description,
+        );
+
+        let first_page = client.get_proposal_metadata_page(&0u64, &2u32);
+        assert_eq!(first_page.total, 3);
+        assert_eq!(first_page.next_cursor, 2);
+        assert_eq!(first_page.entries.len(), 2);
+        assert_eq!(first_page.entries.get(0).unwrap().id, 0);
+        assert_eq!(first_page.entries.get(1).unwrap().description, second_description);
+
+        let second_page = client.get_proposal_metadata_page(&first_page.next_cursor, &50u32);
+        assert_eq!(second_page.entries.len(), 1);
+        assert_eq!(second_page.entries.get(0).unwrap().id, 2);
+        assert_eq!(second_page.entries.get(0).unwrap().description, third_description);
     }
 }

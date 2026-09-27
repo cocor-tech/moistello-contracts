@@ -983,14 +983,10 @@ pub fn refund_losing_bids(
                     amount: bid.deposit,
                 },
             );
-            refunded = refunded
-                .checked_add(1)
-                .ok_or(CircleError::InvalidAmount)?;
+            refunded = refunded.checked_add(1).ok_or(CircleError::InvalidAmount)?;
         } else {
             if is_loser {
-                remaining = remaining
-                    .checked_add(1)
-                    .ok_or(CircleError::InvalidAmount)?;
+                remaining = remaining.checked_add(1).ok_or(CircleError::InvalidAmount)?;
             }
             kept.push_back(bid);
         }
@@ -1617,9 +1613,10 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
         .persistent()
         .get(&DataKey::Dispute)
         .ok_or(CircleError::NoActiveDispute)?;
-    if resolution > 4 {
+    if resolution > RESOLVE_REFUND {
         return Err(CircleError::InvalidAmount);
     }
+    let outcome_code = resolution;
     match resolution {
         RESOLVE_DISMISS | RESOLVE_FORCE_PAYOUT => {
             circle.status = STATUS_ACTIVE;
@@ -1658,7 +1655,7 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
             }
             env.storage().persistent().set(&DataKey::Members, &members);
         }
-        4 => {
+        RESOLVE_REFUND => {
             circle.status = STATUS_CANCELLED;
             // Refund all members' contributions
             let token_address = circle.token.clone();
@@ -1688,8 +1685,27 @@ pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<()
     dispute.resolved_at = env.ledger().timestamp();
     dispute.resolution = resolution;
     dispute.resolved_by = admin.clone();
+    let record = DisputeResolutionRecord {
+        raised_by: dispute.raised_by.clone(),
+        resolution,
+        outcome_code,
+        resolved_by: admin.clone(),
+        resolved_at: dispute.resolved_at,
+    };
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().persistent().set(&DataKey::Dispute, &dispute);
+    env.storage()
+        .persistent()
+        .set(&DataKey::DisputeResolution, &record);
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("disp_res")),
+        DisputeResolved {
+            member: dispute.raised_by,
+            resolution,
+            outcome_code,
+            resolved_by: admin.clone(),
+        },
+    );
     Ok(())
 }
 /// Returns the current status of the circle including all configuration and state data.
@@ -1733,6 +1749,10 @@ pub fn get_status(env: &Env) -> Circle {
             slug: soroban_sdk::String::from_str(env, ""),
             health_score: 100,
         })
+}
+
+pub fn get_dispute_resolution(env: &Env) -> Option<DisputeResolutionRecord> {
+    env.storage().persistent().get(&DataKey::DisputeResolution)
 }
 /// Returns all members who have joined the circle.
 ///

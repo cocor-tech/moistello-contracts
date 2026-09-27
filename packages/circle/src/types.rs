@@ -14,6 +14,7 @@ pub const MEMBER_DEFAULTED: u32 = 2;
 pub const RESOLVE_DISMISS: u32 = 1;
 pub const RESOLVE_PENALIZE: u32 = 2;
 pub const RESOLVE_FORCE_PAYOUT: u32 = 3;
+pub const RESOLVE_REFUND: u32 = 4;
 pub const AUCTION_MODE_ENGLISH: u32 = 0;
 pub const AUCTION_MODE_DUTCH: u32 = 1;
 #[contracttype]
@@ -149,6 +150,15 @@ pub struct DisputeEntry {
     pub resolved_by: Address,
 }
 #[contracttype]
+#[derive(Clone, Debug)]
+pub struct DisputeResolutionRecord {
+    pub raised_by: Address,
+    pub resolution: u32,
+    pub outcome_code: u32,
+    pub resolved_by: Address,
+    pub resolved_at: u64,
+}
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Circle,
@@ -160,6 +170,7 @@ pub enum DataKey {
     Bids,
     Votes,
     Dispute,
+    DisputeResolution,
     FeeBps,
     Treasury,
     Allowlist,
@@ -400,6 +411,14 @@ pub struct CircleCancelled {
 pub struct DisputeRaised {
     pub member: Address,
     pub evidence_hash: BytesN<32>,
+}
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DisputeResolved {
+    pub member: Address,
+    pub resolution: u32,
+    pub outcome_code: u32,
+    pub resolved_by: Address,
 }
 #[contracttype]
 #[derive(Clone, Debug)]

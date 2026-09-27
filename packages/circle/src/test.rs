@@ -444,6 +444,52 @@ mod tests {
     }
 
     #[test]
+    fn test_auction_winner_must_still_be_active_at_payout() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 2u32; // PAYOUT_AUCTION
+        let admin = config.organizer.clone();
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let bidder = Address::generate(&env);
+        let other = Address::generate(&env);
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
+        client.try_join(&bidder).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+        client.try_auction_bid(&bidder, &500u32, &0u32).unwrap().unwrap();
+        client.try_exit_circle(&bidder).unwrap().unwrap();
+
+        let result = client.try_trigger_payout(&admin, &0u32);
+        assert_eq!(result, Err(Ok(CircleError::InvalidMemberStatus)));
+    }
+
+    #[test]
+    fn test_vote_winner_must_still_be_active_at_payout() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 3u32; // PAYOUT_VOTE
+        let admin = config.organizer.clone();
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let nominee = Address::generate(&env);
+        let voter = Address::generate(&env);
+        mint_tokens(&env, &token, &nominee, 100000_0000000);
+        client.try_join(&nominee).unwrap().unwrap();
+        mint_tokens(&env, &token, &voter, 100000_0000000);
+        client.try_join(&voter).unwrap().unwrap();
+        client.try_vote_payout(&voter, &nominee, &0u32).unwrap().unwrap();
+        client.try_exit_circle(&nominee).unwrap().unwrap();
+
+        let result = client.try_trigger_payout(&admin, &0u32);
+        assert_eq!(result, Err(Ok(CircleError::InvalidMemberStatus)));
+    }
+
+    #[test]
     fn test_raise_dispute_on_empty_circle() {
         let env = Env::default();
         let mut config = create_config(&env);
@@ -999,6 +1045,11 @@ mod tests {
 
         assert!(client.try_resolve_dispute(&admin, &1u32).is_ok()); // RESOLVE_DISMISS = 1
         assert_eq!(client.get_status().status, 1u32);
+        let resolution = client.get_dispute_resolution().unwrap();
+        assert_eq!(resolution.raised_by, member);
+        assert_eq!(resolution.resolution, 1u32);
+        assert_eq!(resolution.outcome_code, 1u32);
+        assert_eq!(resolution.resolved_by, admin);
     }
 
     #[test]
@@ -1957,7 +2008,8 @@ fn test_refund_losing_bids_fifty_bidders_in_batches() {
     config.contribution_amount = 100_i128;
     let organizer = config.organizer.clone();
     let factory = Address::generate(&env);
-    let contract_id = env.register(Circle, CircleArgs::__constructor(&organizer, &factory, &config));
+    let contract_id =
+        env.register(Circle, CircleArgs::__constructor(&organizer, &factory, &config));
     let client = CircleClient::new(&env, &contract_id);
 
     let winner = Address::generate(&env);

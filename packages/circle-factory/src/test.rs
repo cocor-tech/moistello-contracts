@@ -1,8 +1,9 @@
 #![cfg(test)]
 
+use crate::types::{CircleConfig, FactoryError};
+use crate::{CircleFactory, CircleFactoryClient};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, BytesN, Env};
-use crate::{CircleFactory, CircleFactoryClient}; use crate::types::{CircleConfig, FactoryError};
 
 fn install_wasm_hash(env: &Env) -> BytesN<32> {
     // Test fixture wasm shipped with soroban-sdk (valid Soroban contract
@@ -31,6 +32,12 @@ fn sample_config(env: &Env, organizer: &Address) -> CircleConfig {
     }
 }
 
+fn sample_config_with_slug(env: &Env, organizer: &Address, slug: &str) -> CircleConfig {
+    let mut config = sample_config(env, organizer);
+    config.slug = soroban_sdk::String::from_str(env, slug);
+    config
+}
+
 fn setup(env: &Env) -> (CircleFactoryClient, Address, BytesN<32>) {
     env.mock_all_auths();
     let contract_id = env.register(CircleFactory, ());
@@ -41,7 +48,11 @@ fn setup(env: &Env) -> (CircleFactoryClient, Address, BytesN<32>) {
     (client, admin, wh)
 }
 
-fn setup_with_rate_limit(env: &Env, limit: u32, period_secs: u64) -> (CircleFactoryClient, Address, BytesN<32>) {
+fn setup_with_rate_limit(
+    env: &Env,
+    limit: u32,
+    period_secs: u64,
+) -> (CircleFactoryClient, Address, BytesN<32>) {
     env.mock_all_auths();
     let contract_id = env.register(CircleFactory, ());
     let client = CircleFactoryClient::new(env, &contract_id);
@@ -104,6 +115,18 @@ fn test_deploy_circle_success() {
     assert_eq!(registry.circles.len(), 1);
     assert_eq!(registry.circles.get(0).unwrap().organizer, organizer);
     assert_eq!(registry.circles.get(0).unwrap().circle_id, circle_id);
+}
+
+#[test]
+fn test_duplicate_canonical_deployment_is_rejected() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup(&env);
+    let organizer = Address::generate(&env);
+    let config = sample_config(&env, &organizer);
+
+    assert!(client.try_deploy_circle(&config).is_ok());
+    assert_eq!(client.try_deploy_circle(&config), Err(Ok(FactoryError::CircleDeployFailed)));
+    assert_eq!(client.get_circle_count(), 1);
 }
 
 #[test]
@@ -238,7 +261,10 @@ fn test_storage_isolation_across_100_deployed_circles() {
     // mean two configs landed on the same storage instance.
     for i in 0..N as usize {
         for j in (i + 1)..N as usize {
-            assert_ne!(circle_ids[i], circle_ids[j], "circles {i} and {j} deployed to the same address");
+            assert_ne!(
+                circle_ids[i], circle_ids[j],
+                "circles {i} and {j} deployed to the same address"
+            );
         }
     }
 }
@@ -248,9 +274,9 @@ fn test_rate_limit_zero_is_unlimited() {
     let env = Env::default();
     let (client, _admin, _wh) = setup_with_rate_limit(&env, 0, 0);
     let organizer = Address::generate(&env);
-    let config = sample_config(&env, &organizer);
 
-    for _ in 0..10 {
+    for i in 0..10 {
+        let config = sample_config_with_slug(&env, &organizer, &std::format!("unlimited-{i}"));
         assert!(client.try_deploy_circle(&config).is_ok());
     }
     assert_eq!(client.get_circle_count(), 10);
@@ -261,11 +287,13 @@ fn test_rate_limit_exceeded_rejected() {
     let env = Env::default();
     let (client, _admin, _wh) = setup_with_rate_limit(&env, 2, 3600);
     let organizer = Address::generate(&env);
-    let config = sample_config(&env, &organizer);
+    let config = sample_config_with_slug(&env, &organizer, "limited-0");
+    let config_2 = sample_config_with_slug(&env, &organizer, "limited-1");
+    let config_3 = sample_config_with_slug(&env, &organizer, "limited-2");
 
     assert!(client.try_deploy_circle(&config).is_ok());
-    assert!(client.try_deploy_circle(&config).is_ok());
-    let result = client.try_deploy_circle(&config);
+    assert!(client.try_deploy_circle(&config_2).is_ok());
+    let result = client.try_deploy_circle(&config_3);
     assert_eq!(result, Err(Ok(FactoryError::RateLimitExceeded)));
 }
 
@@ -274,16 +302,17 @@ fn test_rate_limit_resets_next_period() {
     let env = Env::default();
     let (client, _admin, _wh) = setup_with_rate_limit(&env, 1, 3600);
     let organizer = Address::generate(&env);
-    let config = sample_config(&env, &organizer);
+    let config = sample_config_with_slug(&env, &organizer, "period-0");
+    let config_2 = sample_config_with_slug(&env, &organizer, "period-1");
 
     assert!(client.try_deploy_circle(&config).is_ok());
-    let result = client.try_deploy_circle(&config);
+    let result = client.try_deploy_circle(&config_2);
     assert_eq!(result, Err(Ok(FactoryError::RateLimitExceeded)));
 
     // Advance the ledger timestamp into the next rate-limit period.
     env.ledger().set_timestamp(env.ledger().timestamp() + 3600);
 
-    assert!(client.try_deploy_circle(&config).is_ok());
+    assert!(client.try_deploy_circle(&config_2).is_ok());
     assert_eq!(client.get_circle_count(), 2);
 }
 
@@ -294,12 +323,16 @@ fn test_rate_limit_independent_per_organizer() {
     let org1 = Address::generate(&env);
     let org2 = Address::generate(&env);
 
-    assert!(client.try_deploy_circle(&sample_config(&env, &org1)).is_ok());
+    assert!(client
+        .try_deploy_circle(&sample_config(&env, &org1))
+        .is_ok());
     assert_eq!(
         client.try_deploy_circle(&sample_config(&env, &org1)),
         Err(Ok(FactoryError::RateLimitExceeded))
     );
     // A different organizer has an independent counter and can still deploy.
-    assert!(client.try_deploy_circle(&sample_config(&env, &org2)).is_ok());
+    assert!(client
+        .try_deploy_circle(&sample_config(&env, &org2))
+        .is_ok());
     assert_eq!(client.get_circle_count(), 2);
 }
