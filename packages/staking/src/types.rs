@@ -155,6 +155,16 @@ pub struct VotingPowerQueried {
     pub voting_power: i128,
 }
 
+/// Event emitted when stake is slashed (#523)
+#[contractevent(topics = ["slashed"])]
+#[derive(Clone, Debug)]
+pub struct Slashed {
+    #[topic]
+    pub user: Address,
+    pub amount: i128,
+    pub shortfall: i128,
+}
+
 // ── #445 — Paginated staker query ────────────────────────────────────────────
 
 /// Maximum number of entries returned by a single `query_stakers_page` call.

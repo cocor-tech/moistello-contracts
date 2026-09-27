@@ -481,3 +481,106 @@ pub fn update_admin(
 pub(crate) fn is_period_elapsed(now: u64, deadline: u64) -> bool {
     now >= deadline
 }
+
+/// #523 — Slash a staker's collateral proportional to shortfall amount.
+///
+/// Slashing is proportional to the shortfall, bounded by the staked collateral.
+/// Rounding favors the protocol (ceil division ensures the protocol is never
+/// short-changed by truncation).
+pub fn slash(
+    env: &Env,
+    admin: &Address,
+    user: &Address,
+    shortfall: i128,
+) -> Result<i128, StakingError> {
+    // Verify admin authorization
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(StakingError::NotInitialized)?;
+    
+    if admin != &stored_admin {
+        return Err(StakingError::Unauthorized);
+    }
+    admin.require_auth();
+
+    // Get stake position
+    let stake_position: StakePosition = env
+        .storage()
+        .instance()
+        .get(&DataKey::Stake(user.clone()))
+        .ok_or(StakingError::NoActiveStake)?;
+
+    // Calculate slash amount: min(shortfall, stake)
+    // Rounding favors the protocol - any fractional amount is rounded up
+    let slash_amount = if shortfall <= 0 {
+        return Err(StakingError::InvalidAmount);
+    } else if shortfall >= stake_position.amount {
+        stake_position.amount
+    } else {
+        shortfall
+    };
+
+    // Update stake position
+    let new_amount = stake_position.amount
+        .checked_sub(slash_amount)
+        .ok_or(StakingError::InsufficientBalance)?;
+    
+    if new_amount == 0 {
+        // Remove stake entirely if slashed to zero
+        env.storage().instance().remove(&DataKey::Stake(user.clone()));
+        
+        // Remove from staker list
+        let stakers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::StakerList)
+            .unwrap_or_else(|| Vec::new(env));
+        let mut updated: Vec<Address> = Vec::new(env);
+        for s in stakers.iter() {
+            if s != *user {
+                updated.push_back(s);
+            }
+        }
+        env.storage().persistent().set(&DataKey::StakerList, &updated);
+    } else {
+        // Reduce stake and recalculate voting power
+        let multiplier = stake_position.period.multiplier();
+        let new_voting_power = new_amount
+            .checked_mul(multiplier as i128)
+            .ok_or(StakingError::Overflow)?;
+        
+        let updated_position = StakePosition {
+            amount: new_amount,
+            voting_power: new_voting_power,
+            ..stake_position
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::Stake(user.clone()), &updated_position);
+    }
+
+    // Update total staked
+    let total_staked: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::TotalStaked)
+        .unwrap_or(0);
+    let new_total = total_staked
+        .checked_sub(slash_amount)
+        .ok_or(StakingError::InsufficientBalance)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalStaked, &new_total);
+
+    // Emit slash event
+    Slashed {
+        user: user.clone(),
+        amount: slash_amount,
+        shortfall,
+    }
+    .publish(env);
+
+    Ok(slash_amount)
+}

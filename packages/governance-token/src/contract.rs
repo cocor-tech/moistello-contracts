@@ -209,6 +209,34 @@ pub fn burn(env: &Env, from: &Address, amount: i128) -> Result<(), TokenError> {
     Ok(())
 }
 
+/// #518 — Admin-authorized burn (distinct from holder burn).
+///
+/// Allows admin to burn tokens from any account. Emits `Burn` event.
+/// Requires admin authorization and validates total supply invariant.
+pub fn burn_from(env: &Env, admin: &Address, from: &Address, amount: i128) -> Result<(), TokenError> {
+    admin.require_auth();
+    require_admin(env, admin)?;
+    validate_non_frozen(env, from)?;
+    if amount <= 0 {
+        return Err(TokenError::InvalidAmount);
+    }
+    let mut balances: Map<Address, i128> = env.storage().persistent().get(&BALANCES_KEY).ok_or(TokenError::NotInitialized)?;
+    let current: i128 = balances.get(from.clone()).unwrap_or(0);
+    if current < amount {
+        return Err(TokenError::InsufficientBalance);
+    }
+    balances.set(from.clone(), current.checked_sub(amount).ok_or(TokenError::Underflow)?);
+    env.storage().persistent().set(&BALANCES_KEY, &balances);
+    
+    // Invariant: total supply decreases by exactly burned amount
+    let total: i128 = env.storage().instance().get(&TOTAL_KEY).unwrap_or(0);
+    let new_total = total.checked_sub(amount).ok_or(TokenError::Underflow)?;
+    env.storage().instance().set(&TOTAL_KEY, &new_total);
+    
+    Burn { from: from.clone(), amount }.publish(env);
+    Ok(())
+}
+
 /// Claws back tokens from an account balance and reduces total supply.
 ///
 /// # Intentional Design: Frozen Account Bypass
