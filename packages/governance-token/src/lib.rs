@@ -1,12 +1,12 @@
 #![cfg_attr(not(test), no_std)]
 
-mod types;
 mod contract;
 #[cfg(test)]
 mod test;
+mod types;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String};
 use crate::types::{AllowanceData, TokenError};
+use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
 #[contract]
 pub struct GovernanceToken;
@@ -79,7 +79,12 @@ impl GovernanceToken {
         contract::burn(&env, &from, amount)
     }
 
-    pub fn clawback(env: Env, admin: Address, from: Address, amount: i128) -> Result<(), TokenError> {
+    pub fn clawback(
+        env: Env,
+        admin: Address,
+        from: Address,
+        amount: i128,
+    ) -> Result<(), TokenError> {
         contract::clawback(&env, &admin, &from, amount)
     }
 
@@ -115,7 +120,11 @@ impl GovernanceToken {
         contract::add_to_allowlist(&env, &admin, &account)
     }
 
-    pub fn remove_from_allowlist(env: Env, admin: Address, account: Address) -> Result<(), TokenError> {
+    pub fn remove_from_allowlist(
+        env: Env,
+        admin: Address,
+        account: Address,
+    ) -> Result<(), TokenError> {
         contract::remove_from_allowlist(&env, &admin, &account)
     }
 

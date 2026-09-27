@@ -69,10 +69,16 @@ pub fn stake(
         .checked_mul(multiplier as i128)
         .ok_or(StakingError::Overflow)?;
 
-    // Calculate unlock time
+    // Calculate unlock time and ledger bounds
     let current_time = env.ledger().timestamp();
+    let current_ledger = env.ledger().sequence();
+    let period_seconds = period.as_seconds();
+    let period_ledgers = (period_seconds / 5) as u32;
     let unlock_time = current_time
-        .checked_add(period.as_seconds())
+        .checked_add(period_seconds)
+        .ok_or(StakingError::Overflow)?;
+    let unlock_ledger = current_ledger
+        .checked_add(period_ledgers)
         .ok_or(StakingError::Overflow)?;
 
     // Create stake position
@@ -82,6 +88,8 @@ pub fn stake(
         start_time: current_time,
         unlock_time,
         voting_power,
+        start_ledger: current_ledger,
+        unlock_ledger,
     };
 
     // Store stake position
@@ -324,6 +332,95 @@ pub fn get_voting_power(env: &Env, user: &Address) -> i128 {
 /// Get user's stake position
 pub fn get_stake(env: &Env, user: &Address) -> Option<StakePosition> {
     env.storage().instance().get(&DataKey::Stake(user.clone()))
+}
+
+/// Query stake age, start ledger, unlock ledger, amount, and accrued rewards for an account
+pub fn query_stake_info(env: &Env, account: &Address) -> StakeInfo {
+    if let Some(pos) = get_stake(env, account) {
+        StakeInfo {
+            amount: pos.amount,
+            start_ledger: pos.start_ledger,
+            unlock_ledger: pos.unlock_ledger,
+            accrued_rewards: 0i128,
+        }
+    } else {
+        StakeInfo {
+            amount: 0i128,
+            start_ledger: 0u32,
+            unlock_ledger: 0u32,
+            accrued_rewards: 0i128,
+        }
+    }
+}
+
+/// Top up an active stake position with additional tokens
+pub fn top_up_stake(
+    env: &Env,
+    user: &Address,
+    additional_amount: i128,
+) -> Result<(), StakingError> {
+    pause::when_not_paused(env).map_err(|_| StakingError::ContractPaused)?;
+    user.require_auth();
+
+    if additional_amount < MIN_STAKE_AMOUNT {
+        return Err(StakingError::InvalidAmount);
+    }
+
+    let mut stake_position: StakePosition = env
+        .storage()
+        .instance()
+        .get(&DataKey::Stake(user.clone()))
+        .ok_or(StakingError::NoActiveStake)?;
+
+    let token_address: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Token)
+        .ok_or(StakingError::NotInitialized)?;
+
+    let token_client = token::Client::new(env, &token_address);
+    token_client.transfer(user, &env.current_contract_address(), &additional_amount);
+
+    let multiplier = stake_position.period.multiplier();
+    let add_vp = additional_amount
+        .checked_mul(multiplier as i128)
+        .ok_or(StakingError::Overflow)?;
+
+    stake_position.amount = stake_position
+        .amount
+        .checked_add(additional_amount)
+        .ok_or(StakingError::Overflow)?;
+    stake_position.voting_power = stake_position
+        .voting_power
+        .checked_add(add_vp)
+        .ok_or(StakingError::Overflow)?;
+
+    env.storage()
+        .instance()
+        .set(&DataKey::Stake(user.clone()), &stake_position);
+
+    let total_staked: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::TotalStaked)
+        .unwrap_or(0);
+    let new_total = total_staked
+        .checked_add(additional_amount)
+        .ok_or(StakingError::Overflow)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalStaked, &new_total);
+
+    Staked {
+        user: user.clone(),
+        amount: additional_amount,
+        period: stake_position.period as u32,
+        multiplier,
+        voting_power: stake_position.voting_power,
+    }
+    .publish(env);
+
+    Ok(())
 }
 
 /// Query-path unlock check. Shares `is_period_elapsed` with `unstake` and
