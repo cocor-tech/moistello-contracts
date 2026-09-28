@@ -370,3 +370,30 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), FactoryError> {
     }
     pause::unpause(env, admin).map_err(|_| FactoryError::ContractPaused)
 }
+/// Upgrade proxy for Circle Factory contract (#334) — admin-only.
+pub fn upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) -> Result<(), FactoryError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(FactoryError::NotInitialized)?;
+    if admin != &s {
+        return Err(FactoryError::Unauthorized);
+    }
+    common::upgrade::upgrade_contract(env, admin, new_wasm_hash).map_err(|_| FactoryError::Unauthorized)
+}
+/// Set implementation address for proxy pattern (#334) — admin-only.
+pub fn set_implementation(env: &Env, admin: &Address, new_impl: &Address) -> Result<(), FactoryError> {
+    let s: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(FactoryError::NotInitialized)?;
+    if admin != &s {
+        return Err(FactoryError::Unauthorized);
+    }
+    common::upgrade::set_implementation(env, admin, new_impl).map_err(|_| FactoryError::Unauthorized)
+}
+pub fn get_implementation(env: &Env) -> Option<Address> {
+    common::upgrade::get_implementation(env)
+}

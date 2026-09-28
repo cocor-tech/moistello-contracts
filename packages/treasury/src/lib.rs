@@ -11,6 +11,9 @@ use soroban_sdk::{contract,contractimpl,Address,Env};
     pub fn rescue_tokens(env:Env,admin:Address,to:Address,token:Address,amount:i128)->Result<(),types::TreasuryError>{contract::rescue_tokens(&env,&admin,&to,&token,amount)}
     pub fn pause(env:Env,admin:Address)->Result<(),types::TreasuryError>{contract::pause(&env,&admin)}
     pub fn unpause(env:Env,admin:Address)->Result<(),types::TreasuryError>{contract::unpause(&env,&admin)}
+    pub fn upgrade(env:Env,admin:Address,new_wasm_hash:soroban_sdk::BytesN<32>)->Result<(),types::TreasuryError>{contract::upgrade(&env,&admin,&new_wasm_hash)}
+    pub fn set_implementation(env:Env,admin:Address,new_impl:Address)->Result<(),types::TreasuryError>{contract::set_implementation(&env,&admin,&new_impl)}
+    pub fn get_implementation(env:Env)->Option<Address>{contract::get_implementation(&env)}
 }
 
 #[cfg(test)]

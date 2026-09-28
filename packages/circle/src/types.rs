@@ -187,6 +187,8 @@ pub enum DataKey {
     /// Winner of a resolved English auction for this round. Presence means
     /// losing-bid refunds may begin.
     AuctionWinner(u32),
+    /// Whether the organizer may join their own circle (#335). Default `false`.
+    AllowOrganizerJoin,
 }
 pub use common::types::ErrorEnvelope;
 #[contracterror]
@@ -286,6 +288,7 @@ impl CircleError {
             CircleError::OracleUnavailable => (37, "Oracle unavailable"),
             CircleError::NotImplemented => (38, "Not implemented"),
             CircleError::ZeroPayoutAmount => (39, "Zero payout amount"),
+            CircleError::OrganizerCannotJoin => (40, "Organizer cannot join own circle"),
             CircleError::PayoutAlreadyScheduled => (59, "Payout already scheduled"),
             CircleError::DutchAuctionNotConfigured => (60, "Dutch auction not configured"),
             CircleError::DutchAuctionExpired => (61, "Dutch auction expired"),
@@ -336,6 +339,7 @@ impl CircleError {
             37 => Some(CircleError::OracleUnavailable),
             38 => Some(CircleError::NotImplemented),
             39 => Some(CircleError::ZeroPayoutAmount),
+            40 => Some(CircleError::OrganizerCannotJoin),
             59 => Some(CircleError::PayoutAlreadyScheduled),
             60 => Some(CircleError::DutchAuctionNotConfigured),
             61 => Some(CircleError::DutchAuctionExpired),
