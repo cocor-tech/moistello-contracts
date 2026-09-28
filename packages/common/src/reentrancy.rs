@@ -54,11 +54,25 @@ impl ReentrancyGuard {
         env.storage().temporary().extend_ttl(&REENTRANCY_KEY, 1, 2);
         Ok(Self { env: env.clone() })
     }
+    /// Explicitly leaves / releases the reentrancy lock before drop.
+    pub fn leave(&mut self) {
+        self.env.storage().temporary().set(&REENTRANCY_KEY, &false);
+    }
+}
+
+/// Executes closure `f` under the canonical reentrancy guard.
+pub fn with_reentrancy_guard<F, R, E>(env: &Env, f: F) -> Result<R, E>
+where
+    F: FnOnce() -> Result<R, E>,
+    E: From<ReentrancyError>,
+{
+    let _guard = ReentrancyGuard::new(env)?;
+    f()
 }
 
 impl Drop for ReentrancyGuard {
     fn drop(&mut self) {
-        self.env.storage().temporary().set(&REENTRANCY_KEY, &false);
+        self.leave();
     }
 }
 

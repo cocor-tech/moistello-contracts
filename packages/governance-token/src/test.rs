@@ -223,6 +223,21 @@ mod tests {
     }
 
     #[test]
+    fn test_clawback_from_frozen_account_permitted() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let holder = Address::generate(&env);
+        env.mock_all_auths();
+        client.mint(&admin, &holder, &1_000_0000000i128);
+        client.freeze(&admin, &holder);
+        assert!(client.is_frozen(&holder));
+        // Admin clawback succeeds even on frozen accounts (intentional regulatory override)
+        client.clawback(&admin, &holder, &400_0000000i128);
+        assert_eq!(client.balance(&holder), 600_0000000i128);
+        assert_eq!(client.total_supply(), 600_0000000i128);
+    }
+
+    #[test]
     fn test_clawback_unauthorized() {
         let env = Env::default();
         let (admin, client) = setup(&env);

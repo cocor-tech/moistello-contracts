@@ -35,6 +35,12 @@ pub fn resolve_random(env: &Env, circle: &Circle, round: u32) -> Result<Address,
             }
         }
     }
+    for i in 0..members.len() {
+        let m = members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.status == MEMBER_ACTIVE && (circle.payout_bitmap & (1u128 << m.position)) == 0 {
+            return Ok(m.address);
+        }
+    }
     Err(CircleError::PayoutAlreadyExecuted)
 }
 

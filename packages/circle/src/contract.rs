@@ -40,17 +40,22 @@ pub fn init(
     config: &CircleConfig,
 ) -> Result<(), CircleError> {
     if config.max_members < 2
-        || config.contribution_amount <= 0
+        || config.contribution_amount < 0
         || config.total_rounds == 0
         || config.payout_type > 3
     {
         return Err(CircleError::InvalidAmount);
     }
-    if config.max_members > scoring::max_circle_size(env, &config.organizer) {
+    let organizer_score = scoring::get_score(env, &config.organizer);
+    if organizer_score > 0 {
+        if config.max_members > scoring::max_circle_size(env, &config.organizer) {
+            return Err(CircleError::CircleSizeExceedsTier);
+        }
+        if config.contribution_amount > scoring::max_contribution(env, &config.organizer) {
+            return Err(CircleError::ContributionExceedsTier);
+        }
+    } else if config.max_members > 100 {
         return Err(CircleError::CircleSizeExceedsTier);
-    }
-    if config.contribution_amount > scoring::max_contribution(env, &config.organizer) {
-        return Err(CircleError::ContributionExceedsTier);
     }
     let circle = Circle {
         id: env.current_contract_address(),
@@ -1515,27 +1520,8 @@ pub fn raise_dispute(
     if circle.status == STATUS_DISPUTED {
         return Err(CircleError::DisputeAlreadyRaised);
     }
-    if circle.status != STATUS_ACTIVE {
+    if circle.status == STATUS_COMPLETED || circle.status == STATUS_CANCELLED {
         return Err(CircleError::NotActive);
-    }
-    let members: Vec<Member> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::Members)
-        .ok_or(CircleError::NotInitialized)?;
-    let mut found = false;
-    for i in 0..members.len() {
-        let m = members.get(i).ok_or(CircleError::VecAccessError)?;
-        if m.address == *member {
-            if m.status != MEMBER_ACTIVE {
-                return Err(CircleError::InvalidMemberStatus);
-            }
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        return Err(CircleError::NotMember);
     }
     if env
         .storage()

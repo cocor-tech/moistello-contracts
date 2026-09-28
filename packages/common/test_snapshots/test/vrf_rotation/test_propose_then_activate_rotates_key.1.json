@@ -97,6 +97,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "vrf_nonce"
+                      },
+                      "val": {
+                        "u32": 1
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "vrf_ownr"
                       },
                       "val": {

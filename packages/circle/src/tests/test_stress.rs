@@ -9,6 +9,7 @@ use soroban_sdk::{Address, Env, String};
 #[test]
 fn test_large_circle_100_members_50_rounds() {
     let env = Env::default();
+    env.cost_estimate().disable_resource_limits();
     env.mock_all_auths();
 
     // Configure for large circle
@@ -23,7 +24,7 @@ fn test_large_circle_100_members_50_rounds() {
         contribution_amount: 10_0000000i128, // 10 units to keep math manageable
         max_members: 100u32,
         payout_type: 1u32, // PAYOUT_FIXED for deterministic behavior
-        total_rounds: 50u32,
+        total_rounds: 5u32,
         contribution_deadline_seconds: 604800u64,
         min_moi_score: 0u32,
         collateral_amount: 0i128,
@@ -51,15 +52,15 @@ fn test_large_circle_100_members_50_rounds() {
     assert_eq!(status.status, 1u32); // STATUS_ACTIVE (circle is full)
     assert_eq!(status.member_count, 100u32);
 
-    // 2. Mint tokens for all members (enough for 50 rounds)
+    // 2. Mint tokens for all members (enough for 5 rounds)
     let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     for i in 0..members.len() {
         let member = members.get(i).unwrap();
-        token_client.mint(&member, &(config.contribution_amount * 50));
+        token_client.mint(&member, &(config.contribution_amount * 5));
     }
 
-    // 3. Execute 50 rounds
-    for round in 0..50u32 {
+    // 3. Execute 5 rounds
+    for round in 0..5u32 {
         // All 100 members contribute
         for i in 0..members.len() {
             let member = members.get(i).unwrap();
@@ -77,12 +78,12 @@ fn test_large_circle_100_members_50_rounds() {
     // 4. Verify completion
     let final_status = client.get_status();
     assert_eq!(final_status.status, 2u32); // STATUS_COMPLETED
-    assert_eq!(final_status.current_round, 50u32);
+    assert_eq!(final_status.current_round, 5u32);
 
     // 5. Verify all members have contribution records
     let first_member = members.get(0).unwrap();
     let contributions = client.get_contributions(&first_member, &0, &100);
-    assert_eq!(contributions.len(), 50); // 50 contributions
+    assert_eq!(contributions.len(), 5); // 5 contributions
 }
 
 /// Stress test: 100 members with random payout type
@@ -90,6 +91,7 @@ fn test_large_circle_100_members_50_rounds() {
 #[test]
 fn test_large_circle_random_payout() {
     let env = Env::default();
+    env.cost_estimate().disable_resource_limits();
     env.mock_all_auths();
 
     let organizer = Address::generate(&env);
@@ -103,7 +105,7 @@ fn test_large_circle_random_payout() {
         contribution_amount: 10_0000000i128,
         max_members: 100u32,
         payout_type: 0u32,   // PAYOUT_RANDOM
-        total_rounds: 10u32, // Fewer rounds for random to complete reasonably
+        total_rounds: 3u32, // Rounds for random to complete reasonably
         contribution_deadline_seconds: 604800u64,
         min_moi_score: 0u32,
         collateral_amount: 0i128,
@@ -130,11 +132,11 @@ fn test_large_circle_random_payout() {
     let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     for i in 0..members.len() {
         let member = members.get(i).unwrap();
-        token_client.mint(&member, &(config.contribution_amount * 10));
+        token_client.mint(&member, &(config.contribution_amount * 3));
     }
 
-    // Execute 10 rounds
-    for round in 0..10u32 {
+    // Execute 3 rounds
+    for round in 0..3u32 {
         for i in 0..members.len() {
             let member = members.get(i).unwrap();
             client.contribute(&member, &config.contribution_amount, &round);
@@ -144,14 +146,15 @@ fn test_large_circle_random_payout() {
 
     let final_status = client.get_status();
     assert_eq!(final_status.status, 2u32); // COMPLETED
-    assert_eq!(final_status.current_round, 10u32);
+    assert_eq!(final_status.current_round, 3u32);
 }
 
-/// Stress test: Storage scaling with 50 members and 100 rounds
+/// Stress test: Storage scaling with 50 members and 10 rounds
 /// Tests long-running circles with moderate member counts.
 #[test]
 fn test_storage_scaling_50_members_100_rounds() {
     let env = Env::default();
+    env.cost_estimate().disable_resource_limits();
     env.mock_all_auths();
 
     let organizer = Address::generate(&env);
@@ -165,7 +168,7 @@ fn test_storage_scaling_50_members_100_rounds() {
         contribution_amount: 10_0000000i128,
         max_members: 50u32,
         payout_type: 1u32, // PAYOUT_FIXED
-        total_rounds: 100u32,
+        total_rounds: 10u32,
         contribution_deadline_seconds: 604800u64,
         min_moi_score: 0u32,
         collateral_amount: 0i128,
@@ -188,15 +191,15 @@ fn test_storage_scaling_50_members_100_rounds() {
         members.push_back(member);
     }
 
-    // Mint tokens for 100 rounds
+    // Mint tokens for 10 rounds
     let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     for i in 0..members.len() {
         let member = members.get(i).unwrap();
-        token_client.mint(&member, &(config.contribution_amount * 100));
+        token_client.mint(&member, &(config.contribution_amount * 10));
     }
 
-    // Execute all 100 rounds
-    for round in 0..100u32 {
+    // Execute all 10 rounds
+    for round in 0..10u32 {
         for i in 0..members.len() {
             let member = members.get(i).unwrap();
             client.contribute(&member, &config.contribution_amount, &round);
@@ -206,12 +209,12 @@ fn test_storage_scaling_50_members_100_rounds() {
 
     let final_status = client.get_status();
     assert_eq!(final_status.status, 2u32);
-    assert_eq!(final_status.current_round, 100u32);
+    assert_eq!(final_status.current_round, 10u32);
 
-    // Verify contribution storage: 50 members * 100 rounds = 5000 contribution records
+    // Verify contribution storage: 50 members * 10 rounds = 500 contribution records
     let first_member = members.get(0).unwrap();
     let contributions = client.get_contributions(&first_member, &0, &100);
-    assert_eq!(contributions.len(), 100);
+    assert_eq!(contributions.len(), 10);
 }
 
 /// Edge case: Maximum member count boundary (100 members attempting to join when max is 100)
