@@ -16,6 +16,8 @@ pub const RESOLVE_PENALIZE: u32 = 2;
 pub const RESOLVE_FORCE_PAYOUT: u32 = 3;
 pub const AUCTION_MODE_ENGLISH: u32 = 0;
 pub const AUCTION_MODE_DUTCH: u32 = 1;
+/// Issue #332: full-scale time weight, expressed in basis points (10_000 bps = 1.0x).
+pub const TIME_WEIGHT_BPS_MAX: u64 = 10_000;
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct CircleConfig {
@@ -176,6 +178,11 @@ pub enum DataKey {
     /// Winner of a resolved English auction for this round. Presence means
     /// losing-bid refunds may begin.
     AuctionWinner(u32),
+    /// Issue #326: O(1) `(member, round) -> contributed` uniqueness index used
+    /// to reject a second contribution for the same round before any transfer
+    /// happens. It is a derived index over `Contributions` and is rebuilt
+    /// lazily on first write if it is missing (documented migration path).
+    ContributionIndex,
 }
 pub use common::types::ErrorEnvelope;
 #[contracterror]
@@ -226,6 +233,13 @@ pub enum CircleError {
     InvalidDutchConfig = 62,
     /// Losing-bid refunds were requested before the auction winner was recorded.
     AuctionNotResolved = 63,
+    /// Issue #340: a dispute was raised (or a resolution was attempted) without
+    /// a non-zero evidence commitment. An all-zero hash is not a commitment to
+    /// any evidence and is rejected rather than treated as "no evidence".
+    EvidenceRequired = 64,
+    /// Issue #340: the supplied evidence preimage does not hash to the
+    /// commitment stored on the dispute.
+    EvidenceMismatch = 65,
 }
 
 impl CircleError {
@@ -280,6 +294,8 @@ impl CircleError {
             CircleError::DutchAuctionExpired => (61, "Dutch auction expired"),
             CircleError::InvalidDutchConfig => (62, "Invalid Dutch auction config"),
             CircleError::AuctionNotResolved => (63, "Auction not resolved"),
+            CircleError::EvidenceRequired => (64, "Dispute evidence required"),
+            CircleError::EvidenceMismatch => (65, "Dispute evidence hash mismatch"),
         };
         ErrorEnvelope::new(env, code, msg, details, request_id)
     }
@@ -330,6 +346,8 @@ impl CircleError {
             61 => Some(CircleError::DutchAuctionExpired),
             62 => Some(CircleError::InvalidDutchConfig),
             63 => Some(CircleError::AuctionNotResolved),
+            64 => Some(CircleError::EvidenceRequired),
+            65 => Some(CircleError::EvidenceMismatch),
             _ => None,
         }
     }
@@ -400,6 +418,16 @@ pub struct CircleCancelled {
 pub struct DisputeRaised {
     pub member: Address,
     pub evidence_hash: BytesN<32>,
+}
+/// Issue #340: emitted by `verify_evidence` each time a candidate preimage is
+/// hashed and compared against the dispute's on-chain commitment, so the
+/// verification trail is auditable off-chain.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EvidenceVerified {
+    pub raised_by: Address,
+    pub evidence_hash: BytesN<32>,
+    pub verified: bool,
 }
 #[contracttype]
 #[derive(Clone, Debug)]

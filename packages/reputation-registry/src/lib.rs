@@ -19,6 +19,16 @@ use soroban_sdk::{contract,contractimpl,Address,Env};
         member.require_auth();
         Ok(scoring::record_on_time_payment(&env,&member,&circle_id,amount,round))
     }
+    /// Issue #332: the same award as `record_on_time_payment`, scaled by the
+    /// contribution's time weight in basis points (0..=10_000). A caller that
+    /// passes 10_000 gets the legacy flat award; anything lower is prorated.
+    pub fn record_weighted_contribution(env:Env,member:Address,circle_id:Address,amount:i128,round:u32,time_weight_bps:u32)->Result<u32,types::ReputationError>{
+        common::pause::when_not_paused(&env).map_err(|_|types::ReputationError::ContractPaused)?;
+        member.require_auth();
+        Ok(scoring::record_weighted_payment(&env,&member,&circle_id,amount,round,time_weight_bps))
+    }
+    /// Issue #332: cumulative time-weighted contribution points earned by a member.
+    pub fn get_time_weighted_points(env:Env,member:Address)->u64{crate::storage::get_time_weighted_points(&env,&member)}
     pub fn record_circle_completion(env:Env,member:Address)->Result<u32,types::ReputationError>{
         common::pause::when_not_paused(&env).map_err(|_|types::ReputationError::ContractPaused)?;
         member.require_auth();

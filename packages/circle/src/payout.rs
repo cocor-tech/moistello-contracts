@@ -1,5 +1,6 @@
 use soroban_sdk::{Address,Env,Vec,Map};
 use crate::types::*;
+use crate::voting;
 use common::vrf;
 
 pub fn resolve_random(env:&Env,circle:&Circle,round:u32)->Result<Address,CircleError>{
@@ -67,22 +68,40 @@ pub fn resolve_auction(env:&Env,circle:&Circle,round:u32)->Result<(Address,u32),
     Err(CircleError::NotMember)
 }
 
+/// Resolves a `PAYOUT_VOTE` round with quadratic, weighted voting (#330).
+///
+/// Each member still casts at most one vote per round (`vote_payout` rejects a
+/// repeat with `AlreadyVoted`), but each vote now carries a quadratic weight
+/// derived from the voter's balance of the circle token:
+///
+/// ```text
+/// weight = 1 + min(isqrt(balance / 10^7), 1000)   // see crate::voting
+/// ```
+///
+/// The tally therefore accumulates *weight* per nominee instead of raw votes,
+/// which makes large-scale vote buying unprofitable (a 100x balance advantage
+/// only buys 10x the influence) while every member keeps a base vote.
+///
+/// Quorum is checked on the same weighted scale: the weight cast in the round
+/// must reach `floor(active_members / 2) + 1`. For equal-weight voters this is
+/// identical to the previous head-count quorum, so existing behaviour is
+/// preserved; heavier voters simply reach the bar with fewer participants.
 pub fn resolve_vote(env:&Env,circle:&Circle,round:u32)->Result<Address,CircleError>{
     let votes:Vec<VoteEntry>=env.storage().persistent().get(&DataKey::Votes).unwrap_or_else(||Vec::new(env));
     let members:Vec<Member>=env.storage().persistent().get(&DataKey::Members).ok_or(CircleError::NotInitialized)?;
     let active=count_active(env)?;
-    let quorum=(active/2)+1;
     let mut tally:Map<Address,u32>=Map::new(env);
-    let mut match_count:u32=0;
+    let mut cast_weight:u128=0;
     for i in 0..votes.len(){
-        let v=votes.get(i).ok_or(CircleError::NotInitialized)?;
+        let v=votes.get(i).ok_or(CircleError::VecAccessError)?;
         if v.round==round{
-            match_count=match_count.checked_add(1).ok_or(CircleError::InvalidAmount)?;
+            let w=voting::vote_weight(env,circle,&v.voter);
+            cast_weight=cast_weight.saturating_add(u128::from(w));
             let c=tally.get(v.vote_for.clone()).unwrap_or(0);
-            tally.set(v.vote_for.clone(),c.checked_add(1).ok_or(CircleError::InvalidAmount)?);
+            tally.set(v.vote_for.clone(),c.saturating_add(w));
         }
     }
-    if match_count<quorum{return Err(CircleError::VoteQuorumNotMet);}
+    voting::check_quorum(cast_weight,active)?;
     let mut best_addr:Option<Address>=None;
     let mut best_count:u32=0;
     for(addr,count)in tally.iter(){

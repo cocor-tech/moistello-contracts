@@ -451,7 +451,9 @@ mod tests {
 
         env.mock_all_auths();
         let member = Address::generate(&env);
-        let evidence = BytesN::from_array(&env, &[0u8; 32]);
+        // #340: a dispute must commit to real evidence; an all-zero digest is
+        // rejected with EvidenceRequired, so use a genuine commitment here.
+        let evidence = BytesN::from_array(&env, &[7u8; 32]);
         let result = client.try_raise_dispute(&member, &evidence);
         // Circle is PENDING (not full) — but raise_dispute only checks for DISPUTED/COMPLETED status
         // So any member (even non-member) can raise a dispute on any circle

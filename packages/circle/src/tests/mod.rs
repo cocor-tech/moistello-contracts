@@ -1,10 +1,22 @@
 #![cfg_attr(not(test), no_std)]
 
 #[cfg(test)]
+mod test_dispute_evidence;
+
+#[cfg(test)]
 mod test_integration;
 
 #[cfg(test)]
+mod test_quadratic_voting;
+
+#[cfg(test)]
+mod test_replay_protection;
+
+#[cfg(test)]
 mod test_stress;
+
+#[cfg(test)]
+mod test_time_weighted;
 
 #[cfg(test)]
 mod tests {

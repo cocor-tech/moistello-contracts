@@ -67,8 +67,45 @@ pub fn qualifies_for_circle(env: &Env, member: &Address, min_score: u32, require
     true
 }
 
-/// Record an on-time payment. Returns the new MoiScore.
+/// Base points awarded for a contribution paid at the very start of the window.
+pub const BASE_CONTRIBUTION_POINTS: u32 = 10;
+
+/// Full-scale time weight in basis points (1.0x), matching the circle contract's
+/// `TIME_WEIGHT_BPS_MAX`.
+pub const TIME_WEIGHT_BPS_MAX: u32 = 10_000;
+
+/// Record an on-time payment at full time weight. Returns the new MoiScore.
+///
+/// Kept as the compatibility entry point: it is exactly
+/// `record_weighted_payment(..., TIME_WEIGHT_BPS_MAX)`.
 pub fn record_on_time_payment(env: &Env, member: &Address, circle_id: &Address, amount: i128, round: u32) -> u32 {
+    record_weighted_payment(env, member, circle_id, amount, round, TIME_WEIGHT_BPS_MAX)
+}
+
+/// Issue #332: record a contribution whose reputation award is scaled by its
+/// time weight. Returns the new MoiScore.
+///
+/// # Formula
+///
+/// ```text
+/// w            = min(time_weight_bps, 10_000)          // clamp to 1.0x
+/// time_points  = BASE_CONTRIBUTION_POINTS * w / 10_000 // 10 * w / 10_000
+/// streak_bonus = min(streak, 10) * 5
+/// volume_bonus = min(amount / 100 USDC, 20)
+/// new_score    = min(1000, current + time_points + streak_bonus + volume_bonus)
+/// ```
+///
+/// `time_points` is floored, so a contribution paid at the very start of the
+/// window (w = 10_000 bps) earns the full 10 base points — identical to the
+/// historical flat award — and one paid at the very end of the window earns
+/// almost nothing. Rewarding earliness is the point of the weighting: capital
+/// that arrived first is what funded the round's payout, so it is worth more
+/// than capital that arrived just before the deadline.
+///
+/// The awarded points are also accumulated under
+/// [`crate::storage::get_time_weighted_points`] and written to the activity log
+/// with the weighted impact, so the weighting is auditable per contribution.
+pub fn record_weighted_payment(env: &Env, member: &Address, circle_id: &Address, amount: i128, round: u32, time_weight_bps: u32) -> u32 {
     let current = storage::get_score(env, member);
     let mut streak = storage::get_streak(env, member, circle_id);
     let last_round = storage::get_last_round(env, member, circle_id);
@@ -82,18 +119,26 @@ pub fn record_on_time_payment(env: &Env, member: &Address, circle_id: &Address, 
     }
     storage::set_last_round(env, member, circle_id, round);
 
-    let base: u32 = 10;
+    let weight: u64 = if time_weight_bps > TIME_WEIGHT_BPS_MAX {
+        u64::from(TIME_WEIGHT_BPS_MAX)
+    } else {
+        u64::from(time_weight_bps)
+    };
+    // 10 * 10_000 fits comfortably in u64; the division floors by design so the
+    // full-weight case reproduces the legacy flat award exactly.
+    let time_points: u32 = ((u64::from(BASE_CONTRIBUTION_POINTS) * weight) / u64::from(TIME_WEIGHT_BPS_MAX)) as u32;
     let streak_bonus: u32 = if streak <= 10 { streak * 5 } else { 50 };
     let volume_bonus_raw = (amount / 100_0000000) as u32; // 1 point per 100 USDC
     let volume_bonus: u32 = if volume_bonus_raw > 20 { 20 } else { volume_bonus_raw };
 
-    let new_score = current.saturating_add(base).saturating_add(streak_bonus).saturating_add(volume_bonus);
+    let new_score = current.saturating_add(time_points).saturating_add(streak_bonus).saturating_add(volume_bonus);
     let capped = if new_score > 1000 { 1000 } else { new_score };
 
     // Update score
     storage::set_score(env, member, capped);
-    // Log activity
-    storage::add_activity(env, member, ACTIVITY_CONTRIBUTE, 1);
+    // Track the weighted award and log it against the activity history
+    storage::add_time_weighted_points(env, member, u64::from(time_points));
+    storage::add_activity(env, member, ACTIVITY_CONTRIBUTE, time_points);
 
     capped
 }
