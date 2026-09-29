@@ -4,6 +4,9 @@
 mod test_integration;
 
 #[cfg(test)]
+mod test_security_hardening;
+
+#[cfg(test)]
 mod test_stress;
 
 #[cfg(test)]

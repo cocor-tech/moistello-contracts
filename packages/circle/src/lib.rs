@@ -41,6 +41,9 @@ impl Circle {
     ) -> Result<(), types::CircleError> {
         contract::contribute(&env, &member, amount, round)
     }
+    pub fn check_contribution_deadline(env: Env) -> Result<(), types::CircleError> {
+        contract::check_contribution_deadline(&env)
+    }
     pub fn trigger_payout(env: Env, caller: Address, round: u32) -> Result<(), types::CircleError> {
         contract::trigger_payout(&env, &caller, round)
     }

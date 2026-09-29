@@ -211,6 +211,229 @@ pub fn join(env: &Env, member: &Address) -> Result<(), CircleError> {
     );
     Ok(())
 }
+// ---------------------------------------------------------------------------
+// Contribution window helpers (#325 / #329)
+// ---------------------------------------------------------------------------
+
+/// Addresses that recorded a contribution for `round`.
+///
+/// Derived from the canonical `Contributions` log rather than the
+/// `(Address, u32) -> bool` map `contribute` also maintains. Both are correct,
+/// but the payout path already has `Contributions` in its footprint, so reading
+/// it costs no extra ledger entry — and the payout path is close to the
+/// invocation ledger-entry budget on long-running circles.
+fn round_contributors(env: &Env, round: u32) -> Vec<Address> {
+    let contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut contributors: Vec<Address> = Vec::new(env);
+    for i in 0..contributions.len() {
+        if let Some(c) = contributions.get(i) {
+            if c.round == round {
+                contributors.push_back(c.member.clone());
+            }
+        }
+    }
+    contributors
+}
+
+/// Total tokens actually contributed for `round`.
+///
+/// `trigger_payout_internal` previously sized the pool as
+/// `contribution_amount * member_count`, which silently assumed a fully
+/// funded round. That is exactly what breaks #325: once the window shuts and a
+/// member defaults, the circle holds less than the pool implies and settlement
+/// fails on insufficient balance, leaving the round wedged. For a fully funded
+/// round the two values are identical, so this only changes the under-funded
+/// case.
+fn round_contributed_total(env: &Env, round: u32) -> i128 {
+    let contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut total: i128 = 0;
+    for i in 0..contributions.len() {
+        if let Some(c) = contributions.get(i) {
+            if c.round == round {
+                total = total.saturating_add(c.amount);
+            }
+        }
+    }
+    total
+}
+
+fn contributed_in(contributors: &Vec<Address>, member: &Address) -> bool {
+    for i in 0..contributors.len() {
+        if let Some(a) = contributors.get(i) {
+            if a == *member {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Timestamp at which on-time contributions for the current round stop being
+/// accepted. Mirrors the basis used inside `contribute` (`started_at` plus
+/// `contribution_deadline_seconds`) so enforcement and acceptance can never
+/// disagree about when the window shut.
+fn round_contribution_deadline(circle: &Circle) -> Option<u64> {
+    if circle.contribution_deadline_seconds == 0 {
+        // No deadline configured: the window never closes on its own.
+        return None;
+    }
+    circle
+        .started_at
+        .checked_add(circle.contribution_deadline_seconds)
+}
+
+/// Timestamp after which `contribute` starts rejecting contributions outright.
+///
+/// This is the deadline plus any grace period, i.e. the point at which a
+/// member can no longer contribute late either. It is the earliest moment at
+/// which a member can be treated as having defaulted for the round.
+fn round_forfeit_time(circle: &Circle) -> Option<u64> {
+    let deadline = round_contribution_deadline(circle)?;
+    match circle.grace_period_seconds {
+        0 => Some(deadline),
+        grace => deadline.checked_add(grace),
+    }
+}
+
+/// Whether the round's contribution window has closed for good, i.e. members
+/// can no longer contribute (not even late) and non-contributors can be
+/// struck. `false` when no deadline is configured.
+pub fn contribution_window_closed(env: &Env, circle: &Circle) -> bool {
+    match round_forfeit_time(circle) {
+        Some(forfeit_at) => env.ledger().timestamp() > forfeit_at,
+        None => false,
+    }
+}
+
+/// Number of active members that still owe a contribution for `round`.
+///
+/// Only `MEMBER_ACTIVE` members count: exited members are refunded collateral
+/// and defaulted members have already been penalised.
+fn active_members_awaiting(members: &Vec<Member>, contributors: &Vec<Address>) -> u32 {
+    let mut awaiting = 0u32;
+    for i in 0..members.len() {
+        let m = match members.get(i) {
+            Some(m) => m,
+            None => continue,
+        };
+        if m.status == MEMBER_ACTIVE && !contributed_in(contributors, &m.address) {
+            awaiting = awaiting.saturating_add(1);
+        }
+    }
+    awaiting
+}
+
+/// Sweeps the current round once its contribution window has closed, striking
+/// every active member who never contributed and resolving the round.
+///
+/// #325: `contribute` already refuses late contributions once the window shuts,
+/// but nothing advanced the round or penalised non-contributors, so a single
+/// absent member could wedge the circle permanently: the admin's
+/// `trigger_payout` had no contributor to pay out and the round never moved on.
+/// This is permissionless and idempotent per round, and it auto-resolves the
+/// round afterwards so the circle cannot stall.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+///
+/// # Returns
+/// - `Ok(())` once the round has been swept and resolved
+/// - `Err(CircleError::ContractPaused)` if the contract is paused
+/// - `Err(CircleError::ReentrantCall)` if re-entered while already executing
+/// - `Err(CircleError::NotActive)` if the circle is not ACTIVE
+/// - `Err(CircleError::InvalidRound)` if there is no open round left to sweep
+/// - `Err(CircleError::DeadlineNotPassed)` if the contribution window is still open
+///
+/// # Authorization
+/// None. Anyone may sweep a round once its window has demonstrably closed.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
+pub fn check_contribution_deadline(env: &Env) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::ReentrantCall)?;
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    if circle.status != STATUS_ACTIVE {
+        return Err(CircleError::NotActive);
+    }
+    if circle.current_round >= circle.total_rounds {
+        return Err(CircleError::InvalidRound);
+    }
+    if !contribution_window_closed(env, &circle) {
+        return Err(CircleError::DeadlineNotPassed);
+    }
+    let round = circle.current_round;
+    let mut members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .ok_or(CircleError::NotInitialized)?;
+    let contributors = round_contributors(env, round);
+
+    // #325: the window has shut, so anyone still missing has defaulted.
+    strike_non_contributors(env, &circle, &contributors, &mut members);
+
+    // Settle immediately rather than waiting on the admin, so a circle cannot
+    // stall on members who are never going to pay. `trigger_payout_internal`
+    // sizes the pool from what was actually contributed, so a partially funded
+    // round pays out the smaller real pool instead of over-drawing.
+    trigger_payout_internal(env, round)
+}
+
+/// Applies #325's automatic strike to every active member who has not
+/// contributed for `round`. Called from `trigger_payout_internal` on the way to
+/// settling a round whose contribution window has already closed, so it runs at
+/// most once per round and only after contributions are genuinely impossible.
+fn strike_non_contributors(
+    env: &Env,
+    circle: &Circle,
+    contributors: &Vec<Address>,
+    members: &mut Vec<Member>,
+) {
+    let mut changed = false;
+    for i in 0..members.len() {
+        let m = match members.get(i) {
+            Some(m) => m,
+            None => continue,
+        };
+        if m.status != MEMBER_ACTIVE || contributed_in(contributors, &m.address) {
+            continue;
+        }
+        changed = true;
+        let mut updated = m;
+        // Saturating: a long-lived circle must not wrap a strike counter back
+        // to zero and silently erase a member's penalty history.
+        updated.strikes = updated.strikes.saturating_add(1);
+        if updated.strikes >= circle.max_strikes {
+            updated.status = MEMBER_DEFAULTED;
+            scoring::record_default(env, &updated.address);
+        }
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("default")),
+            MemberDefaulted {
+                member: updated.address.clone(),
+                strikes: updated.strikes,
+            },
+        );
+        members.set(i, updated);
+    }
+    if changed {
+        env.storage().persistent().set(&DataKey::Members, &*members);
+    }
+}
+
 /// Records a contribution from a circle member for the current round.
 ///
 /// # Parameters
@@ -502,8 +725,8 @@ fn record_round_fee(
 
 pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
-    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
-    let mut circle: Circle = env
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::ReentrantCall)?;
+    let circle: Circle = env
         .storage()
         .instance()
         .get(&DataKey::Circle)
@@ -517,6 +740,20 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         return Err(CircleError::Unauthorized);
     }
     caller.require_auth();
+    trigger_payout_internal(env, round)
+}
+
+/// Resolves `round` and advances `current_round`. Split out of
+/// `trigger_payout` so #325's deadline sweep can settle a round without
+/// impersonating the admin. Callers are responsible for having already
+/// authenticated and for holding the reentrancy guard.
+fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let mut circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
     if circle.status != STATUS_ACTIVE {
         return Err(CircleError::NotActive);
     }
@@ -538,8 +775,31 @@ pub fn trigger_payout(env: &Env, caller: &Address, round: u32) -> Result<(), Cir
         PAYOUT_VOTE => (payout::resolve_vote(env, &circle, round)?, PAYOUT_VOTE),
         _ => return Err(CircleError::InvalidPayoutType),
     };
-    let pool = math::safe_mul(circle.contribution_amount, circle.member_count as i128)
-        .map_err(|_| CircleError::InvalidAmount)?;
+    let mut members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .ok_or(CircleError::NotInitialized)?;
+
+    // Read once and shared with the deadline sweep's own accounting. This entry
+    // is already in the payout path's footprint, so it costs no extra ledger
+    // entry.
+    let contributors = round_contributors(env, round);
+
+    if !contribution_window_closed(env, &circle)
+        && active_members_awaiting(&members, &contributors) > 0
+    {
+        // #329: never advance past members who still owe a contribution while
+        // their window is open. Without this a member could be skipped silently
+        // and the round would move on before they were ever able to pay.
+        //
+        // Placed after recipient resolution but before any transfer, so it still
+        // blocks every state change and token movement while leaving the more
+        // specific recipient errors (e.g. an auction winner that has since
+        // exited) reachable.
+        return Err(CircleError::InvalidContributionRound);
+    }
+    let pool = round_contributed_total(env, round);
     let fee_bps: u32 = env
         .storage()
         .instance()
@@ -2273,6 +2533,13 @@ pub fn register_referral(
     Ok(())
 }
 pub fn claim_referral_bonus(env: &Env, referrer: &Address) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    // #323: this path performs a token `transfer`, so it takes the same guard
+    // as every other mutating entry point.
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::ReentrantCall)?;
+    // The payout target must authorise the transfer. Without this any caller
+    // could name an arbitrary `referrer` and sweep the circle's whole balance.
+    referrer.require_auth();
     let token_address: Address = if let Some(t) = env.storage().instance().get(&DataKey::Token) {
         t
     } else {
@@ -2343,6 +2610,9 @@ pub fn update_streak(env: &Env, member: &Address, round: u32) -> Result<(), Circ
 
 pub fn claim_streak_bonus(env: &Env, member: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    // #323: this path performs a token `transfer`, so it takes the same guard
+    // as every other mutating entry point.
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::ReentrantCall)?;
     member.require_auth();
     let token_address: Address = if let Some(t) = env.storage().instance().get(&DataKey::Token) {
         t
