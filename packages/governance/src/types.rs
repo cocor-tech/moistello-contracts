@@ -27,13 +27,6 @@ pub struct ProposalAction {
     pub target_contract: Address,
     pub method: Symbol,
     pub args: Vec<Val>,
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct ProposalAction {
-    pub target_contract: Address,
-    pub method: Symbol,
-    pub args: Vec<Val>,
 }
 
 #[contracttype]
@@ -55,11 +48,6 @@ pub struct Proposal {
 
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct Proposal {
-    pub id: u64,
-    pub proposer: Address,
-    pub deposit_amount: i128,
-    pub action: ProposalAction,
 pub struct ProposalMetadata {
     pub id: u64,
     pub proposer: Address,
@@ -160,6 +148,7 @@ pub enum GovernanceError {
     ConfigUpdateAlreadyQueued = 17,
     NoPendingConfigUpdate = 18,
     CircularDelegation = 19,
+    ProposalNotExpired = 20,
 }
 
 #[contractevent(topics=["delegate"])]
@@ -246,4 +235,14 @@ pub struct ConfigUpdateQueued {
 pub struct ConfigUpdateCancelled {
     #[topic]
     pub cancelled_by: Address,
+}
+
+#[contractevent(topics=["expired"])]
+#[derive(Clone, Debug)]
+pub struct ProposalExpired {
+    #[topic]
+    pub id: u64,
+    #[topic]
+    pub proposer: Address,
+    pub deposit_refunded: i128,
 }

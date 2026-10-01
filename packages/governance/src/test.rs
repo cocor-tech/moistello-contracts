@@ -385,15 +385,17 @@ mod tests {
         );
 
         let first_page = client.get_proposal_metadata_page(&0u64, &2u32);
-        assert_eq!(first_page.total, 3);
+        assert_eq!(first_page.total, 4);
         assert_eq!(first_page.next_cursor, 2);
         assert_eq!(first_page.entries.len(), 2);
         assert_eq!(first_page.entries.get(0).unwrap().id, 0);
-        assert_eq!(first_page.entries.get(1).unwrap().description, second_description);
+        assert_eq!(first_page.entries.get(1).unwrap().description, first_description);
 
         let second_page = client.get_proposal_metadata_page(&first_page.next_cursor, &50u32);
-        assert_eq!(second_page.entries.len(), 1);
+        assert_eq!(second_page.entries.len(), 2);
         assert_eq!(second_page.entries.get(0).unwrap().id, 2);
-        assert_eq!(second_page.entries.get(0).unwrap().description, third_description);
+        assert_eq!(second_page.entries.get(0).unwrap().description, second_description);
+        assert_eq!(second_page.entries.get(1).unwrap().id, 3);
+        assert_eq!(second_page.entries.get(1).unwrap().description, third_description);
     }
 }

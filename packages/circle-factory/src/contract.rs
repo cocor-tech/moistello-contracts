@@ -1,6 +1,5 @@
 use crate::types::*;
 use common::pause;
-use soroban_sdk::{symbol_short, Address, BytesN, Env, Vec};
 use soroban_sdk::{symbol_short, xdr::ToXdr, Address, BytesN, Env, Vec};
 
 fn canonical_deployment_salt(env: &Env, config: &CircleConfig) -> BytesN<32> {
@@ -119,22 +118,6 @@ pub fn deploy_circle(env: &Env, config: &CircleConfig) -> Result<Address, Factor
         env.storage()
             .persistent()
             .set(&key, &(count.checked_add(1).ok_or(FactoryError::InvalidConfig)?));
-    }
-    let wh: BytesN<32> = env
-        .storage()
-        .instance()
-        .get(&DataKey::WasmHash)
-        .ok_or(FactoryError::WasmHashNotSet)?;
-    let count: u32 = env
-        .storage()
-        .instance()
-        .get(&DataKey::CircleCount)
-        .unwrap_or(0);
-    let mut salt = [0u8; 32];
-    salt[28..32].copy_from_slice(&count.to_be_bytes());
-    let cid = env
-        .deployer()
-        .with_current_contract(BytesN::from_array(env, &salt))
     }
     let wh: BytesN<32> = env
         .storage()

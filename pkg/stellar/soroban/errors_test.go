@@ -55,6 +55,13 @@ func TestClassifySorobanError_Circle(t *testing.T) {
 		{"Dutch Auction Expired", 61, apperrors.ErrDutchAuctionExpired},
 		{"Invalid Dutch Config", 62, apperrors.ErrInvalidDutchConfig},
 		{"Auction Not Resolved", 63, apperrors.ErrAuctionNotResolved},
+		{"Invalid Contribution Round", 64, apperrors.ErrInvalidContributionRound},
+		{"Deadline Not Passed", 65, apperrors.ErrDeadlineNotPassed},
+		{"Reentrant Call", 66, apperrors.ErrReentrantCall},
+		{"Overpayment", 67, apperrors.ErrOverpayment},
+		{"Underpayment", 68, apperrors.ErrUnderpayment},
+		{"Transfer Failed", 69, apperrors.ErrTransferFailed},
+		{"Metadata Immutable", 70, apperrors.ErrMetadataImmutable},
 	}
 
 	for _, tt := range tests {

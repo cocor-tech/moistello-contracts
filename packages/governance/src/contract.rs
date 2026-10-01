@@ -711,6 +711,9 @@ fn proposal_metadata(proposal: Proposal) -> ProposalMetadata {
         created_at: proposal.created_at,
         voting_ends_at: proposal.voting_ends_at,
         timelock_ends_at: proposal.timelock_ends_at,
+        votes_for: proposal.votes_for,
+        votes_against: proposal.votes_against,
+        votes_abstain: proposal.votes_abstain,
     }
 }
 

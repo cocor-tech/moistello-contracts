@@ -596,7 +596,7 @@ pub fn slash(
         .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
@@ -620,14 +620,17 @@ pub fn slash(
     };
 
     // Update stake position
-    let new_amount = stake_position.amount
+    let new_amount = stake_position
+        .amount
         .checked_sub(slash_amount)
         .ok_or(StakingError::InsufficientBalance)?;
-    
+
     if new_amount == 0 {
         // Remove stake entirely if slashed to zero
-        env.storage().instance().remove(&DataKey::Stake(user.clone()));
-        
+        env.storage()
+            .instance()
+            .remove(&DataKey::Stake(user.clone()));
+
         // Remove from staker list
         let stakers: Vec<Address> = env
             .storage()
@@ -640,14 +643,16 @@ pub fn slash(
                 updated.push_back(s);
             }
         }
-        env.storage().persistent().set(&DataKey::StakerList, &updated);
+        env.storage()
+            .persistent()
+            .set(&DataKey::StakerList, &updated);
     } else {
         // Reduce stake and recalculate voting power
         let multiplier = stake_position.period.multiplier();
         let new_voting_power = new_amount
             .checked_mul(multiplier as i128)
             .ok_or(StakingError::Overflow)?;
-        
+
         let updated_position = StakePosition {
             amount: new_amount,
             voting_power: new_voting_power,

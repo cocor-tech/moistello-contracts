@@ -46,6 +46,13 @@ var (
 	ErrDutchAuctionExpired         = errors.New("dutch auction expired")
 	ErrInvalidDutchConfig          = errors.New("invalid dutch auction configuration")
 	ErrAuctionNotResolved          = errors.New("auction not resolved")
+	ErrInvalidContributionRound    = errors.New("round has outstanding contributions")
+	ErrDeadlineNotPassed           = errors.New("contribution deadline not passed")
+	ErrReentrantCall               = errors.New("reentrant call rejected")
+	ErrOverpayment                 = errors.New("amount exceeds expected contribution")
+	ErrUnderpayment                = errors.New("amount is less than expected contribution")
+	ErrTransferFailed              = errors.New("token transfer failed")
+	ErrMetadataImmutable           = errors.New("field cannot be updated after circle creation")
 )
 
 // Factory domain errors mapped from FactoryError contract error variants.

@@ -62,6 +62,8 @@ pub fn init(
         if config.contribution_amount > scoring::max_contribution(env, &config.organizer) {
             return Err(CircleError::ContributionExceedsTier);
         }
+    } else if config.max_members > 100 {
+        return Err(CircleError::CircleSizeExceedsTier);
     }
     let circle = Circle {
         id: env.current_contract_address(),
@@ -487,8 +489,12 @@ pub fn contribute(
     if is_payout_scheduled(env, round) {
         return Err(CircleError::PayoutAlreadyScheduled);
     }
-    if amount != circle.contribution_amount {
-        return Err(CircleError::ContributionMismatch);
+    // #350: Distinguish overpayment from underpayment for a clear error message.
+    if amount > circle.contribution_amount {
+        return Err(CircleError::Overpayment);
+    }
+    if amount < circle.contribution_amount {
+        return Err(CircleError::Underpayment);
     }
     let members: Vec<Member> = env
         .storage()
@@ -1078,6 +1084,7 @@ fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
                 total_payouts: circle.total_payouts,
             },
         );
+        let mut graduated = false;
         if circle.collateral_amount > 0 {
             for i in 0..members.len() {
                 let m = members.get(i).ok_or(CircleError::NotInitialized)?;
@@ -1091,12 +1098,42 @@ fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
             .persistent()
             .get(&DataKey::Members)
             .ok_or(CircleError::NotInitialized)?;
-        for i in 0..final_members.len() {
-            let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
-            if m.status == MEMBER_ACTIVE {
-                scoring::record_circle_completion(env, &m.address);
+        // #351: call reputation registry for boost; gracefully degrade if unavailable.
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::ReputationRegistry)
+        {
+            let registry_client =
+                reputation_registry::ReputationRegistryClient::new(env, &registry);
+            for i in 0..final_members.len() {
+                let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
+                if m.status == MEMBER_ACTIVE {
+                    scoring::record_circle_completion(env, &m.address);
+                    // Attempt graduation boost — ignore error so one bad
+                    // registry call never prevents the circle completing.
+                    let _ = registry_client.try_record_circle_completion(&m.address);
+                }
+            }
+            graduated = true;
+        } else {
+            for i in 0..final_members.len() {
+                let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
+                if m.status == MEMBER_ACTIVE {
+                    scoring::record_circle_completion(env, &m.address);
+                }
             }
         }
+        // #351: emit CircleGraduated event.
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("graduate")),
+            CircleGraduated {
+                circle_id: env.current_contract_address(),
+                member_count: circle.member_count,
+                total_payouts: circle.total_payouts,
+                boost_applied: graduated,
+            },
+        );
     }
     Ok(())
 }
@@ -3011,4 +3048,59 @@ pub fn is_payout_scheduled(env: &Env, round: u32) -> bool {
         .persistent()
         .get(&DataKey::PayoutScheduled(round))
         .unwrap_or(false)
+}
+
+/// #357 — Update mutable circle metadata (name, description/slug).
+///
+/// Immutable fields (token, contribution_amount, max_members, payout_type,
+/// total_rounds) are rejected with `CircleError::MetadataImmutable`.
+///
+/// # Authorization
+/// Requires authentication from the circle organizer or admin.
+pub fn update_metadata(
+    env: &Env,
+    caller: &Address,
+    field: soroban_sdk::String,
+    value: soroban_sdk::String,
+) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    caller.require_auth();
+    let mut circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if caller != &circle.organizer && caller != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    // Determine which field to update; reject immutable ones.
+    if field == soroban_sdk::String::from_str(env, "name") {
+        circle.name = value;
+    } else if field == soroban_sdk::String::from_str(env, "slug") {
+        circle.slug = value;
+    } else if field == soroban_sdk::String::from_str(env, "token")
+        || field == soroban_sdk::String::from_str(env, "contribution_amount")
+        || field == soroban_sdk::String::from_str(env, "max_members")
+        || field == soroban_sdk::String::from_str(env, "payout_type")
+        || field == soroban_sdk::String::from_str(env, "total_rounds")
+    {
+        return Err(CircleError::MetadataImmutable);
+    } else {
+        return Err(CircleError::InvalidAmount);
+    }
+    env.storage().instance().set(&DataKey::Circle, &circle);
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("meta_upd")),
+        MetadataUpdated {
+            updater: caller.clone(),
+            field,
+        },
+    );
+    Ok(())
 }

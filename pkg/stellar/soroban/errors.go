@@ -148,6 +148,20 @@ func classifyCircleError(code uint32, msg string) error {
 		return apperrors.ErrInvalidDutchConfig
 	case 63:
 		return apperrors.ErrAuctionNotResolved
+	case 64:
+		return apperrors.ErrInvalidContributionRound
+	case 65:
+		return apperrors.ErrDeadlineNotPassed
+	case 66:
+		return apperrors.ErrReentrantCall
+	case 67:
+		return apperrors.ErrOverpayment
+	case 68:
+		return apperrors.ErrUnderpayment
+	case 69:
+		return apperrors.ErrTransferFailed
+	case 70:
+		return apperrors.ErrMetadataImmutable
 	default:
 		if msg != "" {
 			return fmt.Errorf("circle error %d: %s", code, msg)

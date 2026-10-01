@@ -145,15 +145,6 @@ pub fn resolve_vote(env: &Env, circle: &Circle, round: u32) -> Result<Address, C
             best_addr = Some(addr);
         }
     }
-    }
-    let mut best_addr: Option<Address> = None;
-    let mut best_count: u32 = 0;
-    for (addr, count) in tally.iter() {
-        if count > best_count {
-            best_count = count;
-            best_addr = Some(addr);
-        }
-    }
     let winner = best_addr.ok_or(CircleError::VoteQuorumNotMet)?;
     for i in 0..members.len() {
         let m = members.get(i).ok_or(CircleError::VecAccessError)?;
