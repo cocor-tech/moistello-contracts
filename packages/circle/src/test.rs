@@ -497,7 +497,9 @@ mod tests {
         let (_token, client) = setup_test_env(&env, &mut config);
 
         let member = Address::generate(&env);
-        let evidence = BytesN::from_array(&env, &[0u8; 32]);
+        // #340: a dispute must commit to real evidence; an all-zero digest is
+        // rejected with EvidenceRequired, so use a genuine commitment here.
+        let evidence = BytesN::from_array(&env, &[7u8; 32]);
         let result = client.try_raise_dispute(&member, &evidence);
         assert!(result.is_err());
     }

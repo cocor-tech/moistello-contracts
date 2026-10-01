@@ -140,7 +140,85 @@ pub fn convert_shares(
     safe_div(numerator, total_shares)
 }
 
+// ── Integer square root ──────────────────────────────────────────────────────
+
+/// Integer square root: the largest `x` such that `x * x <= n`.
+///
+/// Used by the quadratic-voting weight in the circle contract (issue #330):
+/// a member's influence grows with the square root of their voting power, so a
+/// 100x power advantage only buys 10x the influence. The implementation is
+/// Newton's method carried out entirely in `u128`; the invariant
+/// `y <= ceil(sqrt(n))` means no intermediate value is ever squared, so the
+/// function cannot overflow and always terminates in O(log log n) iterations.
+///
+/// Returns `0` for `0` and `1` for `1`.
+pub fn isqrt(n: u128) -> u128 {
+    if n < 2 {
+        return n;
+    }
+    let mut x: u128 = n;
+    // Initial guess: ceil(n / 2). Written without `n + 1` so it cannot overflow
+    // for `n == u128::MAX`, and small enough that `n == 2` still converges to 1
+    // (the naive `n / 2 + 1` guess stops one step short there).
+    let mut y: u128 = (n >> 1) + (n & 1);
+    while y < x {
+        x = y;
+        y = (x + n / x) >> 1;
+    }
+    x
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod isqrt_tests {
+    use super::*;
+
+    #[test]
+    fn isqrt_small_values() {
+        assert_eq!(isqrt(0), 0);
+        assert_eq!(isqrt(1), 1);
+        assert_eq!(isqrt(2), 1);
+        assert_eq!(isqrt(3), 1);
+        assert_eq!(isqrt(4), 2);
+        assert_eq!(isqrt(8), 2);
+        assert_eq!(isqrt(9), 3);
+        assert_eq!(isqrt(10), 3);
+        assert_eq!(isqrt(15), 3);
+        assert_eq!(isqrt(16), 4);
+    }
+
+    #[test]
+    fn isqrt_is_floor_of_square_root() {
+        for k in 0u128..1000 {
+            let root = isqrt(k * k);
+            assert_eq!(root, k);
+            // (k+1)^2 - 1 still floors to k
+            assert_eq!(isqrt(k * k + 2 * k), k);
+        }
+    }
+
+    #[test]
+    fn isqrt_perfect_square_plus_one_rounds_down() {
+        let k = 1_000_000u128;
+        assert_eq!(isqrt(k * k), k);
+        assert_eq!(isqrt(k * k + 1), k);
+    }
+
+    #[test]
+    fn isqrt_boundary_values() {
+        assert_eq!(isqrt(u128::MAX), (1u128 << 64) - 1);
+        assert_eq!(isqrt(1u128 << 126), 1u128 << 63);
+    }
+
+    #[test]
+    fn isqrt_quadratic_voting_example() {
+        // 100x voting power buys 10x weight — the core quadratic-voting claim.
+        assert_eq!(isqrt(100), 10);
+        assert_eq!(isqrt(10_000), 100);
+        assert_eq!(isqrt(1_000_000), 1_000);
+    }
+}
 
 #[cfg(test)]
 mod fp_tests {

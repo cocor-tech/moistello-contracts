@@ -7,8 +7,10 @@
 #[path = "../../../circle.rs"]
 pub mod circle_rs;
 mod contract;
+mod evidence;
 mod oracle;
 mod payout;
+mod voting;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
@@ -139,6 +141,34 @@ impl Circle {
         resolution: u32,
     ) -> Result<(), types::CircleError> {
         contract::resolve_dispute(&env, &admin, resolution)
+    }
+    /// Issue #340: resolves a dispute only after the supplied evidence preimage
+    /// hashes to the commitment recorded by `raise_dispute`.
+    pub fn resolve_dispute_with_evidence(
+        env: Env,
+        admin: Address,
+        resolution: u32,
+        evidence: soroban_sdk::Bytes,
+    ) -> Result<(), types::CircleError> {
+        contract::resolve_dispute_with_evidence(&env, &admin, resolution, &evidence)
+    }
+    /// Issue #340: re-hashes candidate evidence and compares it with the active
+    /// dispute's on-chain commitment.
+    pub fn verify_evidence(
+        env: Env,
+        evidence: soroban_sdk::Bytes,
+    ) -> Result<bool, types::CircleError> {
+        contract::verify_evidence(&env, &evidence)
+    }
+    /// Issue #340: the stored dispute record (raiser, timestamp, evidence
+    /// commitment, and resolution once set), or `None` when there is none.
+    pub fn get_dispute(env: Env) -> Option<types::DisputeEntry> {
+        contract::get_dispute(&env)
+    }
+    /// Issue #330: the quadratic voting weight this member's vote will carry
+    /// (`1 + min(isqrt(balance / 10^7), 1000)`).
+    pub fn get_vote_weight(env: Env, member: Address) -> Result<u32, types::CircleError> {
+        contract::get_vote_weight(&env, &member)
     }
     pub fn get_status(env: Env) -> types::Circle {
         contract::get_status(&env)

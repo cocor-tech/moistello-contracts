@@ -1,6 +1,9 @@
 #![cfg_attr(not(test), no_std)]
 
 #[cfg(test)]
+mod test_dispute_evidence;
+
+#[cfg(test)]
 mod test_integration;
 
 #[cfg(test)]

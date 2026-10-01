@@ -1,4 +1,5 @@
 use crate::types::*;
+use crate::voting;
 use common::vrf;
 use soroban_sdk::{Address, Env, Map, Vec};
 

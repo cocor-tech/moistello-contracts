@@ -108,7 +108,14 @@ pub fn record_on_time_payment(
     }
     storage::set_last_round(env, member, circle_id, round);
 
-    let base: u32 = 10;
+    let weight: u64 = if time_weight_bps > TIME_WEIGHT_BPS_MAX {
+        u64::from(TIME_WEIGHT_BPS_MAX)
+    } else {
+        u64::from(time_weight_bps)
+    };
+    // 10 * 10_000 fits comfortably in u64; the division floors by design so the
+    // full-weight case reproduces the legacy flat award exactly.
+    let time_points: u32 = ((u64::from(BASE_CONTRIBUTION_POINTS) * weight) / u64::from(TIME_WEIGHT_BPS_MAX)) as u32;
     let streak_bonus: u32 = if streak <= 10 { streak * 5 } else { 50 };
     let volume_bonus_raw = (amount / 100_0000000) as u32; // 1 point per 100 USDC
     let volume_bonus: u32 = if volume_bonus_raw > 20 {
@@ -125,8 +132,9 @@ pub fn record_on_time_payment(
 
     // Update score
     storage::set_score(env, member, capped);
-    // Log activity
-    storage::add_activity(env, member, ACTIVITY_CONTRIBUTE, 1);
+    // Track the weighted award and log it against the activity history
+    storage::add_time_weighted_points(env, member, u64::from(time_points));
+    storage::add_activity(env, member, ACTIVITY_CONTRIBUTE, time_points);
 
     capped
 }

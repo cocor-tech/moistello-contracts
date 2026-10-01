@@ -1,9 +1,11 @@
+use crate::evidence;
 use crate::oracle;
 // `payout` is imported as a module-level path. `load_round_details` is an
 // internal helper used only within payout.rs and must NOT be re-exported here;
 // doing so would create an unused import (fixes #271).
 use crate::payout;
 use crate::types::*;
+use crate::voting;
 // Reentrancy protection comes from the shared common module — there is intentionally
 // no local reentrancy.rs in this package. See packages/common/src/reentrancy.rs for
 // the canonical implementation and the rationale for centralisation.
@@ -14,7 +16,7 @@ use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     symbol_short,
     xdr::ToXdr,
-    Address, BytesN, Env, IntoVal, Map, Symbol, Vec,
+    Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec,
 };
 
 /// Initializes a new circle contract with the provided configuration.
@@ -490,7 +492,7 @@ pub fn contribute(
     if amount != circle.contribution_amount {
         return Err(CircleError::ContributionMismatch);
     }
-    let members: Vec<Member> = env
+    let mut members: Vec<Member> = env
         .storage()
         .persistent()
         .get(&DataKey::Members)
@@ -508,33 +510,21 @@ pub fn contribute(
     if !found {
         return Err(CircleError::NotMember);
     }
-    let mut contributions: Vec<Contribution> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::Contributions)
-        .unwrap_or_else(|| Vec::new(env));
-    let mut contribution_map: Map<(Address, u32), bool> = env
-        .storage()
-        .persistent()
-        .get(&symbol_short!("contribs"))
-        .unwrap_or_else(|| {
-            let mut m = Map::new(env);
-            for i in 0..contributions.len() {
-                if let Some(c) = contributions.get(i) {
-                    m.set((c.member.clone(), c.round), true);
-                }
-            }
-            env.storage()
-                .persistent()
-                .set(&symbol_short!("contribs"), &m);
-            m
-        });
-    if contribution_map
-        .get((member.clone(), round))
-        .unwrap_or(false)
-    {
+    // #326: replay protection. Uniqueness is enforced through the O(1)
+    // `(member, round)` index instead of a linear scan over the whole
+    // contribution history, and the slot is claimed *before* the token transfer
+    // below so a re-entrant or duplicated submission can never observe an
+    // unclaimed round (checks-effects-interactions). The rejection path below
+    // never touches the (unbounded) contribution history, so its cost does not
+    // grow as the circle ages.
+    let mut contribution_index: Map<(Address, u32), bool> = load_contribution_index(env);
+    if contribution_exists(&contribution_index, member, round) {
         return Err(CircleError::AlreadyContributed);
     }
+    contribution_index.set((member.clone(), round), true);
+    env.storage()
+        .persistent()
+        .set(&DataKey::ContributionIndex, &contribution_index);
     let now = env.ledger().timestamp();
     let on_time = if circle.contribution_deadline_seconds > 0 {
         let deadline = circle
@@ -588,21 +578,35 @@ pub fn contribute(
         }
     }
 
+    // #332: the time weight is derived from how much of the round's payment
+    // window was still open when the contribution landed, in basis points.
+    let time_weight = compute_time_weight(&circle, now);
+    let mut contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
     contributions.push_back(Contribution {
         member: member.clone(),
         round,
         amount,
         timestamp: now,
         on_time,
-        time_weight: now,
+        time_weight,
     });
     env.storage()
         .persistent()
         .set(&DataKey::Contributions, &contributions);
-    contribution_map.set((member.clone(), round), true);
-    env.storage()
-        .persistent()
-        .set(&symbol_short!("contribs"), &contribution_map);
+    for i in 0..members.len() {
+        let mut m = members.get(i).ok_or(CircleError::VecAccessError)?;
+        if m.address == *member {
+            m.total_contributions = math::safe_add(m.total_contributions, amount)
+                .map_err(|_| CircleError::InvalidAmount)?;
+            members.set(i, m);
+            break;
+        }
+    }
+    env.storage().persistent().set(&DataKey::Members, &members);
     env.events().publish(
         (env.current_contract_address(), symbol_short!("contrib")),
         ContributionRecorded {
@@ -613,10 +617,94 @@ pub fn contribute(
         },
     );
     if on_time {
-        scoring::record_on_time_payment(env, member, &circle.id, amount, round);
+        // #332: the same contribution now earns reputation points scaled by its
+        // time weight instead of a flat amount.
+        scoring::record_weighted_payment(
+            env,
+            member,
+            &circle.id,
+            amount,
+            round,
+            time_weight as u32,
+        );
         let _ = update_streak_internal(env, member, round);
     }
     Ok(())
+}
+
+/// Issue #326: loads the O(1) `(member, round) -> contributed` uniqueness index.
+///
+/// The index is derived state over `Contributions`. When it is absent — a circle
+/// created before the index existed, or the very first contribution of a new
+/// deployment — it is rebuilt once from the contribution history and persisted,
+/// so every subsequent call is a single `Map` lookup instead of a linear scan
+/// over the history. The rebuild is the migration path for circles deployed
+/// before this index existed; it runs at most once per circle because the index
+/// is written back before the contribution is recorded.
+fn load_contribution_index(env: &Env) -> Map<(Address, u32), bool> {
+    if let Some(index) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, Map<(Address, u32), bool>>(&DataKey::ContributionIndex)
+    {
+        return index;
+    }
+    let contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut index: Map<(Address, u32), bool> = Map::new(env);
+    for i in 0..contributions.len() {
+        if let Some(c) = contributions.get(i) {
+            index.set((c.member, c.round), true);
+        }
+    }
+    index
+}
+
+/// True when `member` already contributed for `round` (O(1) index lookup).
+fn contribution_exists(
+    index: &Map<(Address, u32), bool>,
+    member: &Address,
+    round: u32,
+) -> bool {
+    index.get((member.clone(), round)).unwrap_or(false)
+}
+
+/// Issue #332: time weight of a contribution, in basis points.
+///
+/// ```text
+/// weight = 0                                   if now >= started_at + window
+/// weight = (deadline - now) * 10_000 / window  otherwise
+/// ```
+///
+/// where `window` is `circle.contribution_deadline_seconds`. A member who pays
+/// the instant the window opens earns the maximum weight (10_000 bps = 1.0x); a
+/// member who pays just before the deadline earns close to 0; a member paying in
+/// the grace period earns exactly 0. With no deadline configured (window == 0)
+/// every accepted contribution carries full weight, matching the on-time rule
+/// used for scoring.
+pub fn compute_time_weight(circle: &Circle, now: u64) -> u64 {
+    let window = circle.contribution_deadline_seconds;
+    if window == 0 {
+        return TIME_WEIGHT_BPS_MAX;
+    }
+    let deadline = match circle.started_at.checked_add(window) {
+        Some(deadline) => deadline,
+        None => return 0,
+    };
+    if now >= deadline {
+        return 0;
+    }
+    let remaining = u128::from(deadline - now);
+    let scaled = remaining.saturating_mul(u128::from(TIME_WEIGHT_BPS_MAX)) / u128::from(window);
+    let capped = if scaled > u128::from(TIME_WEIGHT_BPS_MAX) {
+        u128::from(TIME_WEIGHT_BPS_MAX)
+    } else {
+        scaled
+    };
+    capped as u64
 }
 /// Triggers payout for the current round based on the circle's payout type.
 ///
@@ -1778,6 +1866,11 @@ pub fn raise_dispute(
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
     member.require_auth();
+    // #340: an all-zero digest is not a commitment to anything, so a dispute
+    // must carry a real evidence hash before it can freeze the circle.
+    if evidence::is_empty_commitment(env, evidence_hash) {
+        return Err(CircleError::EvidenceRequired);
+    }
     let mut circle: Circle = env
         .storage()
         .instance()
@@ -1845,7 +1938,96 @@ pub fn dispute(env: &Env, member: &Address, evidence_hash: &BytesN<32>) -> Resul
 ///
 /// # Panics
 /// Never panics. All errors are returned as typed CircleError variants.
+/// Resolves an active dispute after checking its evidence commitment (#340).
+///
+/// This is the legacy entry point: it refuses to resolve a dispute whose stored
+/// commitment is empty, but it does not re-hash the evidence. Prefer
+/// [`resolve_dispute_with_evidence`], which proves that the admin is resolving
+/// against the very evidence the raiser committed to.
 pub fn resolve_dispute(env: &Env, admin: &Address, resolution: u32) -> Result<(), CircleError> {
+    let dispute: DisputeEntry = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Dispute)
+        .ok_or(CircleError::NoActiveDispute)?;
+    if evidence::is_empty_commitment(env, &dispute.evidence_hash) {
+        return Err(CircleError::EvidenceRequired);
+    }
+    resolve_dispute_inner(env, admin, resolution)
+}
+
+/// Issue #340: resolves a dispute only after verifying the evidence preimage.
+///
+/// `evidence` must hash (sha256) to the commitment stored by `raise_dispute`,
+/// otherwise resolution is rejected with `CircleError::EvidenceMismatch` and the
+/// circle stays frozen. This is what turns dispute resolution from an act of
+/// trust into an act of verification: the on-chain commitment is checked against
+/// the evidence the admin actually reviewed.
+pub fn resolve_dispute_with_evidence(
+    env: &Env,
+    admin: &Address,
+    resolution: u32,
+    evidence_data: &Bytes,
+) -> Result<(), CircleError> {
+    let dispute: DisputeEntry = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Dispute)
+        .ok_or(CircleError::NoActiveDispute)?;
+    if evidence::is_empty_commitment(env, &dispute.evidence_hash) {
+        return Err(CircleError::EvidenceRequired);
+    }
+    if !evidence::matches(env, evidence_data, &dispute.evidence_hash) {
+        return Err(CircleError::EvidenceMismatch);
+    }
+    resolve_dispute_inner(env, admin, resolution)
+}
+
+/// Issue #340: re-hashes a candidate evidence preimage and compares it with the
+/// commitment stored on the active dispute.
+///
+/// Returns `Ok(true)` on a match and `Ok(false)` when the bytes are not the
+/// evidence that was committed to. The digest is published through the
+/// [`EvidenceVerified`] event so an indexer can record who checked what, and
+/// whether it passed.
+pub fn verify_evidence(env: &Env, evidence_data: &Bytes) -> Result<bool, CircleError> {
+    let dispute: DisputeEntry = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Dispute)
+        .ok_or(CircleError::NoActiveDispute)?;
+    let verified = evidence::matches(env, evidence_data, &dispute.evidence_hash);
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("evidence")),
+        EvidenceVerified {
+            raised_by: dispute.raised_by.clone(),
+            evidence_hash: dispute.evidence_hash.clone(),
+            verified,
+        },
+    );
+    Ok(verified)
+}
+
+/// Issue #340: returns the stored dispute (evidence commitment, raiser, and the
+/// resolution once it is set), or `None` when no dispute is recorded.
+pub fn get_dispute(env: &Env) -> Option<DisputeEntry> {
+    env.storage().persistent().get(&DataKey::Dispute)
+}
+
+/// Issue #330: current quadratic voting weight of `member`.
+///
+/// Exposed for transparency and for off-chain UI, so a voter can see the weight
+/// their vote will carry before casting it: `1 + min(isqrt(balance / 10^7), 1000)`.
+pub fn get_vote_weight(env: &Env, member: &Address) -> Result<u32, CircleError> {
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    Ok(voting::vote_weight(env, &circle, member))
+}
+
+fn resolve_dispute_inner(env: &Env, admin: &Address, resolution: u32) -> Result<(), CircleError> {
     let s: Address = env
         .storage()
         .instance()
