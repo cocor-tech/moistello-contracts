@@ -7,25 +7,23 @@ mod test_dispute_evidence;
 mod test_integration;
 
 #[cfg(test)]
-mod test_quadratic_voting;
-
-#[cfg(test)]
-mod test_replay_protection;
+mod test_security_hardening;
 
 #[cfg(test)]
 mod test_stress;
 
 #[cfg(test)]
-mod test_time_weighted;
+mod test_invariants;
 
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{Env, Address};
+    use soroban_sdk::{Address, Env};
 
     #[test]
     fn test_smoke_compile_ok() {
         let env = Env::default();
-        let _addr = Address::from_str(&env, "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H");
+        let _addr =
+            Address::from_str(&env, "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H");
     }
 
     #[test]

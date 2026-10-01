@@ -876,10 +876,7 @@ fn test_unstake_exact_unlock_boundary() {
 
     env.ledger().set_timestamp(unlock_time - 1);
     assert!(!client.is_stake_unlocked(&user));
-    assert_eq!(
-        client.try_unstake(&user),
-        Err(Ok(StakingError::StakeNotUnlocked))
-    );
+    assert_eq!(client.try_unstake(&user), Err(Ok(StakingError::StakeNotUnlocked)));
 
     env.ledger().set_timestamp(unlock_time);
     assert!(client.is_stake_unlocked(&user));
@@ -891,4 +888,40 @@ fn test_unstake_exact_unlock_boundary() {
     env.ledger().set_timestamp(unbonding.claimable_time);
     client.claim(&user);
     assert!(client.get_unbonding(&user).is_none());
+}
+
+#[test]
+fn test_query_stake_info_active_topped_up_and_unstaked() {
+    let (env, admin, user, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+
+    // 1. Unstaked case: zeroed StakeInfo
+    let unstaked_info = client.query_stake_info(&user);
+    assert_eq!(unstaked_info.amount, 0);
+    assert_eq!(unstaked_info.start_ledger, 0);
+    assert_eq!(unstaked_info.unlock_ledger, 0);
+    assert_eq!(unstaked_info.accrued_rewards, 0);
+
+    // 2. Active stake case
+    let amount = 100_0000000;
+    let period_months = 1;
+    let start_seq = env.ledger().sequence();
+    client.stake(&user, &amount, &period_months);
+
+    let active_info = client.query_stake_info(&user);
+    assert_eq!(active_info.amount, amount);
+    assert_eq!(active_info.start_ledger, start_seq);
+    let expected_unlock_ledger = start_seq + (30 * 24 * 60 * 60 / 5);
+    assert_eq!(active_info.unlock_ledger, expected_unlock_ledger);
+    assert_eq!(active_info.accrued_rewards, 0);
+
+    // 3. Topped-up case
+    let additional_amount = 50_0000000;
+    client.top_up_stake(&user, &additional_amount);
+
+    let topped_up_info = client.query_stake_info(&user);
+    assert_eq!(topped_up_info.amount, amount + additional_amount);
+    assert_eq!(topped_up_info.start_ledger, start_seq);
+    assert_eq!(topped_up_info.unlock_ledger, expected_unlock_ledger);
+    assert_eq!(topped_up_info.accrued_rewards, 0);
 }

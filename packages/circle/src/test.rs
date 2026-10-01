@@ -61,19 +61,20 @@ mod tests {
             env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
         let client = circle::CircleClient::new(env, &contract_id);
 
+        env.mock_all_auths_allowing_non_root_auth();
+
         // Deploy a mock SEP-41 token using the stellar asset contract helper
         let token_admin = Address::generate(env);
         let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
         let token_id = token_contract.address();
 
-        // Use a separate address as the treasury (holds bonus funds)
-        let treasury = Address::generate(env);
-
-        env.mock_all_auths();
+        let treasury_id = env.register(treasury::Treasury, ());
+        let treasury_client = treasury::TreasuryClient::new(env, &treasury_id);
+        treasury_client.init(&admin, &token_id);
 
         // Wire token + treasury into the circle contract
         client.set_token(&admin, &token_id);
-        client.set_treasury(&admin, &treasury);
+        client.set_treasury(&admin, &treasury_id);
 
         // Activate the circle (needs max_members joined)
         let m1 = Address::generate(env);
@@ -81,7 +82,7 @@ mod tests {
         client.join(&m1);
         client.join(&m2);
 
-        (client, admin, token_id, treasury, m1)
+        (client, admin, token_id, treasury_id, m1)
     }
     #[test]
     fn test_initialize() {
@@ -444,20 +445,63 @@ mod tests {
     }
 
     #[test]
+    fn test_auction_winner_must_still_be_active_at_payout() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 2u32; // PAYOUT_AUCTION
+        let admin = config.organizer.clone();
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let bidder = Address::generate(&env);
+        let other = Address::generate(&env);
+        mint_tokens(&env, &token, &bidder, 100000_0000000);
+        client.try_join(&bidder).unwrap().unwrap();
+        mint_tokens(&env, &token, &other, 100000_0000000);
+        client.try_join(&other).unwrap().unwrap();
+        client.try_auction_bid(&bidder, &500u32, &0u32).unwrap().unwrap();
+        client.try_exit_circle(&bidder).unwrap().unwrap();
+
+        let result = client.try_trigger_payout(&admin, &0u32);
+        assert_eq!(result, Err(Ok(CircleError::InvalidMemberStatus)));
+    }
+
+    #[test]
+    fn test_vote_winner_must_still_be_active_at_payout() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 3u32; // PAYOUT_VOTE
+        let admin = config.organizer.clone();
+        let (token, client) = setup_test_env(&env, &mut config);
+
+        env.mock_all_auths();
+        let nominee = Address::generate(&env);
+        let voter = Address::generate(&env);
+        mint_tokens(&env, &token, &nominee, 100000_0000000);
+        client.try_join(&nominee).unwrap().unwrap();
+        mint_tokens(&env, &token, &voter, 100000_0000000);
+        client.try_join(&voter).unwrap().unwrap();
+        client.try_vote_payout(&voter, &nominee, &0u32).unwrap().unwrap();
+        client.try_exit_circle(&nominee).unwrap().unwrap();
+
+        let result = client.try_trigger_payout(&admin, &0u32);
+        assert_eq!(result, Err(Ok(CircleError::InvalidMemberStatus)));
+    }
+
+    #[test]
     fn test_raise_dispute_on_empty_circle() {
         let env = Env::default();
         let mut config = create_config(&env);
         let (_token, client) = setup_test_env(&env, &mut config);
 
-        env.mock_all_auths();
         let member = Address::generate(&env);
         // #340: a dispute must commit to real evidence; an all-zero digest is
         // rejected with EvidenceRequired, so use a genuine commitment here.
         let evidence = BytesN::from_array(&env, &[7u8; 32]);
         let result = client.try_raise_dispute(&member, &evidence);
-        // Circle is PENDING (not full) — but raise_dispute only checks for DISPUTED/COMPLETED status
-        // So any member (even non-member) can raise a dispute on any circle
-        assert!(result.is_ok());
+        assert!(result.is_err());
     }
 
     #[test]
@@ -943,16 +987,20 @@ mod tests {
     fn test_raise_dispute_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let _admin = config.organizer.clone();
 
         let (token, client) = setup_test_env(&env, &mut config);
 
         let member = Address::generate(&env);
+        let member2 = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
-        env.mock_all_auths();
+        env.mock_all_auths_allowing_non_root_auth();
         mint_tokens(&env, &token, &member, 100000_0000000);
+        mint_tokens(&env, &token, &member2, 100000_0000000);
         client.try_join(&member).unwrap().unwrap();
+        client.try_join(&member2).unwrap().unwrap();
 
         assert!(client.try_raise_dispute(&member, &evidence_hash).is_ok());
         assert_eq!(client.get_status().status, 4u32);
@@ -962,16 +1010,20 @@ mod tests {
     fn test_raise_dispute_duplicate() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let _admin = config.organizer.clone();
 
         let (token, client) = setup_test_env(&env, &mut config);
 
         let member = Address::generate(&env);
+        let member2 = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
-        env.mock_all_auths();
+        env.mock_all_auths_allowing_non_root_auth();
         mint_tokens(&env, &token, &member, 100000_0000000);
+        mint_tokens(&env, &token, &member2, 100000_0000000);
         client.try_join(&member).unwrap().unwrap();
+        client.try_join(&member2).unwrap().unwrap();
 
         client
             .try_raise_dispute(&member, &evidence_hash)
@@ -984,16 +1036,20 @@ mod tests {
     fn test_resolve_dispute_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);
+        config.max_members = 2u32;
         let admin = config.organizer.clone();
 
         let (token, client) = setup_test_env(&env, &mut config);
 
         let member = Address::generate(&env);
+        let member2 = Address::generate(&env);
         let evidence_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
 
-        env.mock_all_auths();
+        env.mock_all_auths_allowing_non_root_auth();
         mint_tokens(&env, &token, &member, 100000_0000000);
+        mint_tokens(&env, &token, &member2, 100000_0000000);
         client.try_join(&member).unwrap().unwrap();
+        client.try_join(&member2).unwrap().unwrap();
         client
             .try_raise_dispute(&member, &evidence_hash)
             .unwrap()
@@ -1001,6 +1057,11 @@ mod tests {
 
         assert!(client.try_resolve_dispute(&admin, &1u32).is_ok()); // RESOLVE_DISMISS = 1
         assert_eq!(client.get_status().status, 1u32);
+        let resolution = client.get_dispute_resolution().unwrap();
+        assert_eq!(resolution.raised_by, member);
+        assert_eq!(resolution.resolution, 1u32);
+        assert_eq!(resolution.outcome_code, 1u32);
+        assert_eq!(resolution.resolved_by, admin);
     }
 
     #[test]
@@ -1328,9 +1389,10 @@ fn create_config(env: &Env, token: &Address) -> crate::types::CircleConfig {
 }
 
 fn setup_circle(env: &Env) -> (CircleClient<'_>, Address, Address) {
-    env.mock_all_auths();
+    env.mock_all_auths_allowing_non_root_auth();
     let token_admin = Address::generate(env);
-    let token = env.register_stellar_asset_contract(token_admin);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token = token_contract.address();
     let config = create_config(env, &token);
     let admin = config.organizer.clone();
     let factory = Address::generate(env);
@@ -1448,7 +1510,9 @@ fn test_resolve_dispute_unauthorized() {
     let member = Address::generate(&env);
     let stranger = Address::generate(&env);
 
+    let member2 = Address::generate(&env);
     client.join(&member);
+    client.join(&member2);
     client.raise_dispute(&member, &soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
 
     let result = client.try_resolve_dispute(&stranger, &1u32);
@@ -1503,7 +1567,9 @@ fn test_late_contribution_within_grace_period_incurs_penalty_split() {
     let admin = Address::generate(&env);
     let token_admin = Address::generate(&env);
     let token = env.register_stellar_asset_contract_v2(token_admin);
-    let treasury = Address::generate(&env);
+    let treasury_id = env.register(treasury::Treasury, ());
+    let treasury_client = treasury::TreasuryClient::new(&env, &treasury_id);
+    treasury_client.init(&admin, &token.address());
 
     let config = CircleConfig {
         organizer: admin.clone(),
@@ -1523,7 +1589,7 @@ fn test_late_contribution_within_grace_period_incurs_penalty_split() {
     };
     let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
     let client = CircleClient::new(&env, &contract_id);
-    client.set_treasury(&admin, &treasury);
+    client.set_treasury(&admin, &treasury_id);
 
     let member_one = Address::generate(&env);
     let member_two = Address::generate(&env);
@@ -1541,7 +1607,7 @@ fn test_late_contribution_within_grace_period_incurs_penalty_split() {
 
     let token_client = soroban_sdk::token::Client::new(&env, &token.address());
     // Penalty is 500 bps (5%) of 1000 = 50 routed to treasury
-    assert_eq!(token_client.balance(&treasury), 50_i128);
+    assert_eq!(token_client.balance(&treasury_id), 50_i128);
     // Contract keeps 950
     assert_eq!(token_client.balance(&client.address), 950_i128);
 
@@ -1826,7 +1892,7 @@ fn test_year_long_lifecycle_simulation() {
         min_moi_score: 0,
         collateral_amount: 0,
         penalty_bps: 0,
-        grace_period_seconds: 240 * 86400,
+        grace_period_seconds: 365 * 86400,
         max_strikes: 3,
         slug: String::from_str(&env, "year-circle"),
     };
@@ -1960,7 +2026,8 @@ fn test_refund_losing_bids_fifty_bidders_in_batches() {
     config.contribution_amount = 100_i128;
     let organizer = config.organizer.clone();
     let factory = Address::generate(&env);
-    let contract_id = env.register(Circle, CircleArgs::__constructor(&organizer, &factory, &config));
+    let contract_id =
+        env.register(Circle, CircleArgs::__constructor(&organizer, &factory, &config));
     let client = CircleClient::new(&env, &contract_id);
 
     let winner = Address::generate(&env);

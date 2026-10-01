@@ -36,11 +36,9 @@ fn test_circle_lifecycle_with_fees() {
     let organizer = Address::generate(&env);
     let token_admin = Address::generate(&env);
     let token = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let admin = organizer.clone();
-
     let treasury_id = env.register(treasury::Treasury, ());
     let treasury_client = treasury::TreasuryClient::new(&env, &treasury_id);
-    treasury_client.init(&admin, &token.address());
+    treasury_client.init(&organizer, &token.address());
 
     let config = crate::types::CircleConfig {
         organizer: organizer.clone(),
@@ -60,7 +58,7 @@ fn test_circle_lifecycle_with_fees() {
     };
 
     let factory = Address::generate(&env);
-    let contract_id = env.register(crate::Circle, (&admin, &factory, &config));
+    let contract_id = env.register(crate::Circle, (&organizer, &factory, &config));
     let client = crate::CircleClient::new(&env, &contract_id);
 
     // Configure circle with treasury and fee
@@ -131,7 +129,9 @@ fn test_dispute_slash_payout_flow() {
     let admin = Address::generate(&env);
     let token_admin = Address::generate(&env);
     let token = env.register_stellar_asset_contract_v2(token_admin);
-    let treasury = Address::generate(&env);
+    let treasury_id = env.register(treasury::Treasury, ());
+    let treasury_client = treasury::TreasuryClient::new(&env, &treasury_id);
+    treasury_client.init(&admin, &token.address());
 
     let collateral = 500_i128;
     let contribution = 1000_i128;
@@ -160,7 +160,7 @@ fn test_dispute_slash_payout_flow() {
     let token_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &token.address());
 
     // Configure treasury
-    client.set_treasury(&admin, &treasury);
+    client.set_treasury(&admin, &treasury_id);
 
     let m1 = Address::generate(&env);
     let m2 = Address::generate(&env);
@@ -211,22 +211,22 @@ fn test_dispute_slash_payout_flow() {
 
     // Assert slash accounting:
     // 1. Treasury received the slashed collateral
-    assert_eq!(token_client.balance(&treasury), collateral);
+    assert_eq!(token_client.balance(&treasury_id), collateral);
     // 2. Member 2 received a strike and defaulted status
     let members = client.get_members();
     let m2_record = members.iter().find(|m| m.address == m2).unwrap();
     assert_eq!(m2_record.strikes, 1);
     assert_eq!(m2_record.status, 2u32); // MEMBER_DEFAULTED
-    // 3. Contract balance reduced by slashed collateral (now has m1 collateral + 2 contributions)
+                                        // 3. Contract balance reduced by slashed collateral (now has m1 collateral + 2 contributions)
     assert_eq!(token_client.balance(&contract_id), collateral + contribution * 2);
 
     // Subsequent payout execution succeeds for round 0
     client.trigger_payout(&admin, &0u32);
 
-    // Recipient m1 receives full round pool (2000) + collateral refund (500) = 2500
+    // Payout distributed to m1 (position 0 in PAYOUT_FIXED: 2000 payout + 500 collateral refund = 2500)
     assert_eq!(token_client.balance(&m1), 2500);
 
-    // Verify circle completed and defaulted m2 received 0
+    // Verify circle completed and m2's slashed collateral was NOT returned
     let status_final = client.get_status();
     assert_eq!(status_final.status, 2u32); // STATUS_COMPLETED
     assert_eq!(token_client.balance(&m2), 0);
@@ -235,10 +235,9 @@ fn test_dispute_slash_payout_flow() {
     assert_eq!(token_client.balance(&contract_id), 0);
 
     // Accounting invariant: sum of all balances matches total minted
-    let total_distributed = token_client.balance(&treasury)
+    let total_distributed = token_client.balance(&treasury_id)
         + token_client.balance(&m1)
         + token_client.balance(&m2)
         + token_client.balance(&contract_id);
     assert_eq!(total_distributed, initial_mint_total);
 }
-

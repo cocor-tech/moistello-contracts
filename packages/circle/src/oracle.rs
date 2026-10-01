@@ -85,7 +85,12 @@ fn isqrt(n: i128) -> i128 {
 /// # Returns
 /// `true` if `reported_value` falls within the 5% tolerance window around the
 /// estimate, `false` otherwise.
-pub fn check_variance(amount: i128, pool_balance: i128, deposit_count: i128, reported_value: i128) -> bool {
+pub fn check_variance(
+    amount: i128,
+    pool_balance: i128,
+    deposit_count: i128,
+    reported_value: i128,
+) -> bool {
     if deposit_count <= 0 || amount <= 0 || pool_balance <= 0 || reported_value <= 0 {
         return false;
     }
@@ -163,12 +168,16 @@ pub fn get_yield_rate(env: &Env, round: u32) -> Result<i128, CircleError> {
 
 /// Store the primary oracle address.  Caller must enforce admin auth.
 pub fn set_primary_oracle(env: &Env, oracle: &Address) {
-    env.storage().instance().set(&DataKey::OracleContract, oracle);
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleContract, oracle);
 }
 
 /// Store the fallback oracle address.  Caller must enforce admin auth.
 pub fn set_fallback_oracle(env: &Env, oracle: &Address) {
-    env.storage().instance().set(&DataKey::FallbackOracle, oracle);
+    env.storage()
+        .instance()
+        .set(&DataKey::FallbackOracle, oracle);
 }
 
 /// Retrieve the currently configured primary oracle, if any.

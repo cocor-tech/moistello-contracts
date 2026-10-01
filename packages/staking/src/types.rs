@@ -80,6 +80,18 @@ pub struct StakePosition {
     pub start_time: u64,
     pub unlock_time: u64,
     pub voting_power: i128,
+    pub start_ledger: u32,
+    pub unlock_ledger: u32,
+}
+
+/// Stake query summary for account timing, amount, and accrued rewards
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct StakeInfo {
+    pub amount: i128,
+    pub start_ledger: u32,
+    pub unlock_ledger: u32,
+    pub accrued_rewards: i128,
 }
 
 /// User's unbonding position (after unstake initiated)

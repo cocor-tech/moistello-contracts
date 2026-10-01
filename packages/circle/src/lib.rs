@@ -3,6 +3,9 @@
 // re-exported `load_round_details` from payout.rs) are caught at compile time
 // rather than silently emitting warnings that can be overlooked.
 #![deny(unused_imports)]
+#[cfg(test)]
+#[path = "../../../circle.rs"]
+pub mod circle_rs;
 mod contract;
 mod evidence;
 mod oracle;
@@ -12,9 +15,6 @@ mod voting;
 mod test;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-#[path = "../../../circle.rs"]
-pub mod circle_rs;
 mod types;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
@@ -42,6 +42,9 @@ impl Circle {
         round: u32,
     ) -> Result<(), types::CircleError> {
         contract::contribute(&env, &member, amount, round)
+    }
+    pub fn check_contribution_deadline(env: Env) -> Result<(), types::CircleError> {
+        contract::check_contribution_deadline(&env)
     }
     pub fn trigger_payout(env: Env, caller: Address, round: u32) -> Result<(), types::CircleError> {
         contract::trigger_payout(&env, &caller, round)
@@ -169,6 +172,9 @@ impl Circle {
     }
     pub fn get_status(env: Env) -> types::Circle {
         contract::get_status(&env)
+    }
+    pub fn get_dispute_resolution(env: Env) -> Option<types::DisputeResolutionRecord> {
+        contract::get_dispute_resolution(&env)
     }
     pub fn get_members(env: Env) -> soroban_sdk::Vec<types::Member> {
         contract::get_members(&env)
