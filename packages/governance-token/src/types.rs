@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, contracterror, contractevent, Address, String};
+use soroban_sdk::{contracterror, contractevent, contracttype, Address, String};
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -30,6 +30,8 @@ pub enum TokenError {
     ContractPaused = 10,
     Underflow = 11,
     Frozen = 12,
+    RecipientNotAllowlisted = 13,
+    CannotTransferToSelf = 16,
 }
 
 #[contractevent]
@@ -72,12 +74,30 @@ pub struct Clawback {
 
 #[contractevent]
 #[derive(Clone, Debug)]
-pub struct Freeze {
+pub struct AccountFrozen {
     pub account: Address,
 }
 
 #[contractevent]
 #[derive(Clone, Debug)]
-pub struct Unfreeze {
+pub struct AccountUnfrozen {
+    pub account: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct AllowlistModeChanged {
+    pub enabled: bool,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct AllowlistAdded {
+    pub account: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct AllowlistRemoved {
     pub account: Address,
 }

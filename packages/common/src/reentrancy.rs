@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Symbol, contracterror, symbol_short};
+use soroban_sdk::{contracterror, symbol_short, Env, Symbol};
 
 const REENTRANCY_KEY: Symbol = symbol_short!("reent");
 
@@ -19,7 +19,7 @@ const REENTRANCY_KEY: Symbol = symbol_short!("reent");
 /// so the contract is usable again within seconds.
 ///
 /// ## Usage
-/// ```rust
+/// ```rust,ignore
 /// use common::reentrancy::ReentrancyGuard;
 ///
 /// pub fn my_mutating_fn(env: &Env) -> Result<(), MyError> {
@@ -44,7 +44,11 @@ pub struct ReentrancyGuard {
 impl ReentrancyGuard {
     /// Acquires the reentrancy lock. Returns an error if already locked.
     pub fn new(env: &Env) -> Result<Self, ReentrancyError> {
-        let locked: bool = env.storage().temporary().get(&REENTRANCY_KEY).unwrap_or(false);
+        let locked: bool = env
+            .storage()
+            .temporary()
+            .get(&REENTRANCY_KEY)
+            .unwrap_or(false);
         if locked {
             return Err(ReentrancyError::ReentrantCall);
         }
@@ -54,11 +58,25 @@ impl ReentrancyGuard {
         env.storage().temporary().extend_ttl(&REENTRANCY_KEY, 1, 2);
         Ok(Self { env: env.clone() })
     }
+    /// Explicitly leaves / releases the reentrancy lock before drop.
+    pub fn leave(&mut self) {
+        self.env.storage().temporary().set(&REENTRANCY_KEY, &false);
+    }
+}
+
+/// Executes closure `f` under the canonical reentrancy guard.
+pub fn with_reentrancy_guard<F, R, E>(env: &Env, f: F) -> Result<R, E>
+where
+    F: FnOnce() -> Result<R, E>,
+    E: From<ReentrancyError>,
+{
+    let _guard = ReentrancyGuard::new(env)?;
+    f()
 }
 
 impl Drop for ReentrancyGuard {
     fn drop(&mut self) {
-        self.env.storage().temporary().set(&REENTRANCY_KEY, &false);
+        self.leave();
     }
 }
 

@@ -1,13 +1,12 @@
 #![cfg(test)]
 
-use soroban_sdk::testutils::Address as _;
+use crate::types::{CircleConfig, FactoryError};
+use crate::{CircleFactory, CircleFactoryClient};
+use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, BytesN, Env};
-use crate::{CircleFactory, CircleFactoryClient}; use crate::types::{CircleConfig, FactoryError};
 
 fn install_wasm_hash(env: &Env) -> BytesN<32> {
-    // Test fixture wasm shipped with soroban-sdk (valid Soroban contract
-    // wasm with metadata section). The factory only deploys it; the deployed
-    // contract is never invoked by the factory tests.
+    env.budget().reset_unlimited();
     let wasm: &[u8] = include_bytes!("../test_wasm/contract.wasm");
     env.deployer().upload_contract_wasm(wasm)
 }
@@ -31,13 +30,35 @@ fn sample_config(env: &Env, organizer: &Address) -> CircleConfig {
     }
 }
 
+fn sample_config_with_slug(env: &Env, organizer: &Address, slug: &str) -> CircleConfig {
+    let mut config = sample_config(env, organizer);
+    config.slug = soroban_sdk::String::from_str(env, slug);
+    config
+}
+
 fn setup(env: &Env) -> (CircleFactoryClient, Address, BytesN<32>) {
+    env.budget().reset_unlimited();
     env.mock_all_auths();
     let contract_id = env.register(CircleFactory, ());
     let client = CircleFactoryClient::new(env, &contract_id);
     let admin = Address::generate(env);
     let wh = install_wasm_hash(env);
-    client.init(&admin, &500i128, &wh);
+    client.init(&admin, &500i128, &wh, &0u32, &0u64);
+    (client, admin, wh)
+}
+
+fn setup_with_rate_limit(
+    env: &Env,
+    limit: u32,
+    period_secs: u64,
+) -> (CircleFactoryClient, Address, BytesN<32>) {
+    env.budget().reset_unlimited();
+    env.mock_all_auths();
+    let contract_id = env.register(CircleFactory, ());
+    let client = CircleFactoryClient::new(env, &contract_id);
+    let admin = Address::generate(env);
+    let wh = install_wasm_hash(env);
+    client.init(&admin, &500i128, &wh, &limit, &period_secs);
     (client, admin, wh)
 }
 
@@ -50,7 +71,7 @@ fn test_init_stores_admin_and_config() {
     let admin = Address::generate(&env);
     let wh = install_wasm_hash(&env);
 
-    client.init(&admin, &300i128, &wh);
+    client.init(&admin, &300i128, &wh, &0u32, &0u64);
 
     assert_eq!(client.get_circle_count(), 0);
     let fc = client.get_fee_config();
@@ -76,7 +97,7 @@ fn test_init_rejects_invalid_fee_bps() {
     let admin = Address::generate(&env);
     let wh = install_wasm_hash(&env);
 
-    let result = client.try_init(&admin, &10001i128, &wh);
+    let result = client.try_init(&admin, &10001i128, &wh, &0u32, &0u64);
     assert_eq!(result, Err(Ok(FactoryError::InvalidFeeBps)));
 }
 
@@ -94,6 +115,18 @@ fn test_deploy_circle_success() {
     assert_eq!(registry.circles.len(), 1);
     assert_eq!(registry.circles.get(0).unwrap().organizer, organizer);
     assert_eq!(registry.circles.get(0).unwrap().circle_id, circle_id);
+}
+
+#[test]
+fn test_duplicate_canonical_deployment_is_rejected() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup(&env);
+    let organizer = Address::generate(&env);
+    let config = sample_config(&env, &organizer);
+
+    assert!(client.try_deploy_circle(&config).is_ok());
+    assert_eq!(client.try_deploy_circle(&config), Err(Ok(FactoryError::CircleDeployFailed)));
+    assert_eq!(client.get_circle_count(), 1);
 }
 
 #[test]
@@ -172,4 +205,134 @@ fn test_pause_unpause_blocks_deploy() {
 
     client.unpause(&admin);
     assert!(client.try_deploy_circle(&config).is_ok());
+}
+
+#[test]
+fn test_storage_isolation_across_100_deployed_circles() {
+    // Issue #456: factory-deployed circles must not share storage. Each
+    // deploy_v2 call gets its own contract instance via a distinct salt, but
+    // that's a platform guarantee worth proving empirically — a salt or
+    // constructor-argument bug could silently make two circles alias the
+    // same address/config. Verified here through the factory's own
+    // per-circle storage (get_circle_config), which is what every other
+    // reader of a deployed circle's config (indexers, the frontend) also
+    // goes through — see sample_config()'s neighbours in this file for why
+    // the deployed circle contract itself is never invoked directly in
+    // these tests.
+    let env = Env::default();
+    let (client, _admin, _wh) = setup(&env);
+
+    const N: u32 = 100;
+    let mut circle_ids: std::vec::Vec<Address> = std::vec::Vec::with_capacity(N as usize);
+    let mut expected_amounts: std::vec::Vec<i128> = std::vec::Vec::with_capacity(N as usize);
+
+    for i in 0..N {
+        let organizer = Address::generate(&env);
+        let mut config = sample_config(&env, &organizer);
+        // Divergent per-circle config: each circle's contribution_amount and
+        // slug are unique, so any cross-circle storage aliasing would show
+        // up as one circle's config bleeding into another's.
+        config.contribution_amount = 100i128 + i as i128;
+        config.slug = soroban_sdk::String::from_str(&env, &std::format!("isolation-test-{i}"));
+        let cid = client.deploy_circle(&config);
+        circle_ids.push(cid);
+        expected_amounts.push(config.contribution_amount);
+    }
+
+    assert_eq!(client.get_circle_count(), N);
+
+    // Config A change never observable from circle B: read every deployed
+    // circle's own stored config back and confirm it matches exactly what
+    // that circle (and only that circle) was configured with.
+    for i in 0..N as usize {
+        let stored = client.get_circle_config(&circle_ids[i]);
+        assert_eq!(
+            stored.contribution_amount, expected_amounts[i],
+            "circle {i} read back a contribution_amount belonging to a different circle"
+        );
+        assert_eq!(
+            stored.slug,
+            soroban_sdk::String::from_str(&env, &std::format!("isolation-test-{i}")),
+            "circle {i} read back a slug belonging to a different circle"
+        );
+    }
+
+    // Every deployed circle address must be unique — a collision here would
+    // mean two configs landed on the same storage instance.
+    for i in 0..N as usize {
+        for j in (i + 1)..N as usize {
+            assert_ne!(
+                circle_ids[i], circle_ids[j],
+                "circles {i} and {j} deployed to the same address"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_rate_limit_zero_is_unlimited() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup_with_rate_limit(&env, 0, 0);
+    let organizer = Address::generate(&env);
+
+    for i in 0..10 {
+        let config = sample_config_with_slug(&env, &organizer, &std::format!("unlimited-{i}"));
+        assert!(client.try_deploy_circle(&config).is_ok());
+    }
+    assert_eq!(client.get_circle_count(), 10);
+}
+
+#[test]
+fn test_rate_limit_exceeded_rejected() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup_with_rate_limit(&env, 2, 3600);
+    let organizer = Address::generate(&env);
+    let config = sample_config_with_slug(&env, &organizer, "limited-0");
+    let config_2 = sample_config_with_slug(&env, &organizer, "limited-1");
+    let config_3 = sample_config_with_slug(&env, &organizer, "limited-2");
+
+    assert!(client.try_deploy_circle(&config).is_ok());
+    assert!(client.try_deploy_circle(&config_2).is_ok());
+    let result = client.try_deploy_circle(&config_3);
+    assert_eq!(result, Err(Ok(FactoryError::RateLimitExceeded)));
+}
+
+#[test]
+fn test_rate_limit_resets_next_period() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup_with_rate_limit(&env, 1, 3600);
+    let organizer = Address::generate(&env);
+    let config = sample_config_with_slug(&env, &organizer, "period-0");
+    let config_2 = sample_config_with_slug(&env, &organizer, "period-1");
+
+    assert!(client.try_deploy_circle(&config).is_ok());
+    let result = client.try_deploy_circle(&config_2);
+    assert_eq!(result, Err(Ok(FactoryError::RateLimitExceeded)));
+
+    // Advance the ledger timestamp into the next rate-limit period.
+    env.ledger().set_timestamp(env.ledger().timestamp() + 3600);
+
+    assert!(client.try_deploy_circle(&config_2).is_ok());
+    assert_eq!(client.get_circle_count(), 2);
+}
+
+#[test]
+fn test_rate_limit_independent_per_organizer() {
+    let env = Env::default();
+    let (client, _admin, _wh) = setup_with_rate_limit(&env, 1, 3600);
+    let org1 = Address::generate(&env);
+    let org2 = Address::generate(&env);
+
+    assert!(client
+        .try_deploy_circle(&sample_config(&env, &org1))
+        .is_ok());
+    assert_eq!(
+        client.try_deploy_circle(&sample_config(&env, &org1)),
+        Err(Ok(FactoryError::RateLimitExceeded))
+    );
+    // A different organizer has an independent counter and can still deploy.
+    assert!(client
+        .try_deploy_circle(&sample_config(&env, &org2))
+        .is_ok());
+    assert_eq!(client.get_circle_count(), 2);
 }

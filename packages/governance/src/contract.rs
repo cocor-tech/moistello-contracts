@@ -5,9 +5,9 @@
 //! `MessageInfo` parameters; those belong to CosmWasm and must never appear
 //! here.  All mutation functions perform access-control checks first, before
 //! touching storage.
-use soroban_sdk::{Address, BytesN, Env, Val, Vec};
 use crate::types::*;
 use common::{math, pause};
+use soroban_sdk::{Address, BytesN, Env, Val, Vec};
 
 const BPS_DENOM: i128 = 10_000;
 
@@ -169,47 +169,197 @@ pub fn cast_vote(
     {
         return Err(GovernanceError::AlreadyVoted);
     }
-    let vote_power: i128 = 1;
-    match vote {
-        VoteType::For => {
-            proposal.votes_for = proposal
-                .votes_for
-                .checked_add(vote_power)
-                .ok_or(GovernanceError::InvalidConfig)?;
-        }
-        VoteType::Against => {
-            proposal.votes_against = proposal
-                .votes_against
-                .checked_add(vote_power)
-                .ok_or(GovernanceError::InvalidConfig)?;
-        }
-        VoteType::Abstain => {
-            proposal.votes_abstain = proposal
-                .votes_abstain
-                .checked_add(vote_power)
-                .ok_or(GovernanceError::InvalidConfig)?;
-        }
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::Delegation(voter.clone()))
+    {
+        return Err(GovernanceError::Unauthorized);
     }
+
+    let mut total_vote_power: i128 = 0;
+
+    // Own power is read live at vote time (#435), not from a proposal snapshot.
+    let p = get_vote_power(env, voter);
+    total_vote_power =
+        math::safe_add(total_vote_power, p).map_err(|_| GovernanceError::InvalidConfig)?;
+
     env.storage().persistent().set(
         &DataKey::Vote(proposal_id, voter.clone()),
         &VoteRecord {
             voter: voter.clone(),
             vote: vote.clone(),
-            vote_power,
+            vote_power: p,
             timestamp: now,
         },
     );
-    env.storage()
-        .persistent()
-        .set(&DataKey::Proposal(proposal_id), &proposal);
     VoteCast {
         id: proposal_id,
         voter: voter.clone(),
-        vote,
-        vote_power,
+        vote: vote.clone(),
+        vote_power: p,
+    }
+    .publish(env);
+
+    // Process delegators
+    let delegators: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Delegators(voter.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    for i in 0..delegators.len() {
+        if let Some(d) = delegators.get(i) {
+            if !env
+                .storage()
+                .persistent()
+                .has(&DataKey::Vote(proposal_id, d.clone()))
+            {
+                let dp = get_vote_power(env, &d);
+                total_vote_power = math::safe_add(total_vote_power, dp)
+                    .map_err(|_| GovernanceError::InvalidConfig)?;
+
+                env.storage().persistent().set(
+                    &DataKey::Vote(proposal_id, d.clone()),
+                    &VoteRecord {
+                        voter: d.clone(),
+                        vote: vote.clone(),
+                        vote_power: dp,
+                        timestamp: now,
+                    },
+                );
+                VoteCast {
+                    id: proposal_id,
+                    voter: d.clone(),
+                    vote: vote.clone(),
+                    vote_power: dp,
+                }
+                .publish(env);
+            }
+        }
+    }
+
+    match vote {
+        VoteType::For => {
+            proposal.votes_for = math::safe_add(proposal.votes_for, total_vote_power)
+                .map_err(|_| GovernanceError::InvalidConfig)?;
+        }
+        VoteType::Against => {
+            proposal.votes_against = math::safe_add(proposal.votes_against, total_vote_power)
+                .map_err(|_| GovernanceError::InvalidConfig)?;
+        }
+        VoteType::Abstain => {
+            proposal.votes_abstain = math::safe_add(proposal.votes_abstain, total_vote_power)
+                .map_err(|_| GovernanceError::InvalidConfig)?;
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::Proposal(proposal_id), &proposal);
+    Ok(())
+}
+
+pub fn delegate(
+    env: &Env,
+    delegator: &Address,
+    delegatee: &Address,
+) -> Result<(), GovernanceError> {
+    pause::when_not_paused(env).map_err(|_| GovernanceError::ContractPaused)?;
+    delegator.require_auth();
+
+    if delegator == delegatee {
+        return Err(GovernanceError::CircularDelegation);
+    }
+
+    // Check for transitive delegation (cannot delegate to someone who has already delegated)
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::Delegation(delegatee.clone()))
+    {
+        return Err(GovernanceError::CircularDelegation);
+    }
+
+    // Check if delegator has delegators of their own (cannot delegate if you act as a delegatee)
+    let delegators: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Delegators(delegator.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    if delegators.len() > 0 {
+        return Err(GovernanceError::CircularDelegation);
+    }
+
+    if let Some(old_delegatee) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, Address>(&DataKey::Delegation(delegator.clone()))
+    {
+        remove_delegator(env, &old_delegatee, delegator);
+    }
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Delegation(delegator.clone()), delegatee);
+    add_delegator(env, delegatee, delegator);
+
+    Delegated {
+        delegator: delegator.clone(),
+        delegatee: delegatee.clone(),
     }
     .publish(env);
     Ok(())
+}
+
+pub fn revoke_delegation(env: &Env, delegator: &Address) -> Result<(), GovernanceError> {
+    pause::when_not_paused(env).map_err(|_| GovernanceError::ContractPaused)?;
+    delegator.require_auth();
+
+    if let Some(old_delegatee) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, Address>(&DataKey::Delegation(delegator.clone()))
+    {
+        remove_delegator(env, &old_delegatee, delegator);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Delegation(delegator.clone()));
+        DelegationRevoked {
+            delegator: delegator.clone(),
+        }
+        .publish(env);
+    }
+    Ok(())
+}
+
+fn add_delegator(env: &Env, delegatee: &Address, delegator: &Address) {
+    let mut list: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Delegators(delegatee.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    list.push_back(delegator.clone());
+    env.storage()
+        .persistent()
+        .set(&DataKey::Delegators(delegatee.clone()), &list);
+}
+
+fn remove_delegator(env: &Env, delegatee: &Address, delegator: &Address) {
+    let list: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Delegators(delegatee.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    let mut new_list = Vec::new(env);
+    for i in 0..list.len() {
+        if let Some(d) = list.get(i) {
+            if d != *delegator {
+                new_list.push_back(d);
+            }
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::Delegators(delegatee.clone()), &new_list);
 }
 
 /// Finalize a proposal after its voting period has ended.
@@ -243,23 +393,7 @@ pub fn finalize_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceEr
     if now <= proposal.voting_ends_at {
         return Err(GovernanceError::VotingNotActive);
     }
-    let total_votes = proposal.votes_for + proposal.votes_against + proposal.votes_abstain;
-    let quorum_met = total_votes >= config.quorum_votes as i128;
-    let decisive = proposal.votes_for + proposal.votes_against;
-    // Use safe_div to guard against a zero decisive denominator — a raw `/`
-    // would panic on-chain if both votes_for and votes_against are zero.
-    // The `decisive > 0` short-circuit prevents the division in practice, but
-    // relying on evaluation order for safety is fragile; safe_div makes the
-    // invariant explicit and returns a typed MathError if ever reached.
-    let votes_for_scaled = proposal
-        .votes_for
-        .checked_mul(BPS_DENOM)
-        .ok_or(GovernanceError::InvalidConfig)?;
-    let passed = quorum_met
-        && decisive > 0
-        && math::safe_div(votes_for_scaled, decisive)
-            .map_err(|_| GovernanceError::InvalidConfig)?
-            >= config.pass_threshold_bps as i128;
+    let passed = proposal_passes(&proposal, &config)?;
     remove_proposal_from_status_index(env, &ProposalStatus::Active, proposal_id);
     if passed {
         proposal.timelock_ends_at = now
@@ -287,6 +421,26 @@ pub fn finalize_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceEr
     Ok(())
 }
 
+pub(crate) fn proposal_passes(
+    proposal: &Proposal,
+    config: &GovernanceConfig,
+) -> Result<bool, GovernanceError> {
+    let directional_votes = math::safe_add(proposal.votes_for, proposal.votes_against)
+        .map_err(|_| GovernanceError::InvalidConfig)?;
+    let total_participation = math::safe_add(directional_votes, proposal.votes_abstain)
+        .map_err(|_| GovernanceError::InvalidConfig)?;
+    if total_participation < config.quorum_votes as i128 || directional_votes <= 0 {
+        return Ok(false);
+    }
+
+    let votes_for_scaled = math::safe_mul(proposal.votes_for, BPS_DENOM)
+        .map_err(|_| GovernanceError::InvalidConfig)?;
+    let support_bps = math::safe_div(votes_for_scaled, directional_votes)
+        .map_err(|_| GovernanceError::InvalidConfig)?;
+
+    Ok(support_bps >= config.pass_threshold_bps as i128)
+}
+
 /// Permissionless execution after the timelock has elapsed.
 pub fn execute_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceError> {
     pause::when_not_paused(env).map_err(|_| GovernanceError::ContractPaused)?;
@@ -303,11 +457,7 @@ pub fn execute_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceErr
         return Err(GovernanceError::TimelockNotElapsed);
     }
     let args: Vec<Val> = proposal.action.args.clone();
-    env.invoke_contract::<Val>(
-        &proposal.action.target_contract,
-        &proposal.action.method,
-        args,
-    );
+    env.invoke_contract::<Val>(&proposal.action.target_contract, &proposal.action.method, args);
     proposal.status = ProposalStatus::Executed;
     remove_proposal_from_status_index(env, &ProposalStatus::Queued, proposal_id);
     add_proposal_to_status_index(env, &ProposalStatus::Executed, proposal_id);
@@ -360,6 +510,71 @@ pub fn cancel_proposal(
         cancelled_by: caller.clone(),
     }
     .publish(env);
+    Ok(())
+}
+
+/// Execution grace period / window after deadline before an unexecuted proposal expires (7 days).
+pub const PROPOSAL_EXECUTION_WINDOW: u64 = 604_800;
+
+/// Permissionless finalization / state cleanup of expired proposals past deadline without execution.
+/// Refunds creation deposit and emits ProposalExpired event.
+pub fn expire_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceError> {
+    pause::when_not_paused(env).map_err(|_| GovernanceError::ContractPaused)?;
+    let mut proposal: Proposal = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Proposal(proposal_id))
+        .ok_or(GovernanceError::ProposalNotFound)?;
+
+    let now = env.ledger().timestamp();
+    let is_expired = match proposal.status {
+        ProposalStatus::Active => {
+            let deadline = proposal
+                .voting_ends_at
+                .checked_add(PROPOSAL_EXECUTION_WINDOW)
+                .ok_or(GovernanceError::InvalidConfig)?;
+            now > deadline
+        }
+        ProposalStatus::Queued => {
+            let deadline = proposal
+                .timelock_ends_at
+                .checked_add(PROPOSAL_EXECUTION_WINDOW)
+                .ok_or(GovernanceError::InvalidConfig)?;
+            now > deadline
+        }
+        _ => false,
+    };
+
+    if !is_expired {
+        return Err(GovernanceError::ProposalNotExpired);
+    }
+
+    let old_status = proposal.status.clone();
+    proposal.status = ProposalStatus::Expired;
+    remove_proposal_from_status_index(env, &old_status, proposal_id);
+    add_proposal_to_status_index(env, &ProposalStatus::Expired, proposal_id);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Proposal(proposal_id), &proposal);
+
+    let deposit_amount = proposal.deposit_amount;
+    env.storage()
+        .persistent()
+        .remove(&DataKey::Deposit(proposal_id));
+
+    ProposalExpired {
+        id: proposal_id,
+        proposer: proposal.proposer.clone(),
+        deposit_refunded: deposit_amount,
+    }
+    .publish(env);
+
+    ProposalStatusChanged {
+        id: proposal_id,
+        status: ProposalStatus::Expired,
+    }
+    .publish(env);
+
     Ok(())
 }
 
@@ -487,6 +702,44 @@ pub fn get_proposals(env: &Env, status: ProposalStatus, limit: u32) -> Vec<Propo
     out
 }
 
+fn proposal_metadata(proposal: Proposal) -> ProposalMetadata {
+    ProposalMetadata {
+        id: proposal.id,
+        proposer: proposal.proposer,
+        description: proposal.description,
+        status: proposal.status,
+        created_at: proposal.created_at,
+        voting_ends_at: proposal.voting_ends_at,
+        timelock_ends_at: proposal.timelock_ends_at,
+    }
+}
+
+pub fn get_proposal_metadata_page(env: &Env, cursor: u64, limit: u32) -> ProposalMetadataPage {
+    let total: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ProposalCount)
+        .unwrap_or(0);
+    let capped_limit = if limit > 50 { 50 } else { limit };
+    let mut entries = Vec::new(env);
+    let mut id = cursor;
+    while id < total && (entries.len() as u32) < capped_limit {
+        if let Some(proposal) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Proposal>(&DataKey::Proposal(id))
+        {
+            entries.push_back(proposal_metadata(proposal));
+        }
+        id += 1;
+    }
+    ProposalMetadataPage {
+        entries,
+        next_cursor: id,
+        total,
+    }
+}
+
 pub fn get_vote(env: &Env, proposal_id: u64, voter: &Address) -> Option<VoteRecord> {
     env.storage()
         .persistent()
@@ -495,14 +748,26 @@ pub fn get_vote(env: &Env, proposal_id: u64, voter: &Address) -> Option<VoteReco
 
 /// Flat vote power (see `cast_vote` doc comment).
 pub fn get_vote_power(env: &Env, voter: &Address) -> i128 {
-    if let Some(staking_addr) = env.storage().instance().get::<_, Address>(&DataKey::StakingContract) {
-        env.invoke_contract(&staking_addr, &soroban_sdk::Symbol::new(env, "get_voting_power"), soroban_sdk::vec![env, voter.to_val()])
+    if let Some(staking_addr) = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::StakingContract)
+    {
+        env.invoke_contract(
+            &staking_addr,
+            &soroban_sdk::Symbol::new(env, "get_voting_power"),
+            soroban_sdk::vec![env, voter.to_val()],
+        )
     } else {
         1
     }
 }
 
-pub fn set_staking_contract(env: &Env, admin: &Address, staking: &Address) -> Result<(), GovernanceError> {
+pub fn set_staking_contract(
+    env: &Env,
+    admin: &Address,
+    staking: &Address,
+) -> Result<(), GovernanceError> {
     let s: Address = env
         .storage()
         .instance()
@@ -512,7 +777,9 @@ pub fn set_staking_contract(env: &Env, admin: &Address, staking: &Address) -> Re
         return Err(GovernanceError::Unauthorized);
     }
     admin.require_auth();
-    env.storage().instance().set(&DataKey::StakingContract, staking);
+    env.storage()
+        .instance()
+        .set(&DataKey::StakingContract, staking);
     Ok(())
 }
 
