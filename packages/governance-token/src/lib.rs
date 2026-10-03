@@ -85,13 +85,12 @@ impl GovernanceToken {
         from: Address,
         amount: i128,
     ) -> Result<(), TokenError> {
+        contract::clawback(&env, &admin, &from, amount)
+    }
+
     /// #518 — Admin-authorized burn function
     pub fn burn_from(env: Env, admin: Address, from: Address, amount: i128) -> Result<(), TokenError> {
         contract::burn_from(&env, &admin, &from, amount)
-    }
-
-    pub fn clawback(env: Env, admin: Address, from: Address, amount: i128) -> Result<(), TokenError> {
-        contract::clawback(&env, &admin, &from, amount)
     }
 
     pub fn freeze(env: Env, admin: Address, account: Address) -> Result<(), TokenError> {

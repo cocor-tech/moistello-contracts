@@ -319,12 +319,6 @@ pub fn burn(env: &Env, from: &Address, amount: i128) -> Result<(), TokenError> {
     Ok(())
 }
 
-pub fn clawback(
-    env: &Env,
-    admin: &Address,
-    from: &Address,
-    amount: i128,
-) -> Result<(), TokenError> {
 /// #518 — Admin-authorized burn (distinct from holder burn).
 ///
 /// Allows admin to burn tokens from any account. Emits `Burn` event.

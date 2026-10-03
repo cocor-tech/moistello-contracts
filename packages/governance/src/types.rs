@@ -34,12 +34,35 @@ pub struct Proposal{
 }
 
 #[contracttype]
-#[derive(Clone,Debug)]
-pub struct VoteRecord{
-    pub voter:Address,
-    pub vote:VoteType,
-    pub vote_power:i128,
-    pub timestamp:u64,
+#[derive(Clone, Debug)]
+pub struct ProposalMetadata {
+    pub id: u64,
+    pub proposer: Address,
+    pub description: BytesN<32>,
+    pub status: ProposalStatus,
+    pub created_at: u64,
+    pub voting_ends_at: u64,
+    pub timelock_ends_at: u64,
+    pub votes_for: i128,
+    pub votes_against: i128,
+    pub votes_abstain: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalMetadataPage {
+    pub entries: Vec<ProposalMetadata>,
+    pub next_cursor: u64,
+    pub total: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VoteRecord {
+    pub voter: Address,
+    pub vote: VoteType,
+    pub vote_power: i128,
+    pub timestamp: u64,
 }
 
 /// Deviates from the uxupgrade.md spec's `quorum_bps` (percentage of total
@@ -89,26 +112,44 @@ pub enum DataKey{
 }
 
 #[contracterror]
-#[derive(Debug,Clone,PartialEq,Eq)]
-pub enum GovernanceError{
-    NotInitialized=1,
-    AlreadyInitialized=2,
-    Unauthorized=3,
-    ContractPaused=4,
-    InvalidConfig=5,
-    InsufficientDeposit=6,
-    ProposalNotFound=7,
-    VotingNotActive=8,
-    VotingEnded=9,
-    AlreadyVoted=10,
-    TimelockNotElapsed=11,
-    ProposalNotSucceeded=12,
-    QuorumNotMet=13,
-    ProposalNotDraftOrActive=14,
-    NotProposer=15,
-    VotingAlreadyStarted=16,
-    ConfigUpdateAlreadyQueued=17,
-    NoPendingConfigUpdate=18,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GovernanceError {
+    NotInitialized = 1,
+    AlreadyInitialized = 2,
+    Unauthorized = 3,
+    ContractPaused = 4,
+    InvalidConfig = 5,
+    InsufficientDeposit = 6,
+    ProposalNotFound = 7,
+    VotingNotActive = 8,
+    VotingEnded = 9,
+    AlreadyVoted = 10,
+    TimelockNotElapsed = 11,
+    ProposalNotSucceeded = 12,
+    QuorumNotMet = 13,
+    ProposalNotDraftOrActive = 14,
+    NotProposer = 15,
+    VotingAlreadyStarted = 16,
+    ConfigUpdateAlreadyQueued = 17,
+    NoPendingConfigUpdate = 18,
+    CircularDelegation = 19,
+    ProposalNotExpired = 20,
+}
+
+#[contractevent(topics=["delegate"])]
+#[derive(Clone, Debug)]
+pub struct Delegated {
+    #[topic]
+    pub delegator: Address,
+    #[topic]
+    pub delegatee: Address,
+}
+
+#[contractevent(topics=["revoke"])]
+#[derive(Clone, Debug)]
+pub struct DelegationRevoked {
+    #[topic]
+    pub delegator: Address,
 }
 
 #[contractevent(topics=["proposal"])]
@@ -126,6 +167,16 @@ pub struct ProposalStatusChanged{#[topic]pub id:u64,pub status:ProposalStatus}
 #[contractevent(topics=["executed"])]
 #[derive(Clone,Debug)]
 pub struct ProposalExecuted{#[topic]pub id:u64,#[topic]pub executed_by:Address}
+
+#[contractevent(topics=["expired"])]
+#[derive(Clone, Debug)]
+pub struct ProposalExpired {
+    #[topic]
+    pub id: u64,
+    #[topic]
+    pub proposer: Address,
+    pub deposit_refunded: i128,
+}
 
 #[contractevent(topics=["cancelled"])]
 #[derive(Clone,Debug)]

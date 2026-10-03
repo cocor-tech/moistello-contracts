@@ -44,6 +44,12 @@ pub fn init(
     {
         return Err(CircleError::InvalidAmount);
     }
+    // Absolute ceiling: the payout bitmap is a u128 and the highest
+    // reputation tier (DIAMOND) tops out at 100 members, so anything wider
+    // is refused even when no tier data applies to the organizer.
+    if config.max_members > 100 {
+        return Err(CircleError::CircleSizeExceedsTier);
+    }
     if config.min_moi_score > 0 {
         if config.max_members > scoring::max_circle_size(env, &config.organizer) {
             return Err(CircleError::CircleSizeExceedsTier);
