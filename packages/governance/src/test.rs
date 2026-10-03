@@ -2,11 +2,13 @@
 
 #[cfg(test)]
 mod tests {
+    use crate as governance;
+    use governance::types::{
+        GovernanceConfig, GovernanceError, Proposal, ProposalStatus, VoteType,
+    };
+    use governance::Governance;
     use soroban_sdk::testutils::{Address as _, Ledger};
     use soroban_sdk::{Address, BytesN, Env, Symbol, Vec};
-    use crate as governance;
-    use governance::Governance;
-    use governance::types::{GovernanceConfig, GovernanceError};
 
     const CONFIG_TIMELOCK_SECONDS: u64 = 172_800; // 48 hours
 
@@ -64,7 +66,8 @@ mod tests {
         new_config.quorum_votes = 5u32;
         client.queue_config_update(&admin, &new_config);
 
-        env.ledger().set_timestamp(env.ledger().timestamp() + CONFIG_TIMELOCK_SECONDS - 1);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CONFIG_TIMELOCK_SECONDS - 1);
         let result = client.try_execute_config_update();
         assert_eq!(result, Err(Ok(GovernanceError::TimelockNotElapsed)));
         assert_eq!(client.get_config().quorum_votes, 1u32);
@@ -78,7 +81,8 @@ mod tests {
         new_config.quorum_votes = 5u32;
         client.queue_config_update(&admin, &new_config);
 
-        env.ledger().set_timestamp(env.ledger().timestamp() + CONFIG_TIMELOCK_SECONDS);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CONFIG_TIMELOCK_SECONDS);
         client.execute_config_update();
 
         assert_eq!(client.get_config().quorum_votes, 5u32);
@@ -96,7 +100,8 @@ mod tests {
         client.cancel_config_update(&admin);
         assert!(client.get_pending_config_update().is_none());
 
-        env.ledger().set_timestamp(env.ledger().timestamp() + CONFIG_TIMELOCK_SECONDS);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CONFIG_TIMELOCK_SECONDS);
         let result = client.try_execute_config_update();
         assert_eq!(result, Err(Ok(GovernanceError::NoPendingConfigUpdate)));
         assert_eq!(client.get_config().quorum_votes, 1u32);
@@ -154,7 +159,8 @@ mod tests {
         let voter = Address::generate(&env);
         client.cast_vote(&voter, &id, &governance::types::VoteType::For);
 
-        env.ledger().set_timestamp(env.ledger().timestamp() + config.voting_period_seconds + 1);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + config.voting_period_seconds + 1);
         client.finalize_proposal(&id);
         let proposal = client.get_proposal(&id);
         assert_eq!(proposal.status, governance::types::ProposalStatus::Queued);
@@ -183,7 +189,8 @@ mod tests {
         let voter = Address::generate(&env);
         client.cast_vote(&voter, &id, &governance::types::VoteType::For);
 
-        env.ledger().set_timestamp(env.ledger().timestamp() + config.voting_period_seconds + 1);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + config.voting_period_seconds + 1);
         client.finalize_proposal(&id);
 
         let proposal = client.get_proposal(&id);
@@ -209,7 +216,8 @@ mod tests {
         let voter = Address::generate(&env);
         client.cast_vote(&voter, &id, &governance::types::VoteType::Against);
 
-        env.ledger().set_timestamp(env.ledger().timestamp() + config.voting_period_seconds + 1);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + config.voting_period_seconds + 1);
         client.finalize_proposal(&id);
 
         let proposal = client.get_proposal(&id);

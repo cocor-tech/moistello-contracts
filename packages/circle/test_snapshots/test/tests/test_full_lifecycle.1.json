@@ -2337,7 +2337,7 @@
                           "symbol": "total_contributions"
                         },
                         "val": {
-                          "i128": "3000000000"
+                          "i128": "0"
                         }
                       },
                       {
@@ -2345,7 +2345,7 @@
                           "symbol": "total_received"
                         },
                         "val": {
-                          "i128": "0"
+                          "i128": "3000000000"
                         }
                       }
                     ]
@@ -2405,7 +2405,7 @@
                           "symbol": "total_contributions"
                         },
                         "val": {
-                          "i128": "3000000000"
+                          "i128": "0"
                         }
                       },
                       {
@@ -2413,7 +2413,7 @@
                           "symbol": "total_received"
                         },
                         "val": {
-                          "i128": "6000000000"
+                          "i128": "3000000000"
                         }
                       }
                     ]
@@ -2473,7 +2473,7 @@
                           "symbol": "total_contributions"
                         },
                         "val": {
-                          "i128": "3000000000"
+                          "i128": "0"
                         }
                       },
                       {
@@ -2750,7 +2750,7 @@
                           "symbol": "recipient"
                         },
                         "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
                         }
                       },
                       {
@@ -2802,7 +2802,7 @@
                           "symbol": "recipient"
                         },
                         "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
                         }
                       },
                       {
@@ -2824,6 +2824,87 @@
                     ]
                   }
                 ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "RoundConfigSnapshot"
+                  },
+                  {
+                    "u32": 0
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "bytes": "bc5274ca90189ce9fb4bb4cf0e4b73c13208ac0c2d83c88b0fc3f5bd0d308011"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "RoundConfigSnapshot"
+                  },
+                  {
+                    "u32": 1
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "bytes": "bc5274ca90189ce9fb4bb4cf0e4b73c13208ac0c2d83c88b0fc3f5bd0d308011"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "RoundConfigSnapshot"
+                  },
+                  {
+                    "u32": 2
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "bytes": "bc5274ca90189ce9fb4bb4cf0e4b73c13208ac0c2d83c88b0fc3f5bd0d308011"
               }
             }
           },
@@ -2931,6 +3012,139 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "Streaks"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "vec": [
+                  {
+                    "map": [
+                      {
+                        "key": {
+                          "symbol": "current_streak"
+                        },
+                        "val": {
+                          "u32": 3
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "last_round"
+                        },
+                        "val": {
+                          "u32": 2
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "longest_streak"
+                        },
+                        "val": {
+                          "u32": 3
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "member"
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "map": [
+                      {
+                        "key": {
+                          "symbol": "current_streak"
+                        },
+                        "val": {
+                          "u32": 3
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "last_round"
+                        },
+                        "val": {
+                          "u32": 2
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "longest_streak"
+                        },
+                        "val": {
+                          "u32": 3
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "member"
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "map": [
+                      {
+                        "key": {
+                          "symbol": "current_streak"
+                        },
+                        "val": {
+                          "u32": 3
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "last_round"
+                        },
+                        "val": {
+                          "u32": 2
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "longest_streak"
+                        },
+                        "val": {
+                          "u32": 3
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "member"
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "Votes"
                   }
                 ]
@@ -2966,6 +3180,22 @@
                       },
                       "val": {
                         "u32": 9
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "vrf_nonce"
+                      },
+                      "val": {
+                        "u32": 2002
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "vrf_ownr"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                       }
                     },
                     {
@@ -3040,6 +3270,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "daily_withdrawal_limit"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "factory"
                             },
                             "val": {
@@ -3052,6 +3290,14 @@
                             },
                             "val": {
                               "u64": "86400"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "health_score"
+                            },
+                            "val": {
+                              "u32": 1
                             }
                           },
                           {
@@ -3080,10 +3326,26 @@
                           },
                           {
                             "key": {
+                              "symbol": "max_withdrawal_per_tx"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "member_count"
                             },
                             "val": {
                               "u32": 3
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "min_duration_seconds"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {
@@ -3115,7 +3377,7 @@
                               "symbol": "payout_bitmap"
                             },
                             "val": {
-                              "u128": "0"
+                              "u128": "7"
                             }
                           },
                           {
@@ -3531,7 +3793,7 @@
                       "symbol": "amount"
                     },
                     "val": {
-                      "i128": "997000000000"
+                      "i128": "1000000000000"
                     }
                   },
                   {
@@ -3583,7 +3845,7 @@
                       "symbol": "amount"
                     },
                     "val": {
-                      "i128": "1003000000000"
+                      "i128": "1000000000000"
                     }
                   },
                   {
