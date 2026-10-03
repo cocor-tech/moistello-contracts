@@ -1,4 +1,3 @@
-use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 use soroban_sdk::{contracterror, contracttype, Address, BytesN, String, Vec};
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -17,6 +16,12 @@ pub struct CircleConfig {
     pub grace_period_seconds: u64,
     pub max_strikes: u32,
     pub slug: String,
+    /// #478 — Largest single treasury withdrawal the organizer may request.
+    pub max_withdrawal_per_tx: i128,
+    /// #478 — Maximum treasury withdrawal allowed per rolling UTC day.
+    pub daily_withdrawal_limit: i128,
+    /// #466 — Minimum elapsed circle duration before a payout may run.
+    pub min_duration_seconds: u64,
 }
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]

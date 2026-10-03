@@ -22,6 +22,9 @@ fn create_config(env: &Env, organizer: &Address, token: &Address) -> CircleConfi
         grace_period_seconds: 86400u64,
         max_strikes: 3u32,
         slug: String::from_str(env, "invariant-test"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     }
 }
 

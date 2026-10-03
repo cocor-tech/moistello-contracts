@@ -40,5 +40,15 @@ jobs:
       - name: Build contracts
         run: cargo build --target wasm32v1-none --release
 
+      - name: Stage factory test WASM
+        # circle-factory tests upload a circle contract WASM via
+        # include_bytes!("../test_wasm/contract.wasm") (gitignored). It must
+        # be the *optimized* build: the raw release binary (~144KB) exceeds
+        # the test host's write-bytes limit and fails every factory test.
+        run: |
+          soroban contract optimize --wasm target/wasm32v1-none/release/circle.wasm
+          mkdir -p packages/circle-factory/test_wasm
+          cp target/wasm32v1-none/release/circle.optimized.wasm packages/circle-factory/test_wasm/contract.wasm
+
       - name: Run tests
         run: cargo test --workspace

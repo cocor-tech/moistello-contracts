@@ -27,6 +27,9 @@ fn sample_config(env: &Env, organizer: &Address) -> CircleConfig {
         grace_period_seconds: 3600u64,
         max_strikes: 3u32,
         slug: soroban_sdk::String::from_str(env, "test-circle"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     }
 }
 

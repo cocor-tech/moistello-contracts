@@ -1,7 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
-mod types;
 mod contract;
+mod types;
 
 #[cfg(test)]
 mod test;
@@ -71,7 +71,11 @@ impl Staking {
         contract::unpause(&env, &admin)
     }
 
-    pub fn update_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), types::StakingError> {
+    pub fn update_admin(
+        env: Env,
+        current_admin: Address,
+        new_admin: Address,
+    ) -> Result<(), types::StakingError> {
         contract::update_admin(&env, &current_admin, &new_admin)
     }
 
@@ -81,11 +85,16 @@ impl Staking {
 
     pub fn get_time_weighted_amount(env: Env, user: Address) -> i128 {
         contract::get_time_weighted_amount(&env, &user)
+    }
     pub fn get_slash_notice_period(env: Env) -> u64 {
         contract::get_slash_notice_period(&env)
     }
 
-    pub fn set_slash_notice_period(env: Env, admin: Address, period_seconds: u64) -> Result<(), types::StakingError> {
+    pub fn set_slash_notice_period(
+        env: Env,
+        admin: Address,
+        period_seconds: u64,
+    ) -> Result<(), types::StakingError> {
         contract::set_slash_notice_period(&env, &admin, period_seconds)
     }
 
@@ -93,16 +102,21 @@ impl Staking {
         contract::get_slash_notice(&env, &user)
     }
 
-    pub fn slash(env: Env, admin: Address, user: Address, amount: i128) -> Result<(), types::StakingError> {
-        contract::slash(&env, &admin, &user, amount)
-    }
-
-    pub fn cancel_slash(env: Env, admin: Address, user: Address) -> Result<(), types::StakingError> {
+    pub fn cancel_slash(
+        env: Env,
+        admin: Address,
+        user: Address,
+    ) -> Result<(), types::StakingError> {
         contract::cancel_slash(&env, &admin, &user)
     }
 
-    pub fn execute_slash(env: Env, admin: Address, user: Address) -> Result<(), types::StakingError> {
+    pub fn execute_slash(
+        env: Env,
+        admin: Address,
+        user: Address,
+    ) -> Result<(), types::StakingError> {
         contract::execute_slash(&env, &admin, &user)
+    }
     /// #523 — Slash a staker's collateral proportional to shortfall.
     /// Returns the actual amount slashed (min of shortfall and stake).
     pub fn slash(
@@ -112,6 +126,17 @@ impl Staking {
         shortfall: i128,
     ) -> Result<i128, types::StakingError> {
         contract::slash(&env, &admin, &user, shortfall)
+    }
+
+    /// #467 — Open a slashing notice period; execute after the period elapses
+    /// or cancel it while the notice is still active.
+    pub fn create_slash_notice(
+        env: Env,
+        admin: Address,
+        user: Address,
+        amount: i128,
+    ) -> Result<(), types::StakingError> {
+        contract::create_slash_notice(&env, &admin, &user, amount)
     }
 }
 

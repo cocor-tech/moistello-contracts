@@ -1,8 +1,8 @@
 use soroban_sdk::{symbol_short, token, Address, Env, Vec};
 
 use crate::types::*;
-use common::pause;
 use common::math;
+use common::pause;
 
 /// Initialize the staking contract
 pub fn init(env: &Env, admin: &Address, token: &Address) {
@@ -597,7 +597,7 @@ pub fn slash(
         .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
@@ -621,14 +621,17 @@ pub fn slash(
     };
 
     // Update stake position
-    let new_amount = stake_position.amount
+    let new_amount = stake_position
+        .amount
         .checked_sub(slash_amount)
         .ok_or(StakingError::InsufficientBalance)?;
-    
+
     if new_amount == 0 {
         // Remove stake entirely if slashed to zero
-        env.storage().instance().remove(&DataKey::Stake(user.clone()));
-        
+        env.storage()
+            .instance()
+            .remove(&DataKey::Stake(user.clone()));
+
         // Remove from staker list
         let stakers: Vec<Address> = env
             .storage()
@@ -641,14 +644,16 @@ pub fn slash(
                 updated.push_back(s);
             }
         }
-        env.storage().persistent().set(&DataKey::StakerList, &updated);
+        env.storage()
+            .persistent()
+            .set(&DataKey::StakerList, &updated);
     } else {
         // Reduce stake and recalculate voting power
         let multiplier = stake_position.period.multiplier();
         let new_voting_power = new_amount
             .checked_mul(multiplier as i128)
             .ok_or(StakingError::Overflow)?;
-        
+
         let updated_position = StakePosition {
             amount: new_amount,
             voting_power: new_voting_power,
@@ -689,11 +694,7 @@ pub fn slash(
 /// the original unlock time (`unlock_time`). Updates voting power with the existing multiplier
 /// and adjusts the effective start time using weighted-average accounting for rewards:
 /// `effective_start = now - (initial_amount * (now - start_time)) / new_total`.
-pub fn top_up(
-    env: &Env,
-    user: &Address,
-    amount: i128,
-) -> Result<(), StakingError> {
+pub fn top_up(env: &Env, user: &Address, amount: i128) -> Result<(), StakingError> {
     pause::when_not_paused(env).map_err(|_| StakingError::ContractPaused)?;
 
     user.require_auth();
@@ -738,7 +739,8 @@ pub fn top_up(
     // = new_amount * (now - effective_start_time)
     let elapsed = current_time.saturating_sub(stake_position.start_time);
     let weighted_duration = if new_amount > 0 {
-        ((stake_position.amount as u128).saturating_mul(elapsed as u128) / (new_amount as u128)) as u64
+        ((stake_position.amount as u128).saturating_mul(elapsed as u128) / (new_amount as u128))
+            as u64
     } else {
         0
     };
@@ -753,6 +755,8 @@ pub fn top_up(
         start_time: effective_start_time,
         unlock_time,
         voting_power: new_voting_power,
+        start_ledger: stake_position.start_ledger,
+        unlock_ledger: stake_position.unlock_ledger,
     };
 
     env.storage()
@@ -767,7 +771,9 @@ pub fn top_up(
     let new_total = total_staked
         .checked_add(amount)
         .ok_or(StakingError::Overflow)?;
-    env.storage().instance().set(&DataKey::TotalStaked, &new_total);
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalStaked, &new_total);
 
     StakeToppedUp {
         user: user.clone(),
@@ -783,10 +789,8 @@ pub fn top_up(
 
 /// Computes the time-weighted reward-eligible principal for a user over their active stake period.
 pub fn get_time_weighted_amount(env: &Env, user: &Address) -> i128 {
-    let stake_position: Option<StakePosition> = env
-        .storage()
-        .instance()
-        .get(&DataKey::Stake(user.clone()));
+    let stake_position: Option<StakePosition> =
+        env.storage().instance().get(&DataKey::Stake(user.clone()));
 
     match stake_position {
         Some(pos) => {
@@ -796,127 +800,8 @@ pub fn get_time_weighted_amount(env: &Env, user: &Address) -> i128 {
                 pos.amount
             } else {
                 let elapsed = current_time.saturating_sub(pos.start_time).min(total_span);
-                ((pos.amount as u128).saturating_mul(elapsed as u128) / (total_span as u128)) as i128
-            }
-        }
-        None => 0,
-    }
-}
-
-/// Top up an active stake position without resetting the unlock time
-///
-/// Merges additional tokens into the existing active stake while strictly preserving
-/// the original unlock time (`unlock_time`). Updates voting power with the existing multiplier
-/// and adjusts the effective start time using weighted-average accounting for rewards:
-/// `effective_start = now - (initial_amount * (now - start_time)) / new_total`.
-pub fn top_up(
-    env: &Env,
-    user: &Address,
-    amount: i128,
-) -> Result<(), StakingError> {
-    pause::when_not_paused(env).map_err(|_| StakingError::ContractPaused)?;
-
-    user.require_auth();
-
-    if amount <= 0 {
-        return Err(StakingError::InvalidAmount);
-    }
-
-    let stake_position: StakePosition = env
-        .storage()
-        .instance()
-        .get(&DataKey::Stake(user.clone()))
-        .ok_or(StakingError::NoActiveStake)?;
-
-    let current_time = env.ledger().timestamp();
-    // Staker is eligible to top-up up to and including the unlock time boundary
-    if current_time > stake_position.unlock_time {
-        return Err(StakingError::StakeNotUnlocked);
-    }
-
-    let token_address: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Token)
-        .ok_or(StakingError::NotInitialized)?;
-
-    let token_client = token::Client::new(env, &token_address);
-    token_client.transfer(user, &env.current_contract_address(), &amount);
-
-    let new_amount = stake_position
-        .amount
-        .checked_add(amount)
-        .ok_or(StakingError::Overflow)?;
-
-    let multiplier = stake_position.period.multiplier();
-    let new_voting_power = new_amount
-        .checked_mul(multiplier as i128)
-        .ok_or(StakingError::Overflow)?;
-
-    // Weighted-average accounting for rewards:
-    // Preserves accumulated time-weight: initial_amount * (now - start_time)
-    // = new_amount * (now - effective_start_time)
-    let elapsed = current_time.saturating_sub(stake_position.start_time);
-    let weighted_duration = if new_amount > 0 {
-        ((stake_position.amount as u128).saturating_mul(elapsed as u128) / (new_amount as u128)) as u64
-    } else {
-        0
-    };
-    let effective_start_time = current_time.saturating_sub(weighted_duration);
-
-    // CRITICAL: unlock_time remains UNCHANGED
-    let unlock_time = stake_position.unlock_time;
-
-    let updated_position = StakePosition {
-        amount: new_amount,
-        period: stake_position.period,
-        start_time: effective_start_time,
-        unlock_time,
-        voting_power: new_voting_power,
-    };
-
-    env.storage()
-        .instance()
-        .set(&DataKey::Stake(user.clone()), &updated_position);
-
-    let total_staked: i128 = env
-        .storage()
-        .instance()
-        .get(&DataKey::TotalStaked)
-        .unwrap_or(0);
-    let new_total = total_staked
-        .checked_add(amount)
-        .ok_or(StakingError::Overflow)?;
-    env.storage().instance().set(&DataKey::TotalStaked, &new_total);
-
-    StakeToppedUp {
-        user: user.clone(),
-        added_amount: amount,
-        new_total_amount: new_amount,
-        unlock_time,
-        new_voting_power,
-    }
-    .publish(env);
-
-    Ok(())
-}
-
-/// Computes the time-weighted reward-eligible principal for a user over their active stake period.
-pub fn get_time_weighted_amount(env: &Env, user: &Address) -> i128 {
-    let stake_position: Option<StakePosition> = env
-        .storage()
-        .instance()
-        .get(&DataKey::Stake(user.clone()));
-
-    match stake_position {
-        Some(pos) => {
-            let current_time = env.ledger().timestamp();
-            let total_span = pos.unlock_time.saturating_sub(pos.start_time);
-            if total_span == 0 || current_time <= pos.start_time {
-                pos.amount
-            } else {
-                let elapsed = current_time.saturating_sub(pos.start_time).min(total_span);
-                ((pos.amount as u128).saturating_mul(elapsed as u128) / (total_span as u128)) as i128
+                ((pos.amount as u128).saturating_mul(elapsed as u128) / (total_span as u128))
+                    as i128
             }
         }
         None => 0,
@@ -931,17 +816,25 @@ pub fn get_slash_notice_period(env: &Env) -> u64 {
 }
 
 /// Set the slash notice period in seconds (admin only).
-pub fn set_slash_notice_period(env: &Env, admin: &Address, period_seconds: u64) -> Result<(), StakingError> {
-    let stored_admin: Address = env.storage().instance()
+pub fn set_slash_notice_period(
+    env: &Env,
+    admin: &Address,
+    period_seconds: u64,
+) -> Result<(), StakingError> {
+    let stored_admin: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
-    
+
     admin.require_auth();
-    env.storage().instance().set(&DataKey::SlashNoticePeriod, &period_seconds);
+    env.storage()
+        .instance()
+        .set(&DataKey::SlashNoticePeriod, &period_seconds);
     Ok(())
 }
 
@@ -967,54 +860,65 @@ pub fn get_slash_notice(env: &Env, user: &Address) -> Option<(i128, u64, Address
 /// * `Err(StakingError::InvalidAmount)` if amount is not positive
 /// * `Err(StakingError::NoActiveStake)` if user has no active stake
 /// * `Err(StakingError::SlashNoticePeriodActive)` if a notice already exists
-pub fn slash(
+pub fn create_slash_notice(
     env: &Env,
     admin: &Address,
     user: &Address,
     amount: i128,
 ) -> Result<(), StakingError> {
-    let stored_admin: Address = env.storage().instance()
+    let stored_admin: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
-    
+
     admin.require_auth();
-    
+
     if amount <= 0 {
         return Err(StakingError::InvalidAmount);
     }
-    
-    let stake_position: StakePosition = env.storage().instance()
+
+    let stake_position: StakePosition = env
+        .storage()
+        .instance()
         .get(&DataKey::Stake(user.clone()))
         .ok_or(StakingError::NoActiveStake)?;
-    
+
     if amount > stake_position.amount {
         return Err(StakingError::InvalidAmount);
     }
-    
+
     // Check if there's already an active notice
-    if env.storage().instance().has(&DataKey::SlashNotice(user.clone())) {
+    if env
+        .storage()
+        .instance()
+        .has(&DataKey::SlashNotice(user.clone()))
+    {
         return Err(StakingError::SlashNoticePeriodActive);
     }
-    
+
     let notice_period = get_slash_notice_period(env);
     let now = env.ledger().timestamp();
     let notice_until = now
         .checked_add(notice_period)
         .ok_or(StakingError::Overflow)?;
-    
-    env.storage().instance().set(&DataKey::SlashNotice(user.clone()), &(amount, notice_until, admin.clone()));
-    
+
+    env.storage()
+        .instance()
+        .set(&DataKey::SlashNotice(user.clone()), &(amount, notice_until, admin.clone()));
+
     SlashNoticeCreated {
         executor: admin.clone(),
         user: user.clone(),
         amount,
         notice_until,
-    }.publish(env);
-    
+    }
+    .publish(env);
+
     Ok(())
 }
 
@@ -1030,38 +934,41 @@ pub fn slash(
 /// * `Err(StakingError::Unauthorized)` if caller is not admin
 /// * `Err(StakingError::NoActiveSlashNotice)` if no notice exists
 /// * `Err(StakingError::SlashNoticeExpired)` if the notice period has elapsed
-pub fn cancel_slash(
-    env: &Env,
-    admin: &Address,
-    user: &Address,
-) -> Result<(), StakingError> {
-    let stored_admin: Address = env.storage().instance()
+pub fn cancel_slash(env: &Env, admin: &Address, user: &Address) -> Result<(), StakingError> {
+    let stored_admin: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
-    
+
     admin.require_auth();
-    
-    let notice: (i128, u64, Address) = env.storage().instance()
+
+    let notice: (i128, u64, Address) = env
+        .storage()
+        .instance()
         .get(&DataKey::SlashNotice(user.clone()))
         .ok_or(StakingError::NoActiveSlashNotice)?;
-    
+
     let now = env.ledger().timestamp();
     if now >= notice.1 {
         return Err(StakingError::SlashNoticeExpired);
     }
-    
-    env.storage().instance().remove(&DataKey::SlashNotice(user.clone()));
-    
+
+    env.storage()
+        .instance()
+        .remove(&DataKey::SlashNotice(user.clone()));
+
     SlashCancelled {
         executor: admin.clone(),
         user: user.clone(),
         amount: notice.0,
-    }.publish(env);
-    
+    }
+    .publish(env);
+
     Ok(())
 }
 
@@ -1077,62 +984,73 @@ pub fn cancel_slash(
 /// * `Err(StakingError::Unauthorized)` if caller is not admin
 /// * `Err(StakingError::NoActiveSlashNotice)` if no notice exists
 /// * `Err(StakingError::SlashNoticeExpired)* if the notice period has not elapsed
-pub fn execute_slash(
-    env: &Env,
-    admin: &Address,
-    user: &Address,
-) -> Result<(), StakingError> {
-    let stored_admin: Address = env.storage().instance()
+pub fn execute_slash(env: &Env, admin: &Address, user: &Address) -> Result<(), StakingError> {
+    let stored_admin: Address = env
+        .storage()
+        .instance()
         .get(&DataKey::Admin)
         .ok_or(StakingError::NotInitialized)?;
-    
+
     if admin != &stored_admin {
         return Err(StakingError::Unauthorized);
     }
-    
+
     admin.require_auth();
-    
-    let notice: (i128, u64, Address) = env.storage().instance()
+
+    let notice: (i128, u64, Address) = env
+        .storage()
+        .instance()
         .get(&DataKey::SlashNotice(user.clone()))
         .ok_or(StakingError::NoActiveSlashNotice)?;
-    
+
     let now = env.ledger().timestamp();
     if now < notice.1 {
         return Err(StakingError::SlashNoticePeriodActive);
     }
-    
+
     let slash_amount = notice.0;
-    
+
     // Get the stake position
-    let mut stake_position: StakePosition = env.storage().instance()
+    let mut stake_position: StakePosition = env
+        .storage()
+        .instance()
         .get(&DataKey::Stake(user.clone()))
         .ok_or(StakingError::NoActiveStake)?;
-    
+
     // Calculate the new amount after slash
     let new_amount = math::safe_sub(stake_position.amount, slash_amount)
         .map_err(|_| StakingError::InvalidAmount)?;
-    
+
     // Update the stake position
     stake_position.amount = new_amount;
     stake_position.voting_power = new_amount * stake_position.period.multiplier() as i128;
-    env.storage().instance().set(&DataKey::Stake(user.clone()), &stake_position);
-    
+    env.storage()
+        .instance()
+        .set(&DataKey::Stake(user.clone()), &stake_position);
+
     // Update total staked
-    let total_staked: i128 = env.storage().instance()
+    let total_staked: i128 = env
+        .storage()
+        .instance()
         .get(&DataKey::TotalStaked)
         .unwrap_or(0);
-    let new_total = math::safe_sub(total_staked, slash_amount)
-        .map_err(|_| StakingError::InvalidAmount)?;
-    env.storage().instance().set(&DataKey::TotalStaked, &new_total);
-    
+    let new_total =
+        math::safe_sub(total_staked, slash_amount).map_err(|_| StakingError::InvalidAmount)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalStaked, &new_total);
+
     // Remove the notice
-    env.storage().instance().remove(&DataKey::SlashNotice(user.clone()));
-    
+    env.storage()
+        .instance()
+        .remove(&DataKey::SlashNotice(user.clone()));
+
     SlashExecuted {
         executor: admin.clone(),
         user: user.clone(),
         amount: slash_amount,
-    }.publish(env);
-    
+    }
+    .publish(env);
+
     Ok(())
 }
