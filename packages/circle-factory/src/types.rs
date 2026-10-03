@@ -25,6 +25,14 @@ pub struct FeeConfig {
     pub updated_at: u64,
     pub updated_by: Address,
 }
+/// Protocol-wide configuration propagated into every circle this factory deploys.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FactoryConfig {
+    pub treasury: Address,
+    pub reputation_registry: Address,
+    pub fee_bps: u32,
+}
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct CircleEntry {
@@ -51,6 +59,7 @@ pub enum DataKey {
     CanonicalDeployment(BytesN<32>),
     RateLimitConfig,
     OrganizerPeriodCount(Address, u64),
+    FactoryConfig,
 }
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -69,6 +78,20 @@ pub enum FactoryError {
     CircleDeployFailed = 6,
     InvalidConfig = 7,
     RateLimitExceeded = 8,
+    /// `FactoryConfig` has not been set, so circles cannot be configured on deploy.
+    FactoryConfigNotSet = 9,
+    /// The freshly deployed circle rejected `configure_from_factory`.
+    CircleConfigurationFailed = 10,
+    /// `treasury` / `reputation_registry` is not a usable contract address.
+    InvalidAddress = 11,
+}
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FactoryConfigUpdated {
+    pub treasury: Address,
+    pub reputation_registry: Address,
+    pub fee_bps: u32,
+    pub updated_by: Address,
 }
 #[contracttype]
 #[derive(Clone, Debug)]
