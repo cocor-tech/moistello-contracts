@@ -94,3 +94,23 @@ pub fn set_last_round(env: &Env, member: &Address, circle_id: &Address, round: u
         .persistent()
         .set(&DataKey::LastRound(member.clone(), circle_id.clone()), &round);
 }
+
+/// Issue #332: cumulative time-weighted contribution points earned by a member.
+///
+/// This is the running total of the time-scaled award granted by
+/// [`crate::scoring::record_weighted_payment`]; it lets an indexer (or a test)
+/// assert that early contributions are worth strictly more than late ones
+/// without replaying the whole activity history.
+pub fn get_time_weighted_points(env: &Env, member: &Address) -> u64 {
+    env.storage().persistent().get(&DataKey::TimeWeightedPoints(member.clone()))
+        .unwrap_or(0u64)
+}
+
+/// Adds `points` to the member's cumulative time-weighted contribution points.
+pub fn add_time_weighted_points(env: &Env, member: &Address, points: u64) {
+    let current = get_time_weighted_points(env, member);
+    env.storage().persistent().set(
+        &DataKey::TimeWeightedPoints(member.clone()),
+        &current.saturating_add(points),
+    );
+}

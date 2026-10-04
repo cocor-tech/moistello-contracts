@@ -20,6 +20,8 @@ pub const RESOLVE_FORCE_PAYOUT: u32 = 3;
 pub const RESOLVE_REFUND: u32 = 4;
 pub const AUCTION_MODE_ENGLISH: u32 = 0;
 pub const AUCTION_MODE_DUTCH: u32 = 1;
+/// Issue #332: full-scale time weight, expressed in basis points (10_000 bps = 1.0x).
+pub const TIME_WEIGHT_BPS_MAX: u64 = 10_000;
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct CircleConfig {
@@ -462,6 +464,16 @@ pub struct CircleCancelled {
 pub struct DisputeRaised {
     pub member: Address,
     pub evidence_hash: BytesN<32>,
+}
+/// Issue #340: emitted by `verify_evidence` each time a candidate preimage is
+/// hashed and compared against the dispute's on-chain commitment, so the
+/// verification trail is auditable off-chain.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EvidenceVerified {
+    pub raised_by: Address,
+    pub evidence_hash: BytesN<32>,
+    pub verified: bool,
 }
 #[contracttype]
 #[derive(Clone, Debug)]
