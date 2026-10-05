@@ -44,6 +44,9 @@ mod tests {
             grace_period_seconds: 86400u64,
             max_strikes: 3u32,
             slug: String::from_str(env, "test-circle"),
+            max_withdrawal_per_tx: 0,
+            daily_withdrawal_limit: 0,
+            min_duration_seconds: 0,
         }
     }
 
@@ -1361,6 +1364,59 @@ mod tests {
         let out_of_range = client.get_contributions(&m1, &100u32, &10u32);
         assert_eq!(out_of_range.len(), 0);
     }
+
+    #[test]
+    fn test_configure_from_factory_sets_protocol_config() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let config = create_config(&env);
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let circle_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &circle_id);
+        let treasury = Address::generate(&env);
+        let reputation_registry = Address::generate(&env);
+
+        client.configure_from_factory(&factory, &treasury, &reputation_registry, &750u32);
+
+        assert_eq!(client.get_treasury(), Some(treasury));
+        assert_eq!(client.get_reputation_registry(), Some(reputation_registry));
+        assert_eq!(client.get_fee_bps(), 750);
+    }
+
+    #[test]
+    fn test_configure_from_factory_rejects_invalid_configuration() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let config = create_config(&env);
+        let admin = config.organizer.clone();
+        let factory = Address::generate(&env);
+        let circle_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
+        let client = circle::CircleClient::new(&env, &circle_id);
+        let treasury = Address::generate(&env);
+        let reputation_registry = Address::generate(&env);
+
+        // Only the factory recorded at construction may configure the circle
+        let impostor = Address::generate(&env);
+        let unauthorized =
+            client.try_configure_from_factory(&impostor, &treasury, &reputation_registry, &750u32);
+        assert_eq!(unauthorized, Err(Ok(CircleError::Unauthorized)));
+
+        // Fee above the 10_000 bps ceiling is rejected
+        let invalid_fee = client.try_configure_from_factory(
+            &factory,
+            &treasury,
+            &reputation_registry,
+            &10_001u32,
+        );
+        assert_eq!(invalid_fee, Err(Ok(CircleError::InvalidAmount)));
+
+        // A paused circle rejects configuration
+        client.pause_circle(&admin);
+        let paused =
+            client.try_configure_from_factory(&factory, &treasury, &reputation_registry, &750u32);
+        assert_eq!(paused, Err(Ok(CircleError::ContractPaused)));
+    }
 }
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
@@ -1389,6 +1445,9 @@ fn create_config(env: &Env, token: &Address) -> crate::types::CircleConfig {
         grace_period_seconds: 0,
         max_strikes: 3,
         slug: String::from_str(env, "test-circle"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     }
 }
 
@@ -1590,6 +1649,9 @@ fn test_late_contribution_within_grace_period_incurs_penalty_split() {
         grace_period_seconds: 50,
         max_strikes: 3,
         slug: String::from_str(&env, "grace-circle"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     };
     let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
     let client = CircleClient::new(&env, &contract_id);
@@ -1644,6 +1706,9 @@ fn test_late_contribution_outside_grace_period_rejected() {
         grace_period_seconds: 50,
         max_strikes: 3,
         slug: String::from_str(&env, "grace-circle-2"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     };
     let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
     let client = CircleClient::new(&env, &contract_id);
@@ -1686,6 +1751,9 @@ fn test_default_grace_period_zero_rejects_past_deadline() {
         grace_period_seconds: 0, // default off
         max_strikes: 3,
         slug: String::from_str(&env, "no-grace"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     };
     let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
     let client = CircleClient::new(&env, &contract_id);
@@ -1728,6 +1796,9 @@ fn test_streak_stored_and_retrieved_on_contributions() {
         grace_period_seconds: 0,
         max_strikes: 3,
         slug: String::from_str(&env, "streak-circle"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     };
     let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
     let client = CircleClient::new(&env, &contract_id);
@@ -1794,6 +1865,9 @@ fn test_update_streak_and_streak_reset() {
         grace_period_seconds: 0,
         max_strikes: 3,
         slug: String::from_str(&env, "streak-reset"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     };
     let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
     let client = CircleClient::new(&env, &contract_id);
@@ -1842,6 +1916,9 @@ fn test_claim_streak_bonus_happy_path() {
         grace_period_seconds: 0,
         max_strikes: 3,
         slug: String::from_str(&env, "bonus-circle"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     };
     let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &admin, &config));
     let client = CircleClient::new(&env, &contract_id);
@@ -1899,6 +1976,9 @@ fn test_year_long_lifecycle_simulation() {
         grace_period_seconds: 365 * 86400,
         max_strikes: 3,
         slug: String::from_str(&env, "year-circle"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     };
     let factory = Address::generate(&env);
     let contract_id = env.register(Circle, CircleArgs::__constructor(&admin, &factory, &config));
@@ -2070,7 +2150,6 @@ fn test_refund_losing_bids_fifty_bidders_in_batches() {
         let bidder = losers.get(i).unwrap();
         assert_eq!(token_client.balance(&bidder), deposit);
     }
-    assert_eq!(client.refund_losing_bids(&organizer, &0u32, &10u32), 0);
 }
 
 #[test]

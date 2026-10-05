@@ -1113,7 +1113,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "f6a960b952c19a2c9c23af7aa751191b312e30dcd0630b1223147ba068cfdc3f"
+                "bytes": "248275687495ed3cfd04eefb643bf76c4ed487d9adbddcc08307c08efec2d3b5"
               }
             }
           },
@@ -1140,7 +1140,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "f6a960b952c19a2c9c23af7aa751191b312e30dcd0630b1223147ba068cfdc3f"
+                "bytes": "248275687495ed3cfd04eefb643bf76c4ed487d9adbddcc08307c08efec2d3b5"
               }
             }
           },
@@ -1432,6 +1432,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "daily_withdrawal_limit"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "factory"
                             },
                             "val": {
@@ -1480,10 +1488,26 @@
                           },
                           {
                             "key": {
+                              "symbol": "max_withdrawal_per_tx"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "member_count"
                             },
                             "val": {
                               "u32": 2
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "min_duration_seconds"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {

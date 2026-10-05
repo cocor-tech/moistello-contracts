@@ -16,6 +16,12 @@ pub struct CircleConfig {
     pub grace_period_seconds: u64,
     pub max_strikes: u32,
     pub slug: String,
+    /// #478 — Largest single treasury withdrawal the organizer may request.
+    pub max_withdrawal_per_tx: i128,
+    /// #478 — Maximum treasury withdrawal allowed per rolling UTC day.
+    pub daily_withdrawal_limit: i128,
+    /// #466 — Minimum elapsed circle duration before a payout may run.
+    pub min_duration_seconds: u64,
 }
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -23,6 +29,14 @@ pub struct FeeConfig {
     pub fee_bps: i128,
     pub updated_at: u64,
     pub updated_by: Address,
+}
+/// Protocol-wide configuration propagated into every circle this factory deploys.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FactoryConfig {
+    pub treasury: Address,
+    pub reputation_registry: Address,
+    pub fee_bps: u32,
 }
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -50,6 +64,7 @@ pub enum DataKey {
     CanonicalDeployment(BytesN<32>),
     RateLimitConfig,
     OrganizerPeriodCount(Address, u64),
+    FactoryConfig,
 }
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -68,6 +83,20 @@ pub enum FactoryError {
     CircleDeployFailed = 6,
     InvalidConfig = 7,
     RateLimitExceeded = 8,
+    /// `FactoryConfig` has not been set, so circles cannot be configured on deploy.
+    FactoryConfigNotSet = 9,
+    /// The freshly deployed circle rejected `configure_from_factory`.
+    CircleConfigurationFailed = 10,
+    /// `treasury` / `reputation_registry` is not a usable contract address.
+    InvalidAddress = 11,
+}
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FactoryConfigUpdated {
+    pub treasury: Address,
+    pub reputation_registry: Address,
+    pub fee_bps: u32,
+    pub updated_by: Address,
 }
 #[contracttype]
 #[derive(Clone, Debug)]

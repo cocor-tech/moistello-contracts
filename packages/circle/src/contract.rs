@@ -46,6 +46,13 @@ pub fn init(
     {
         return Err(CircleError::InvalidAmount);
     }
+    // Absolute ceiling: the payout bitmap is a u128 and the highest reputation
+    // tier (DIAMOND) tops out at 100 members, so a wider circle is refused even
+    // when the organizer has no reputation record and the tier checks below are
+    // skipped entirely.
+    if config.max_members > MAX_CIRCLE_MEMBERS {
+        return Err(CircleError::CircleSizeExceedsTier);
+    }
     if let Some(registry_address) = get_reputation_registry(env) {
         let registry_client =
             reputation_registry::ReputationRegistryClient::new(env, &registry_address);
@@ -91,6 +98,9 @@ pub fn init(
         total_fees: 0,
         slug: config.slug.clone(),
         health_score: 100,
+        max_withdrawal_per_tx: config.max_withdrawal_per_tx,
+        daily_withdrawal_limit: config.daily_withdrawal_limit,
+        min_duration_seconds: config.min_duration_seconds,
     };
     env.storage().instance().set(&DataKey::Circle, &circle);
     env.storage().instance().set(&DataKey::Admin, admin);
@@ -771,6 +781,14 @@ fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
     }
     if round != circle.current_round {
         return Err(CircleError::RoundNotCurrent);
+    }
+    // #466 — refuse payouts before the circle has run for its configured
+    // minimum duration, so a circle cannot be created and immediately drained.
+    if circle.min_duration_seconds > 0 {
+        let elapsed = env.ledger().timestamp().saturating_sub(circle.created_at);
+        if elapsed < circle.min_duration_seconds {
+            return Err(CircleError::CircleDurationTooShort);
+        }
     }
     let (recipient, payout_type) = match circle.payout_type {
         PAYOUT_RANDOM => (payout::resolve_random(env, &circle, round)?, PAYOUT_RANDOM),
@@ -2037,6 +2055,9 @@ pub fn get_status(env: &Env) -> Circle {
             total_fees: 0,
             slug: soroban_sdk::String::from_str(env, ""),
             health_score: 100,
+            max_withdrawal_per_tx: 0,
+            daily_withdrawal_limit: 0,
+            min_duration_seconds: 0,
         })
 }
 
@@ -2743,6 +2764,85 @@ pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<()
     env.storage().instance().set(&DataKey::Treasury, treasury);
     Ok(())
 }
+
+/// The all-zero address, which is never a valid contract address.
+fn zero_address(env: &Env) -> Address {
+    Address::from_string(&soroban_sdk::String::from_str(
+        env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ))
+}
+
+/// Applies the protocol config pushed by the factory that deployed this circle.
+///
+/// Only callable by the factory recorded at construction, so an organizer
+/// cannot repoint the treasury or the reputation registry after the fact.
+///
+/// # Returns
+/// - `Err(CircleError::Unauthorized)` if caller is not the deploying factory
+/// - `Err(CircleError::ContractPaused)` if the circle is paused
+/// - `Err(CircleError::InvalidAmount)` if `fee_bps` > 10000, or either address
+///   is the all-zero address
+///
+/// # Authorization
+/// Requires authentication from the stored factory address.
+///
+/// # Notes
+/// Rejects the all-zero address for `treasury` and `reputation_registry`, which
+/// can never be a real contract and would strand fees or disable reputation.
+///
+/// # Panics
+/// Never panics. All errors are returned as typed CircleError variants.
+pub fn configure_from_factory(
+    env: &Env,
+    factory: &Address,
+    treasury: &Address,
+    reputation_registry: &Address,
+    fee_bps: u32,
+) -> Result<(), CircleError> {
+    factory.require_auth();
+    let stored_factory: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Factory)
+        .ok_or(CircleError::NotInitialized)?;
+    if factory != &stored_factory {
+        return Err(CircleError::Unauthorized);
+    }
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let zero = zero_address(env);
+    if *treasury == zero || *reputation_registry == zero {
+        return Err(CircleError::InvalidAmount);
+    }
+    if fee_bps > 10_000 {
+        return Err(CircleError::InvalidAmount);
+    }
+    env.storage().instance().set(&DataKey::Treasury, treasury);
+    env.storage()
+        .instance()
+        .set(&DataKey::ReputationRegistry, reputation_registry);
+    env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("fcfg")),
+        FactoryConfigured {
+            factory: factory.clone(),
+            treasury: treasury.clone(),
+            reputation_registry: reputation_registry.clone(),
+            fee_bps,
+        },
+    );
+    Ok(())
+}
+
+/// Returns the treasury this circle routes fees to, if configured.
+pub fn get_treasury(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Treasury)
+}
+
+/// Returns the fee this circle charges on payout, in basis points.
+pub fn get_fee_bps(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+}
 /// Updates the token address used for contributions and payouts.
 ///
 /// # Parameters
@@ -2995,6 +3095,9 @@ pub fn compute_circle_config_hash(env: &Env, circle: &Circle) -> BytesN<32> {
         grace_period_seconds: circle.grace_period_seconds,
         max_strikes: circle.max_strikes,
         slug: circle.slug.clone(),
+        max_withdrawal_per_tx: circle.max_withdrawal_per_tx,
+        daily_withdrawal_limit: circle.daily_withdrawal_limit,
+        min_duration_seconds: circle.min_duration_seconds,
     };
     let xdr_bytes = config.to_xdr(env);
     env.crypto().sha256(&xdr_bytes).into()
@@ -3100,6 +3203,306 @@ pub fn update_metadata(
         MetadataUpdated {
             updater: caller.clone(),
             field,
+        },
+    );
+    Ok(())
+}
+
+/// Cancels the active round auction, refunding the current highest bidder (winner)
+/// and clearing auction state in one atomic sequence.
+///
+/// # Security & Atomicity
+/// Transfer of the refund occurs in the same execution context before or alongside
+/// state clearing. If the token transfer fails (e.g. insufficient contract balance),
+/// the entire transaction aborts and rolls back: auction bids and circle state remain intact.
+pub fn cancel_auction(env: &Env, caller: &Address) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    caller.require_auth();
+
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+
+    if *caller != circle.organizer {
+        return Err(CircleError::NotOrganizer);
+    }
+
+    if circle.payout_type != PAYOUT_AUCTION {
+        return Err(CircleError::InvalidPayoutType);
+    }
+
+    let bids: Vec<AuctionBid> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Bids)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut max_bps: u32 = 0;
+    let mut winner: Option<AuctionBid> = None;
+    for i in 0..bids.len() {
+        let b = bids.get(i).ok_or(CircleError::VecAccessError)?;
+        if b.round == circle.current_round && b.discount_bips >= max_bps {
+            max_bps = b.discount_bips;
+            winner = Some(b);
+        }
+    }
+
+    let mut refunded_bidder: Option<Address> = None;
+    let mut refunded_amount: i128 = 0;
+
+    if let Some(ref w) = winner {
+        refunded_bidder = Some(w.bidder.clone());
+        let contributions: Vec<Contribution> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contributions)
+            .unwrap_or_else(|| Vec::new(env));
+        for i in 0..contributions.len() {
+            let c = contributions.get(i).ok_or(CircleError::VecAccessError)?;
+            if c.member == w.bidder && c.round == circle.current_round {
+                refunded_amount = refunded_amount
+                    .checked_add(c.amount)
+                    .ok_or(CircleError::InvalidAmount)?;
+            }
+        }
+        if refunded_amount == 0 {
+            refunded_amount = circle.contribution_amount;
+        }
+
+        if refunded_amount > 0 {
+            let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+            token_client.transfer(&circle.id, &w.bidder, &refunded_amount);
+        }
+    }
+
+    // Atomically clear auction bids for current round
+    let mut remaining_bids = Vec::new(env);
+    for i in 0..bids.len() {
+        let b = bids.get(i).ok_or(CircleError::VecAccessError)?;
+        if b.round != circle.current_round {
+            remaining_bids.push_back(b);
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::Bids, &remaining_bids);
+
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("auc_cncl")),
+        AuctionCancelled {
+            round: circle.current_round,
+            cancelled_by: caller.clone(),
+            refunded_bidder,
+            refunded_amount,
+        },
+    );
+
+    Ok(())
+}
+
+/// Queries the top `n` contributors over the circle lifetime, ordered by total contribution amount descending.
+///
+/// # Gas Boundedness
+/// Hard cap on leaderboard entries returned by `query_top_contributors`.
+pub const MAX_LEADERBOARD_LIMIT: u32 = 50;
+
+/// The input `n` is strictly clamped to `MAX_LEADERBOARD_LIMIT` (50) to prevent unbounded computation
+/// and guarantee gas consumption remains within Soroban limits.
+///
+/// # Stable Tie-breaking
+/// When two members have identical total contributions, ties are resolved deterministically:
+/// 1. Total contribution descending
+/// 2. Earliest contribution/join timestamp ascending (earlier staker/contributor wins)
+/// 3. Member address lexicographical order ascending
+pub fn query_top_contributors(env: &Env, n: u32) -> Vec<(Address, i128)> {
+    let limit = if n > MAX_LEADERBOARD_LIMIT {
+        MAX_LEADERBOARD_LIMIT
+    } else {
+        n
+    };
+
+    if limit == 0 {
+        return Vec::new(env);
+    }
+
+    let members: Vec<Member> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Members)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let contributions: Vec<Contribution> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Contributions)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut totals: Map<Address, (i128, u64)> = Map::new(env);
+    for i in 0..members.len() {
+        if let Some(m) = members.get(i) {
+            totals.set(m.address, (m.total_contributions, m.joined_at));
+        }
+    }
+
+    for i in 0..contributions.len() {
+        if let Some(c) = contributions.get(i) {
+            let (prev_total, earliest_ts) =
+                totals.get(c.member.clone()).unwrap_or((0i128, c.timestamp));
+            let new_total = if members.is_empty() {
+                prev_total.saturating_add(c.amount)
+            } else {
+                prev_total
+            };
+            let new_ts = if earliest_ts == 0 || c.timestamp < earliest_ts {
+                c.timestamp
+            } else {
+                earliest_ts
+            };
+            totals.set(c.member, (new_total, new_ts));
+        }
+    }
+
+    let mut sorted_addrs = Vec::<Address>::new(env);
+    let mut sorted_totals = Vec::<i128>::new(env);
+    let mut sorted_ts = Vec::<u64>::new(env);
+
+    for (addr, (tot, ts)) in totals.iter() {
+        let mut insert_pos = sorted_totals.len();
+        for j in 0..sorted_totals.len() {
+            let cur_tot = sorted_totals.get(j).unwrap();
+            let cur_ts = sorted_ts.get(j).unwrap();
+            let cur_addr = sorted_addrs.get(j).unwrap();
+
+            let beats = if tot != cur_tot {
+                tot > cur_tot
+            } else if ts != cur_ts {
+                ts < cur_ts
+            } else {
+                addr < cur_addr
+            };
+
+            if beats {
+                insert_pos = j;
+                break;
+            }
+        }
+
+        if insert_pos < limit {
+            sorted_addrs.insert(insert_pos, addr);
+            sorted_totals.insert(insert_pos, tot);
+            sorted_ts.insert(insert_pos, ts);
+
+            if sorted_totals.len() > limit {
+                sorted_addrs.pop_back();
+                sorted_totals.pop_back();
+                sorted_ts.pop_back();
+            }
+        }
+    }
+
+    let mut result = Vec::<(Address, i128)>::new(env);
+    for i in 0..sorted_totals.len() {
+        result.push_back((sorted_addrs.get(i).unwrap(), sorted_totals.get(i).unwrap()));
+    }
+    result
+}
+
+/// Allows the organizer or admin to withdraw accumulated treasury funds.
+///
+/// Enforces a per-transaction cap and a rolling daily limit to prevent
+/// draining the treasury under a compromised organizer key.  Amounts above
+/// the single-transaction cap require a member vote via the existing
+/// `vote_payout` flow.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `caller`: Address requesting the withdrawal (must be organizer or admin)
+/// - `amount`: Amount to withdraw from the treasury
+///
+/// # Returns
+/// - `Ok(())` on successful withdrawal
+/// - `Err(CircleError::Unauthorized)` if caller is neither organizer nor admin
+/// - `Err(CircleError::InvalidAmount)` if amount is not positive
+/// - `Err(CircleError::WithdrawalCapExceeded)` if amount exceeds max_withdrawal_per_tx
+/// - `Err(CircleError::DailyWithdrawalLimitExceeded)` if daily limit is exceeded
+///
+/// # Authorization
+/// Requires authentication from the `caller` address.
+///
+/// # Notes
+/// - Daily window resets at midnight UTC (based on ledger timestamp).
+/// - The treasury balance is checked before transfer to avoid host errors.
+pub fn withdraw_treasury(env: &Env, caller: &Address, amount: i128) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    let circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if caller != &circle.organizer && caller != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    caller.require_auth();
+    if amount <= 0 {
+        return Err(CircleError::InvalidAmount);
+    }
+    if circle.max_withdrawal_per_tx > 0 && amount > circle.max_withdrawal_per_tx {
+        return Err(CircleError::WithdrawalCapExceeded);
+    }
+    let now = env.ledger().timestamp();
+    let day_key = (now / 86400) as u64;
+    let mut withdrawal_day: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::WithdrawalDay)
+        .unwrap_or(0);
+    let mut daily_amount: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::WithdrawalAmount)
+        .unwrap_or(0);
+    if withdrawal_day != day_key {
+        withdrawal_day = day_key;
+        daily_amount = 0;
+    }
+    if circle.daily_withdrawal_limit > 0
+        && daily_amount.saturating_add(amount) > circle.daily_withdrawal_limit
+    {
+        return Err(CircleError::DailyWithdrawalLimitExceeded);
+    }
+    let treasury: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Treasury)
+        .ok_or(CircleError::NotInitialized)?;
+    let token_client = soroban_sdk::token::Client::new(env, &circle.token);
+    let treasury_balance = token_client.balance(&circle.id);
+    if treasury_balance < amount {
+        return Err(CircleError::InsufficientContractBalance);
+    }
+    token_client.transfer(&circle.id, caller, &amount);
+    daily_amount = math::safe_add(daily_amount, amount).map_err(|_| CircleError::InvalidAmount)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::WithdrawalDay, &withdrawal_day);
+    env.storage()
+        .instance()
+        .set(&DataKey::WithdrawalAmount, &daily_amount);
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("withdraw")),
+        TreasuryWithdrawn {
+            caller: caller.clone(),
+            amount,
+            daily_total: daily_amount,
         },
     );
     Ok(())

@@ -3266,7 +3266,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "f1b51dc34ad62d2c01971fe3d54f7658f6868768d910611c8470df6303fec8b5"
+                "bytes": "31667018cdab1f4e293ba18363b0cf0a25cb86cd4d756c346721a2f441742b94"
               }
             }
           },
@@ -3293,7 +3293,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "f1b51dc34ad62d2c01971fe3d54f7658f6868768d910611c8470df6303fec8b5"
+                "bytes": "31667018cdab1f4e293ba18363b0cf0a25cb86cd4d756c346721a2f441742b94"
               }
             }
           },
@@ -3320,7 +3320,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "f1b51dc34ad62d2c01971fe3d54f7658f6868768d910611c8470df6303fec8b5"
+                "bytes": "31667018cdab1f4e293ba18363b0cf0a25cb86cd4d756c346721a2f441742b94"
               }
             }
           },
@@ -3858,6 +3858,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "daily_withdrawal_limit"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "factory"
                             },
                             "val": {
@@ -3906,10 +3914,26 @@
                           },
                           {
                             "key": {
+                              "symbol": "max_withdrawal_per_tx"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "member_count"
                             },
                             "val": {
                               "u32": 3
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "min_duration_seconds"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {

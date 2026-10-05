@@ -45,6 +45,9 @@ fn base_config(env: &Env, max_members: u32, total_rounds: u32) -> CircleConfig {
         grace_period_seconds: GRACE,
         max_strikes: 3,
         slug: String::from_str(env, "hardening"),
+        max_withdrawal_per_tx: 0,
+        daily_withdrawal_limit: 0,
+        min_duration_seconds: 0,
     }
 }
 

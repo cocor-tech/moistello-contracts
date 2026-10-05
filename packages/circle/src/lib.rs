@@ -146,6 +146,22 @@ impl Circle {
     pub fn get_dispute_resolution(env: Env) -> Option<types::DisputeResolutionRecord> {
         contract::get_dispute_resolution(&env)
     }
+    /// #478 — Organizer/admin treasury withdrawal, capped per transaction and per UTC day.
+    pub fn withdraw_treasury(
+        env: Env,
+        caller: Address,
+        amount: i128,
+    ) -> Result<(), types::CircleError> {
+        contract::withdraw_treasury(&env, &caller, amount)
+    }
+    /// #469 — Top contributors by total received, newest-round weighted.
+    pub fn query_top_contributors(env: Env, n: u32) -> soroban_sdk::Vec<(Address, i128)> {
+        contract::query_top_contributors(&env, n)
+    }
+    /// #470 — Cancel an unresolved auction and refund the highest bid atomically.
+    pub fn cancel_auction(env: Env, caller: Address) -> Result<(), types::CircleError> {
+        contract::cancel_auction(&env, &caller)
+    }
     pub fn get_members(env: Env) -> soroban_sdk::Vec<types::Member> {
         contract::get_members(&env)
     }
@@ -279,5 +295,20 @@ impl Circle {
     }
     pub fn get_fallback_oracle(env: Env) -> Option<Address> {
         contract::get_fallback_oracle(&env)
+    }
+    pub fn configure_from_factory(
+        env: Env,
+        factory: Address,
+        treasury: Address,
+        reputation_registry: Address,
+        fee_bps: u32,
+    ) -> Result<(), types::CircleError> {
+        contract::configure_from_factory(&env, &factory, &treasury, &reputation_registry, fee_bps)
+    }
+    pub fn get_treasury(env: Env) -> Option<Address> {
+        contract::get_treasury(&env)
+    }
+    pub fn get_fee_bps(env: Env) -> u32 {
+        contract::get_fee_bps(&env)
     }
 }

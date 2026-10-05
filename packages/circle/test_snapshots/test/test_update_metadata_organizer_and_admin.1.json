@@ -306,7 +306,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "0bdc73bc55c26504efd4668c137bdaff6dde4bda1c45f11a6a223665ac3c4e0f"
+                "bytes": "9846b1aa5068cbdeb602140095a45061e6717e969220ee6730d4988b3377ae71"
               }
             }
           },
@@ -441,6 +441,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "daily_withdrawal_limit"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "factory"
                             },
                             "val": {
@@ -489,10 +497,26 @@
                           },
                           {
                             "key": {
+                              "symbol": "max_withdrawal_per_tx"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "member_count"
                             },
                             "val": {
                               "u32": 0
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "min_duration_seconds"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {

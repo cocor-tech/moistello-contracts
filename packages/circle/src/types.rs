@@ -1,4 +1,7 @@
 use soroban_sdk::{contracterror, contracttype, Address, BytesN, String};
+/// Hard ceiling on circle size. The payout bitmap is a `u128` and the highest
+/// reputation tier (DIAMOND) allows 100 members, so no circle may exceed it.
+pub const MAX_CIRCLE_MEMBERS: u32 = 100;
 pub const PAYOUT_RANDOM: u32 = 0;
 pub const PAYOUT_FIXED: u32 = 1;
 pub const PAYOUT_AUCTION: u32 = 2;
@@ -34,6 +37,12 @@ pub struct CircleConfig {
     pub grace_period_seconds: u64,
     pub max_strikes: u32,
     pub slug: String,
+    /// #478 — Largest single treasury withdrawal the organizer may request.
+    pub max_withdrawal_per_tx: i128,
+    /// #478 — Maximum treasury withdrawal allowed per rolling UTC day.
+    pub daily_withdrawal_limit: i128,
+    /// #466 — Minimum elapsed circle duration before a payout may run.
+    pub min_duration_seconds: u64,
 }
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -63,6 +72,9 @@ pub struct Circle {
     pub total_fees: i128,
     pub slug: String,
     pub health_score: u32,
+    pub max_withdrawal_per_tx: i128,
+    pub daily_withdrawal_limit: i128,
+    pub min_duration_seconds: u64,
 }
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -187,6 +199,10 @@ pub enum DataKey {
     /// Winner of a resolved English auction for this round. Presence means
     /// losing-bid refunds may begin.
     AuctionWinner(u32),
+    /// #478 — UTC day index of the current treasury withdrawal window.
+    WithdrawalDay,
+    /// #478 — Amount already withdrawn by the organizer in that window.
+    WithdrawalAmount,
     /// #325: holds the round number most recently swept by
     /// `check_contribution_deadline`. Kept as a single instance entry rather
     /// than one persistent entry per round, because a sweep resolves the round
@@ -237,6 +253,12 @@ pub enum CircleError {
     OracleUnavailable = 37,
     NotImplemented = 38,
     ZeroPayoutAmount = 39,
+    /// #478 — Single treasury withdrawal above the configured per-tx cap.
+    WithdrawalCapExceeded = 40,
+    /// #478 — Daily treasury withdrawal allowance exhausted.
+    DailyWithdrawalLimitExceeded = 41,
+    /// #466 — Payout attempted before the minimum circle duration elapsed.
+    CircleDurationTooShort = 42,
     PayoutAlreadyScheduled = 59,
     DutchAuctionNotConfigured = 60,
     DutchAuctionExpired = 61,
@@ -310,6 +332,9 @@ impl CircleError {
             CircleError::OracleUnavailable => (37, "Oracle unavailable"),
             CircleError::NotImplemented => (38, "Not implemented"),
             CircleError::ZeroPayoutAmount => (39, "Zero payout amount"),
+            CircleError::WithdrawalCapExceeded => (40, "Withdrawal cap exceeded"),
+            CircleError::DailyWithdrawalLimitExceeded => (41, "Daily withdrawal limit exceeded"),
+            CircleError::CircleDurationTooShort => (42, "Circle duration too short"),
             CircleError::PayoutAlreadyScheduled => (59, "Payout already scheduled"),
             CircleError::DutchAuctionNotConfigured => (60, "Dutch auction not configured"),
             CircleError::DutchAuctionExpired => (61, "Dutch auction expired"),
@@ -367,6 +392,9 @@ impl CircleError {
             37 => Some(CircleError::OracleUnavailable),
             38 => Some(CircleError::NotImplemented),
             39 => Some(CircleError::ZeroPayoutAmount),
+            40 => Some(CircleError::WithdrawalCapExceeded),
+            41 => Some(CircleError::DailyWithdrawalLimitExceeded),
+            42 => Some(CircleError::CircleDurationTooShort),
             59 => Some(CircleError::PayoutAlreadyScheduled),
             60 => Some(CircleError::DutchAuctionNotConfigured),
             61 => Some(CircleError::DutchAuctionExpired),
@@ -520,6 +548,15 @@ pub struct MetadataUpdated {
     pub updater: Address,
     pub field: soroban_sdk::String,
 }
+/// Emitted when the deploying factory pushes protocol config into a circle.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FactoryConfigured {
+    pub factory: Address,
+    pub treasury: Address,
+    pub reputation_registry: Address,
+    pub fee_bps: u32,
+}
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct LatePenaltyApplied {
@@ -582,4 +619,21 @@ pub struct Streak {
     pub current_streak: u32,
     pub longest_streak: u32,
     pub last_round: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AuctionCancelled {
+    pub round: u32,
+    pub cancelled_by: Address,
+    pub refunded_bidder: Option<Address>,
+    pub refunded_amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TreasuryWithdrawn {
+    pub caller: Address,
+    pub amount: i128,
+    pub daily_total: i128,
 }

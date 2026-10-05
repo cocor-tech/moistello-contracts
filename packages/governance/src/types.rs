@@ -206,6 +206,16 @@ pub struct ProposalExecuted {
     pub executed_by: Address,
 }
 
+#[contractevent(topics=["expired"])]
+#[derive(Clone, Debug)]
+pub struct ProposalExpired {
+    #[topic]
+    pub id: u64,
+    #[topic]
+    pub proposer: Address,
+    pub deposit_refunded: i128,
+}
+
 #[contractevent(topics=["cancelled"])]
 #[derive(Clone, Debug)]
 pub struct ProposalCancelled {
@@ -237,12 +247,22 @@ pub struct ConfigUpdateCancelled {
     pub cancelled_by: Address,
 }
 
-#[contractevent(topics=["expired"])]
+#[contractevent(topics=["deposit_refund"])]
 #[derive(Clone, Debug)]
-pub struct ProposalExpired {
+pub struct DepositRefunded {
     #[topic]
     pub id: u64,
     #[topic]
     pub proposer: Address,
-    pub deposit_refunded: i128,
+    pub amount: i128,
+}
+
+#[contractevent(topics=["deposit_forfeit"])]
+#[derive(Clone, Debug)]
+pub struct DepositForfeited {
+    #[topic]
+    pub id: u64,
+    #[topic]
+    pub proposer: Address,
+    pub amount: i128,
 }
