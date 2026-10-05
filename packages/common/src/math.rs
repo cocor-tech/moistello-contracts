@@ -39,6 +39,7 @@ pub fn apply_fee(amount: i128, fee_bps: i128) -> Result<(i128, i128), MathError>
     let fee = calculate_percentage(amount, fee_bps)?;
     Ok((safe_sub(amount, fee)?, fee))
 }
+
 pub fn calculate_penalty(amount: i128, penalty_bps: i128) -> Result<i128, MathError> {
     calculate_percentage(amount, penalty_bps)
 }

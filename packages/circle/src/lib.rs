@@ -229,6 +229,15 @@ impl Circle {
     pub fn claim_streak_bonus(env: Env, member: Address) -> Result<(), types::CircleError> {
         contract::claim_streak_bonus(&env, &member)
     }
+    /// #357 — update mutable circle metadata (name, slug).
+    pub fn update_metadata(
+        env: Env,
+        caller: Address,
+        field: soroban_sdk::String,
+        value: soroban_sdk::String,
+    ) -> Result<(), types::CircleError> {
+        contract::update_metadata(&env, &caller, field, value)
+    }
     pub fn get_referrals(env: Env) -> soroban_sdk::Vec<types::Referral> {
         contract::get_referrals(&env)
     }

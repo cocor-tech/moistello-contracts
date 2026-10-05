@@ -1475,7 +1475,7 @@ fn test_contribute_rejects_amount_above_circle_max() {
 
     mint_tokens(&env, &token, &member, 200);
     let result = client.try_contribute(&member, &101_i128, &0_u32);
-    assert_eq!(result, Err(Ok(CircleError::ContributionMismatch)));
+    assert_eq!(result, Err(Ok(CircleError::Overpayment)));
 }
 
 #[test]
@@ -2150,4 +2150,115 @@ fn test_refund_losing_bids_fifty_bidders_in_batches() {
         let bidder = losers.get(i).unwrap();
         assert_eq!(token_client.balance(&bidder), deposit);
     }
+}
+
+#[test]
+fn test_contribute_rejects_underpayment() {
+    let env = Env::default();
+    let (client, _admin, token) = setup_circle(&env);
+    let member = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    client.join(&member);
+    client.join(&other);
+
+    mint_tokens(&env, &token, &member, 200);
+    let result = client.try_contribute(&member, &99_i128, &0_u32);
+    assert_eq!(result, Err(Ok(CircleError::Underpayment)));
+}
+
+#[test]
+fn test_update_metadata_organizer_and_admin() {
+    let env = Env::default();
+    let (client, admin, _token) = setup_circle(&env);
+    let organizer = client.get_status().organizer;
+
+    let new_name = String::from_str(&env, "Updated Circle Name");
+    let res = client.try_update_metadata(&organizer, &String::from_str(&env, "name"), &new_name);
+    assert!(res.is_ok());
+    assert_eq!(client.get_status().name, new_name);
+
+    let new_slug = String::from_str(&env, "updated-slug");
+    let res = client.try_update_metadata(&admin, &String::from_str(&env, "slug"), &new_slug);
+    assert!(res.is_ok());
+    assert_eq!(client.get_status().slug, new_slug);
+}
+
+#[test]
+fn test_update_metadata_unauthorized() {
+    let env = Env::default();
+    let (client, _admin, _token) = setup_circle(&env);
+    let stranger = Address::generate(&env);
+
+    let res = client.try_update_metadata(
+        &stranger,
+        &String::from_str(&env, "name"),
+        &String::from_str(&env, "Hacked"),
+    );
+    assert_eq!(res, Err(Ok(CircleError::Unauthorized)));
+}
+
+#[test]
+fn test_update_metadata_immutable_fields() {
+    let env = Env::default();
+    let (client, admin, _token) = setup_circle(&env);
+
+    let immutable_fields = [
+        "token",
+        "contribution_amount",
+        "max_members",
+        "payout_type",
+        "total_rounds",
+    ];
+
+    for field_name in immutable_fields {
+        let res = client.try_update_metadata(
+            &admin,
+            &String::from_str(&env, field_name),
+            &String::from_str(&env, "new_val"),
+        );
+        assert_eq!(res, Err(Ok(CircleError::MetadataImmutable)));
+    }
+}
+
+#[test]
+fn test_update_metadata_unknown_field() {
+    let env = Env::default();
+    let (client, admin, _token) = setup_circle(&env);
+
+    let res = client.try_update_metadata(
+        &admin,
+        &String::from_str(&env, "non_existent_field"),
+        &String::from_str(&env, "val"),
+    );
+    assert_eq!(res, Err(Ok(CircleError::InvalidAmount)));
+}
+
+#[test]
+fn test_circle_graduated_on_completion() {
+    let env = Env::default();
+    let (client, admin, token) = setup_circle(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+
+    client.join(&member1);
+    client.join(&member2);
+
+    mint_tokens(&env, &token, &member1, 200);
+    mint_tokens(&env, &token, &member2, 200);
+
+    // Round 0
+    client.contribute(&member1, &100_i128, &0_u32);
+    client.contribute(&member2, &100_i128, &0_u32);
+    let res0 = client.try_trigger_payout(&admin, &0_u32);
+    assert!(res0.is_ok());
+
+    // Round 1
+    client.contribute(&member1, &100_i128, &1_u32);
+    client.contribute(&member2, &100_i128, &1_u32);
+    let res1 = client.try_trigger_payout(&admin, &1_u32);
+    assert!(res1.is_ok());
+
+    let status = client.get_status();
+    assert_eq!(status.status, crate::types::STATUS_COMPLETED);
 }

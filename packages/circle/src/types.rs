@@ -276,6 +276,13 @@ pub enum CircleError {
     /// a contract that is on the call stack, so this should be unreachable
     /// while that host policy holds. See the module docs in `contract.rs`.
     ReentrantCall = 66,
+    // #350: explicit over/underpayment errors
+    Overpayment = 67,
+    Underpayment = 68,
+    // #348: transfer failure
+    TransferFailed = 69,
+    // #357: immutable fields cannot be updated
+    MetadataImmutable = 70,
 }
 
 impl CircleError {
@@ -336,6 +343,10 @@ impl CircleError {
             CircleError::InvalidContributionRound => (64, "Round has outstanding contributions"),
             CircleError::DeadlineNotPassed => (65, "Contribution deadline not passed"),
             CircleError::ReentrantCall => (66, "Reentrant call rejected"),
+            CircleError::Overpayment => (67, "Amount exceeds expected contribution"),
+            CircleError::Underpayment => (68, "Amount is less than expected contribution"),
+            CircleError::TransferFailed => (69, "Token transfer failed"),
+            CircleError::MetadataImmutable => (70, "Field cannot be updated after circle creation"),
         };
         ErrorEnvelope::new(env, code, msg, details, request_id)
     }
@@ -392,6 +403,10 @@ impl CircleError {
             64 => Some(CircleError::InvalidContributionRound),
             65 => Some(CircleError::DeadlineNotPassed),
             66 => Some(CircleError::ReentrantCall),
+            67 => Some(CircleError::Overpayment),
+            68 => Some(CircleError::Underpayment),
+            69 => Some(CircleError::TransferFailed),
+            70 => Some(CircleError::MetadataImmutable),
             _ => None,
         }
     }
@@ -505,6 +520,33 @@ pub struct OracleFallbackUsed {
     pub round: u32,
     pub primary_oracle: Address,
     pub fallback_oracle: Address,
+}
+/// #348: emitted when a token transfer in trigger_payout fails so listeners
+/// can detect the inconsistent state and initiate recovery.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PayoutFailed {
+    pub recipient: Address,
+    pub round: u32,
+    pub amount: i128,
+    pub reason_code: u32,
+}
+/// #351: emitted when a circle completes and all active members receive a
+/// reputation graduation boost via the reputation registry.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CircleGraduated {
+    pub circle_id: Address,
+    pub member_count: u32,
+    pub total_payouts: i128,
+    pub boost_applied: bool,
+}
+/// #357: emitted when the organizer successfully updates mutable circle metadata.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MetadataUpdated {
+    pub updater: Address,
+    pub field: soroban_sdk::String,
 }
 /// Emitted when the deploying factory pushes protocol config into a circle.
 #[contracttype]
