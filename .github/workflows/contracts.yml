@@ -16,6 +16,9 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/contracts.yml'
 
+env:
+  SOROBAN_CLI_VERSION: 28.1.0
+
 jobs:
   test:
     name: Test Contracts
@@ -33,9 +36,24 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Cache Soroban CLI
+        # Dedicated cache keyed only on CLI version + features so the binary
+        # survives Cargo.lock changes that invalidate rust-cache.
+        id: soroban-cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.soroban-cli
+          key: soroban-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.SOROBAN_CLI_VERSION }}-opt
+
       - name: Install Soroban CLI
         # soroban-cli 28.1.0 requires rustc >= 1.93.0 (aligned with rust-toolchain.toml)
-        run: cargo install --locked soroban-cli --version 28.1.0 --features opt
+        if: steps.soroban-cli-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked soroban-cli --version "$SOROBAN_CLI_VERSION" --features opt --root ~/.soroban-cli
+
+      - name: Add Soroban CLI to PATH
+        run: |
+          echo "$HOME/.soroban-cli/bin" >> "$GITHUB_PATH"
+          "$HOME/.soroban-cli/bin/soroban" --version
 
       - name: Build contracts
         run: cargo build --target wasm32v1-none --release
