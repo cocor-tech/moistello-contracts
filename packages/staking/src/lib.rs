@@ -128,6 +128,9 @@ use soroban_sdk::{contract, contractimpl, Address, Env};
 /// let client = StakingClient::new(&env, &staking_id);
 /// client.create_slash_notice(&admin, &user, &amount);
 /// ```
+/// Minimum allowed staking duration in months. Durations below this are rejected.
+pub const MIN_STAKE_PERIOD_MONTHS: u32 = 1;
+
 #[contract]
 pub struct Staking;
 
@@ -143,6 +146,12 @@ impl Staking {
         amount: i128,
         period_months: u32,
     ) -> Result<(), types::StakingError> {
+        if period_months == 0 {
+            return Err(types::StakingError::InvalidDuration);
+        }
+        if period_months < MIN_STAKE_PERIOD_MONTHS {
+            return Err(types::StakingError::DurationBelowMinimum);
+        }
         contract::stake(&env, &user, amount, period_months)
     }
 

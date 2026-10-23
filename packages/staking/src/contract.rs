@@ -49,8 +49,22 @@ pub fn stake(
         return Err(StakingError::InvalidAmount);
     }
 
+    // Validate duration: reject zero/negative and below-minimum durations
+    // to prevent enter-and-exit-in-one-ledger reward gaming.
+    if period_months == 0 {
+        return Err(StakingError::InvalidDuration);
+    }
+    let min_duration: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::MinStakeDuration)
+        .unwrap_or(DEFAULT_MIN_STAKE_DURATION_SECONDS);
+
     // Validate and convert period
     let period = StakingPeriod::from_u32(period_months).ok_or(StakingError::InvalidPeriod)?;
+    if period.as_seconds() < min_duration {
+        return Err(StakingError::DurationBelowMinimum);
+    }
 
     // Check if user already has an active stake
     if env.storage().instance().has(&DataKey::Stake(user.clone())) {

@@ -57,6 +57,12 @@ pub const UNBONDING_PERIOD_SECONDS: u64 = 14 * 24 * 60 * 60;
 /// from being spammed with economically meaningless entries.
 pub const MIN_STAKE_AMOUNT: i128 = 1_0000000;
 
+/// Minimum staking duration in seconds. Stakes with a shorter lock period are
+/// rejected so that a position cannot be entered and exited within a single
+/// ledger to game reward accrual. Set to the shortest supported period
+/// (one month).
+pub const MIN_STAKE_DURATION_SECONDS: u64 = 30 * 24 * 60 * 60;
+
 /// Storage keys for the staking contract
 #[derive(Clone)]
 #[contracttype]
@@ -131,6 +137,10 @@ pub enum StakingError {
     ReentrantCall = 118,
     /// A staker list index was missing while paging. Indicates corrupted staker-list state.
     StakerIndexOutOfRange = 119,
+    /// Returned when a stake's duration is zero or below the configured minimum.
+    DurationZero = 120,
+    /// Returned when a stake's duration is positive but below the minimum.
+    DurationBelowMinimum = 121,
 }
 
 /// Event emitted when tokens are staked
