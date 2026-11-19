@@ -6,8 +6,11 @@ use common::pause;
 use common::reentrancy::ReentrancyGuard;
 
 /// Initialize the staking contract
-pub fn init(env: &Env, admin: &Address, token: &Address) {
+pub fn init(env: &Env, admin: &Address, token: &Address) -> Result<(), StakingError> {
     admin.require_auth();
+    if env.storage().instance().has(&DataKey::Admin) {
+        return Err(StakingError::AlreadyInitialized);
+    }
 
     // Store admin
     env.storage().instance().set(&DataKey::Admin, admin);
@@ -27,6 +30,7 @@ pub fn init(env: &Env, admin: &Address, token: &Address) {
     env.storage()
         .persistent()
         .set(&DataKey::StakerList, &Vec::<Address>::new(env));
+    Ok(())
 }
 
 /// Stake MOI tokens to increase governance voting power

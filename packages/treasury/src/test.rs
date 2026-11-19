@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::types::TreasuryError;
+use crate::types::{DataKey, TreasuryError};
 use crate::{Treasury, TreasuryClient};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};
@@ -36,6 +36,27 @@ fn test_init_sets_admin_and_zero_balance() {
 
     assert_eq!(client.get_balance(), 0);
     assert_eq!(client.get_deposits().len(), 0);
+}
+
+#[test]
+fn test_init_cannot_overwrite_initialized_state() {
+    let env = Env::default();
+    let (client, admin, token) = setup(&env);
+    let replacement_admin = Address::generate(&env);
+    let replacement_token = Address::generate(&env);
+
+    assert_eq!(
+        client.try_init(&replacement_admin, &replacement_token),
+        Err(Ok(TreasuryError::AlreadyInitialized))
+    );
+    let stored_admin: Address = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::Admin).unwrap()
+    });
+    let stored_token: Address = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::Token).unwrap()
+    });
+    assert_eq!(stored_admin, admin);
+    assert_eq!(stored_token, token);
 }
 
 #[test]

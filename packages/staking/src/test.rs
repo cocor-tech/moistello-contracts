@@ -80,6 +80,27 @@ fn test_init() {
 }
 
 #[test]
+fn test_init_cannot_overwrite_admin_or_token() {
+    let (env, admin, _, token) = setup_test_env();
+    let client = deploy_staking_contract(&env, &admin, &token);
+    let replacement_admin = Address::generate(&env);
+    let replacement_token = Address::generate(&env);
+
+    assert_eq!(
+        client.try_init(&replacement_admin, &replacement_token),
+        Err(Ok(StakingError::AlreadyInitialized))
+    );
+    let stored_admin: Address = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::Admin).unwrap()
+    });
+    let stored_token: Address = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::Token).unwrap()
+    });
+    assert_eq!(stored_admin, admin);
+    assert_eq!(stored_token, token);
+}
+
+#[test]
 fn test_stake_one_month_happy_path() {
     let (env, admin, user, token) = setup_test_env();
     let staking_client = deploy_staking_contract(&env, &admin, &token);

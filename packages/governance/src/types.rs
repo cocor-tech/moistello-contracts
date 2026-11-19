@@ -46,6 +46,15 @@ pub struct Proposal {
     pub votes_abstain: i128,
 }
 
+/// Immutable quorum data captured when a proposal is created.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuorumSnapshot {
+    pub eligible_weight: i128,
+    pub required_threshold: u32,
+    pub snapshot_ledger: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ProposalMetadata {
@@ -120,6 +129,7 @@ pub enum DataKey {
     Vote(u64, Address),
     Deposit(u64),
     PendingConfig,
+    QuorumSnapshot(u64),
     ProposalsByStatus(ProposalStatus),
     StakingContract,
     Delegation(Address),

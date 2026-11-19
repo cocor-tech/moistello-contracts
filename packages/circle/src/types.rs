@@ -293,6 +293,7 @@ pub enum CircleError {
     /// #503: the member already holds a strike recorded against the round
     /// they are trying to contribute to, so they may not re-enter it.
     AlreadyStruck = 67,
+    AlreadyInitialized = 68,
 }
 
 impl CircleError {
@@ -354,6 +355,7 @@ impl CircleError {
             CircleError::DeadlineNotPassed => (65, "Contribution deadline not passed"),
             CircleError::ReentrantCall => (66, "Reentrant call rejected"),
             CircleError::AlreadyStruck => (67, "Member already struck"),
+            CircleError::AlreadyInitialized => (68, "Circle already initialized"),
         };
         ErrorEnvelope::new(env, code, msg, details, request_id)
     }
@@ -411,6 +413,7 @@ impl CircleError {
             65 => Some(CircleError::DeadlineNotPassed),
             66 => Some(CircleError::ReentrantCall),
             67 => Some(CircleError::AlreadyStruck),
+            68 => Some(CircleError::AlreadyInitialized),
             _ => None,
         }
     }

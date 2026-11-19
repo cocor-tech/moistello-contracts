@@ -50,6 +50,11 @@ mod tests {
         }
     }
 
+    #[test]
+    fn circle_error_catalog_includes_already_initialized() {
+        assert_eq!(CircleError::from_code(68), Some(CircleError::AlreadyInitialized));
+    }
+
     // ── Bonus test helpers ────────────────────────────────────────────────────
 
     /// Deploy a 2-member active circle and return (env, client, admin, token_id, treasury)

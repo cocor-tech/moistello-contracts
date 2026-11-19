@@ -131,6 +131,7 @@ pub enum StakingError {
     ReentrantCall = 118,
     /// A staker list index was missing while paging. Indicates corrupted staker-list state.
     StakerIndexOutOfRange = 119,
+    AlreadyInitialized = 120,
 }
 
 /// Event emitted when tokens are staked

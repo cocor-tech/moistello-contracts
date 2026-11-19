@@ -196,6 +196,12 @@ impl Governance {
     pub fn get_vote(env: Env, proposal_id: u64, voter: Address) -> Option<types::VoteRecord> {
         contract::get_vote(&env, proposal_id, &voter)
     }
+    pub fn query_quorum_snapshot(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<types::QuorumSnapshot, types::GovernanceError> {
+        contract::query_quorum_snapshot(&env, proposal_id)
+    }
     pub fn get_vote_power(env: Env, voter: Address) -> i128 {
         contract::get_vote_power(&env, &voter)
     }

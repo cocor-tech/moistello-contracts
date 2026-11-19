@@ -133,8 +133,8 @@ pub struct Staking;
 
 #[contractimpl]
 impl Staking {
-    pub fn init(env: Env, admin: Address, token: Address) {
-        contract::init(&env, &admin, &token);
+    pub fn init(env: Env, admin: Address, token: Address) -> Result<(), types::StakingError> {
+        contract::init(&env, &admin, &token)
     }
 
     pub fn stake(

@@ -42,6 +42,37 @@ mod tests {
     }
 
     #[test]
+    fn quorum_snapshot_is_queryable_and_does_not_follow_later_config_changes() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let action = governance::types::ProposalAction {
+            target_contract: admin.clone(),
+            method: Symbol::new(&env, "noop"),
+            args: Vec::new(&env),
+        };
+        let description = BytesN::from_array(&env, &[9u8; 32]);
+        let proposal_id = client.create_proposal(&admin, &100i128, &action, &description);
+        let snapshot = client.query_quorum_snapshot(&proposal_id);
+        assert_eq!(snapshot.required_threshold, 1);
+        assert_eq!(snapshot.eligible_weight, 0);
+        assert_eq!(snapshot.snapshot_ledger, env.ledger().sequence());
+
+        let mut updated = create_config();
+        updated.quorum_votes = 2;
+        client.queue_config_update(&admin, &updated);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CONFIG_TIMELOCK_SECONDS);
+        client.execute_config_update();
+        assert_eq!(client.query_quorum_snapshot(&proposal_id), snapshot);
+
+        client.cast_vote(&Address::generate(&env), &proposal_id, &VoteType::For);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + updated.voting_period_seconds + 1);
+        client.finalize_proposal(&proposal_id);
+        assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::Queued);
+    }
+
+    #[test]
     fn test_queue_config_update_sets_48h_timelock() {
         let env = Env::default();
         let (client, admin) = setup(&env);
@@ -333,7 +364,10 @@ mod tests {
             votes_abstain: 10,
             ..base.clone()
         };
-        assert_eq!(governance::contract::proposal_passes(&abstain_only, &config), Ok(false));
+        assert_eq!(
+            governance::contract::proposal_passes(&abstain_only, &config, config.quorum_votes),
+            Ok(false)
+        );
 
         let overflowing_participation = Proposal {
             votes_for: i128::MAX,
@@ -341,7 +375,11 @@ mod tests {
             ..base.clone()
         };
         assert_eq!(
-            governance::contract::proposal_passes(&overflowing_participation, &config),
+            governance::contract::proposal_passes(
+                &overflowing_participation,
+                &config,
+                config.quorum_votes
+            ),
             Err(GovernanceError::InvalidConfig)
         );
 
@@ -351,7 +389,11 @@ mod tests {
             ..base
         };
         assert_eq!(
-            governance::contract::proposal_passes(&overflowing_support_scale, &config),
+            governance::contract::proposal_passes(
+                &overflowing_support_scale,
+                &config,
+                config.quorum_votes
+            ),
             Err(GovernanceError::InvalidConfig)
         );
     }

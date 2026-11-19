@@ -39,6 +39,9 @@ pub fn init(
     factory: &Address,
     config: &CircleConfig,
 ) -> Result<(), CircleError> {
+    if env.storage().instance().has(&DataKey::Circle) {
+        return Err(CircleError::AlreadyInitialized);
+    }
     if config.max_members < 2
         || config.contribution_amount < 0
         || config.total_rounds == 0

@@ -104,6 +104,27 @@ pub fn create_proposal(
     let voting_ends_at = now
         .checked_add(config.voting_period_seconds)
         .ok_or(GovernanceError::InvalidConfig)?;
+    let eligible_weight = if let Some(staking_addr) = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::StakingContract)
+    {
+        let stakers: Vec<Address> = env.invoke_contract(
+            &staking_addr,
+            &soroban_sdk::Symbol::new(env, "get_all_stakers"),
+            soroban_sdk::vec![env],
+        );
+        let mut total = 0i128;
+        for i in 0..stakers.len() {
+            if let Some(staker) = stakers.get(i) {
+                total = math::safe_add(total, get_vote_power(env, &staker))
+                    .map_err(|_| GovernanceError::InvalidConfig)?;
+            }
+        }
+        total
+    } else {
+        0
+    };
     let proposal = Proposal {
         id,
         proposer: proposer.clone(),
@@ -118,6 +139,14 @@ pub fn create_proposal(
         votes_against: 0,
         votes_abstain: 0,
     };
+    let quorum_snapshot = QuorumSnapshot {
+        eligible_weight,
+        required_threshold: config.quorum_votes,
+        snapshot_ledger: env.ledger().sequence(),
+    };
+    env.storage()
+        .persistent()
+        .set(&DataKey::QuorumSnapshot(id), &quorum_snapshot);
     env.storage()
         .persistent()
         .set(&DataKey::Proposal(id), &proposal);
@@ -394,7 +423,13 @@ pub fn finalize_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceEr
     if now <= proposal.voting_ends_at {
         return Err(GovernanceError::VotingNotActive);
     }
-    let passed = proposal_passes(&proposal, &config)?;
+    let required_quorum = env
+        .storage()
+        .persistent()
+        .get::<_, QuorumSnapshot>(&DataKey::QuorumSnapshot(proposal_id))
+        .map(|snapshot| snapshot.required_threshold)
+        .unwrap_or(config.quorum_votes);
+    let passed = proposal_passes(&proposal, &config, required_quorum)?;
     remove_proposal_from_status_index(env, &ProposalStatus::Active, proposal_id);
     let deposit = env
         .storage()
@@ -446,12 +481,13 @@ pub fn finalize_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceEr
 pub(crate) fn proposal_passes(
     proposal: &Proposal,
     config: &GovernanceConfig,
+    required_quorum: u32,
 ) -> Result<bool, GovernanceError> {
     let directional_votes = math::safe_add(proposal.votes_for, proposal.votes_against)
         .map_err(|_| GovernanceError::InvalidConfig)?;
     let total_participation = math::safe_add(directional_votes, proposal.votes_abstain)
         .map_err(|_| GovernanceError::InvalidConfig)?;
-    if total_participation < config.quorum_votes as i128 || directional_votes <= 0 {
+    if total_participation < required_quorum as i128 || directional_votes <= 0 {
         return Ok(false);
     }
 
@@ -784,6 +820,32 @@ pub fn get_vote(env: &Env, proposal_id: u64, voter: &Address) -> Option<VoteReco
     env.storage()
         .persistent()
         .get(&DataKey::Vote(proposal_id, voter.clone()))
+}
+
+/// Returns the immutable eligible weight and quorum threshold captured at creation.
+pub fn query_quorum_snapshot(
+    env: &Env,
+    proposal_id: u64,
+) -> Result<QuorumSnapshot, GovernanceError> {
+    let _: Proposal = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Proposal(proposal_id))
+        .ok_or(GovernanceError::ProposalNotFound)?;
+    if let Some(snapshot) = env
+        .storage()
+        .persistent()
+        .get(&DataKey::QuorumSnapshot(proposal_id))
+    {
+        Ok(snapshot)
+    } else {
+        let config = get_config(env)?;
+        Ok(QuorumSnapshot {
+            eligible_weight: 0,
+            required_threshold: config.quorum_votes,
+            snapshot_ledger: 0,
+        })
+    }
 }
 
 /// Flat vote power (see `cast_vote` doc comment).

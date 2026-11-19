@@ -35,6 +35,9 @@ fn token_client<'a>(env: &'a Env) -> Result<token::Client<'a>, TreasuryError> {
 /// Initializes the treasury contract with an admin and token address.
 pub fn init(env: &Env, admin: &Address, token: &Address) -> Result<(), TreasuryError> {
     admin.require_auth();
+    if env.storage().instance().has(&DataKey::Admin) {
+        return Err(TreasuryError::AlreadyInitialized);
+    }
     env.storage().instance().set(&DataKey::Admin, admin);
     env.storage().instance().set(&DataKey::Token, token);
     env.storage().instance().set(&DataKey::Balance, &0i128);
