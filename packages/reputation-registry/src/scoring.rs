@@ -182,3 +182,29 @@ pub fn get_score(env: &Env, member: &Address) -> u32 {
 pub fn set_score(env: &Env, member: &Address, score: u32) {
     storage::set_score(env, member, score);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_scoring_get_and_set() {
+        let env = Env::default();
+        let member = Address::generate(&env);
+        assert_eq!(get_score(&env, &member), 0);
+        set_score(&env, &member, 85);
+        assert_eq!(get_score(&env, &member), 85);
+    }
+
+    #[test]
+    fn test_inactivity_decay() {
+        let env = Env::default();
+        let member = Address::generate(&env);
+        set_score(&env, &member, 50);
+        let new_score = apply_inactivity_decay(&env, &member, 60);
+        assert_eq!(new_score, 40);
+        assert_eq!(get_score(&env, &member), 40);
+    }
+}

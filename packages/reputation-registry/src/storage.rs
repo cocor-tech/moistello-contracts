@@ -95,3 +95,20 @@ pub fn set_last_round(env: &Env, member: &Address, circle_id: &Address, round: u
     env.storage().persistent().set(&key, &round);
     ttl::extend_persistent(env, &key);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_last_round_storage() {
+        let env = Env::default();
+        let member = Address::generate(&env);
+        let circle_id = Address::generate(&env);
+        assert_eq!(get_last_round(&env, &member, &circle_id), 0);
+        set_last_round(&env, &member, &circle_id, 5);
+        assert_eq!(get_last_round(&env, &member, &circle_id), 5);
+    }
+}

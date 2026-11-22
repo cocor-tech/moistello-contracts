@@ -266,3 +266,16 @@ pub struct DepositForfeited {
     pub proposer: Address,
     pub amount: i128,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_governance_error_values() {
+        assert_eq!(GovernanceError::NotInitialized as u32, 1);
+        assert_eq!(GovernanceError::AlreadyInitialized as u32, 2);
+        assert_eq!(GovernanceError::Unauthorized as u32, 3);
+        assert_eq!(GovernanceError::CircularDelegation as u32, 19);
+    }
+}
