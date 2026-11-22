@@ -107,3 +107,37 @@ pub fn get_primary_oracle(env: &Env) -> Option<Address> {
 pub fn get_fallback_oracle(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::FallbackOracle)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_set_and_get_primary_oracle() {
+        let env = Env::default();
+        let oracle = Address::generate(&env);
+        assert_eq!(get_primary_oracle(&env), None);
+        set_primary_oracle(&env, &oracle);
+        assert_eq!(get_primary_oracle(&env), Some(oracle));
+    }
+
+    #[test]
+    fn test_set_and_get_fallback_oracle() {
+        let env = Env::default();
+        let fallback = Address::generate(&env);
+        assert_eq!(get_fallback_oracle(&env), None);
+        set_fallback_oracle(&env, &fallback);
+        assert_eq!(get_fallback_oracle(&env), Some(fallback));
+    }
+
+    #[test]
+    fn test_fetch_active_rate_without_oracle_fails() {
+        let env = Env::default();
+        assert_eq!(
+            fetch_active_rate(&env),
+            Err(CircleError::OracleUnavailable)
+        );
+    }
+}
