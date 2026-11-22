@@ -173,3 +173,15 @@ fn count_active(env: &Env) -> Result<u32, CircleError> {
     }
     Ok(c)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_count_active_uninitialized_returns_error() {
+        let env = Env::default();
+        assert_eq!(count_active(&env), Err(CircleError::NotInitialized));
+    }
+}

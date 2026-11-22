@@ -3404,3 +3404,37 @@ pub fn withdraw_treasury(env: &Env, caller: &Address, amount: i128) -> Result<()
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_init_invalid_members_rejected() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let token = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let factory = Address::generate(&env);
+        let config = CircleConfig {
+            name: soroban_sdk::String::from_str(&env, "Test"),
+            contribution_amount: 100,
+            round_duration: 3600,
+            total_rounds: 3,
+            max_members: 1,
+            payout_order_type: 0,
+            governance_threshold: 50,
+            grace_period: 0,
+            enable_collateral: false,
+            collateral_amount: 0,
+            fee_recipient: Address::generate(&env),
+            fee_bps: 0,
+        };
+        assert_eq!(
+            init(&env, &admin, &token, &treasury, &factory, &config),
+            Err(CircleError::InvalidMembersCount)
+        );
+    }
+}
