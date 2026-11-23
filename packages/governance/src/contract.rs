@@ -858,3 +858,24 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), GovernanceError> {
 pub fn get_deposit(env: &Env, id: u64) -> Option<i128> {
     env.storage().persistent().get(&DataKey::Deposit(id))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_governance_uninitialized_pause_fails() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let res = pause(&env, &admin);
+        assert_eq!(res, Err(GovernanceError::NotInitialized));
+    }
+
+    #[test]
+    fn test_governance_get_deposit_none() {
+        let env = Env::default();
+        let deposit = get_deposit(&env, 9999);
+        assert_eq!(deposit, None);
+    }
+}
