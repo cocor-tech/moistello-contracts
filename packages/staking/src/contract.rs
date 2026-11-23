@@ -978,3 +978,23 @@ pub fn execute_slash(env: &Env, admin: &Address, user: &Address) -> Result<(), S
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_pause_uninitialized_returns_error() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let res = pause(&env, &admin);
+        assert_eq!(res, Err(StakingError::NotInitialized));
+    }
+
+    #[test]
+    fn test_get_total_staked_empty() {
+        let env = Env::default();
+        assert_eq!(get_total_staked(&env), 0);
+    }
+}

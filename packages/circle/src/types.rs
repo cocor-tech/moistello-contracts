@@ -614,3 +614,23 @@ pub struct TreasuryWithdrawn {
     pub amount: i128,
     pub daily_total: i128,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_circle_error_mappings() {
+        assert_eq!(CircleError::NotInitialized as u32, 1);
+        assert_eq!(CircleError::NotActive as u32, 2);
+        assert_eq!(CircleError::CircleFull as u32, 3);
+        assert_eq!(CircleError::AlreadyMember as u32, 4);
+    }
+
+    #[test]
+    fn test_circle_status_variants() {
+        let active = CircleStatus::Active;
+        let pending = CircleStatus::Pending;
+        assert_ne!(active, pending);
+    }
+}
