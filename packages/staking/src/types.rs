@@ -235,3 +235,16 @@ pub struct Slashed {
     pub amount: i128,
     pub shortfall: i128,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_staking_error_mappings() {
+        assert_eq!(StakingError::NotInitialized as u32, 100);
+        assert_eq!(StakingError::Unauthorized as u32, 101);
+        assert_eq!(StakingError::ContractPaused as u32, 102);
+        assert_eq!(StakingError::InvalidPeriod as u32, 104);
+    }
+}
