@@ -217,6 +217,17 @@ pub fn propose_key_rotation(
 /// * `VrfError::Unauthorized` if `caller` is not the stored owner
 /// * `VrfError::NoPendingRotation` if no rotation has been proposed
 /// * `VrfError::ActivationNotReady` if the activation delay has not elapsed
+/// Returns the current ledger timestamp from the Soroban environment.
+///
+/// Centralizes access to `env.ledger().timestamp()` so time-dependent business
+/// logic has a single audit point. Note: Stellar ledger timestamps are monotonic
+/// and set by validator consensus per close window (~5s). Small variations or
+/// drift within validator consensus bounds are expected and tolerated.
+#[inline]
+pub fn get_ledger_timestamp(env: &Env) -> u64 {
+    env.ledger().timestamp()
+}
+
 pub fn activate_key_rotation(env: &Env, caller: &Address) -> Result<(), VrfError> {
     caller.require_auth();
     let owner: Address = env
@@ -237,7 +248,7 @@ pub fn activate_key_rotation(env: &Env, caller: &Address) -> Result<(), VrfError
         .instance()
         .get(&PENDING_AT_KEY)
         .ok_or(VrfError::NoPendingRotation)?;
-    if env.ledger().timestamp() < activation_time {
+    if get_ledger_timestamp(env) < activation_time {
         return Err(VrfError::ActivationNotReady);
     }
     env.storage().instance().set(&ADMIN_KEY, &pending_key);
@@ -515,6 +526,21 @@ mod fold_hash_words_tests {
             assert_eq!(fold_hash_words(&digest), reference(&digest));
         }
         assert_eq!(fold_hash_words(&[0xFFu8; 32]), reference(&[0xFFu8; 32]));
+    }
+
+    #[test]
+    fn test_get_ledger_timestamp_boundaries() {
+        let env = Env::default();
+        env.ledger().with_mut(|l| {
+            l.timestamp = 1000;
+        });
+        assert_eq!(get_ledger_timestamp(&env), 1000);
+
+        // Boundary: jump forward
+        env.ledger().with_mut(|l| {
+            l.timestamp = 1_000_000;
+        });
+        assert_eq!(get_ledger_timestamp(&env), 1_000_000);
     }
 }
 
