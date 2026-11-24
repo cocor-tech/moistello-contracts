@@ -12,6 +12,19 @@ fn ensure_active_unpaid_member(circle: &Circle, member: &Member) -> Result<(), C
     Ok(())
 }
 
+/// Resolves a random recipient for the given round using VRF-shuffled positions.
+///
+/// # Arguments
+/// * `env` - Soroban environment.
+/// * `circle` - The active circle instance containing configuration and payout bitmap.
+/// * `round` - The current payout round number.
+///
+/// # Storage Touched
+/// * Reads `DataKey::Members` to map positions to active member addresses.
+///
+/// # Returns
+/// * `Ok(Address)` - The chosen active and unpaid recipient address.
+/// * `Err(CircleError)` - If members are uninitialized or no eligible recipient is found.
 pub fn resolve_random(env: &Env, circle: &Circle, round: u32) -> Result<Address, CircleError> {
     let positions = vrf::shuffle_positions(env, circle.max_members, round * 1000)
         .map_err(|_| CircleError::InvalidAmount)?;
@@ -71,6 +84,20 @@ pub fn resolve_fixed(env: &Env, circle: &Circle, round: u32) -> Result<Address, 
     pos_to_addr.get(pos).ok_or(CircleError::NotMember)
 }
 
+/// Resolves an auction-based round payout by selecting the highest discount bid.
+///
+/// # Arguments
+/// * `env` - Soroban environment.
+/// * `circle` - The active circle instance containing configuration and payout bitmap.
+/// * `round` - The current payout round number.
+///
+/// # Storage Touched
+/// * Reads `DataKey::Bids` for recorded auction bids.
+/// * Reads `DataKey::Members` for active circle participants.
+///
+/// # Returns
+/// * `Ok((Address, u32))` - Tuple of (winner address, discount in basis points).
+/// * `Err(CircleError)` - If no bids exist (`VoteQuorumNotMet`), members uninitialized, payout already executed, or bidder is not an active member.
 pub fn resolve_auction(
     env: &Env,
     circle: &Circle,
