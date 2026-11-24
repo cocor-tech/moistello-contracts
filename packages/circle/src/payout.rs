@@ -51,6 +51,21 @@ pub fn resolve_random(env: &Env, circle: &Circle, round: u32) -> Result<Address,
     Err(CircleError::PayoutAlreadyExecuted)
 }
 
+/// Resolves a fixed-order round payout based on predetermined member positions.
+///
+/// # Arguments
+/// * `env` - Soroban environment.
+/// * `circle` - The active circle instance containing configuration and payout bitmap.
+/// * `round` - The current payout round index used to derive position `round % circle.max_members`.
+///
+/// # Storage Touched
+/// * Reads `DataKey::Members` for active circle participant mapping.
+///
+/// # Returns
+/// * `Ok(Address)` - The member address assigned to the current position.
+/// * `Err(CircleError::PayoutAlreadyExecuted)` - If the position has already been paid out.
+/// * `Err(CircleError::NotInitialized)` - If the members list is not in storage.
+/// * `Err(CircleError::NotMember)` - If no active member is assigned to the derived position.
 pub fn resolve_fixed(env: &Env, circle: &Circle, round: u32) -> Result<Address, CircleError> {
     let pos = (round % circle.max_members) as u32;
     if (circle.payout_bitmap & (1u128 << pos)) != 0 {
