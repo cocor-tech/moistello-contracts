@@ -71,6 +71,12 @@ pub fn increment_defaults(env: &Env, member: &Address) {
     ttl::extend_persistent(env, &key);
 }
 
+/// Get current ledger timestamp in a centralized manner
+#[inline]
+pub fn get_ledger_timestamp(env: &Env) -> u64 {
+    env.ledger().timestamp()
+}
+
 /// Add an activity record
 pub fn add_activity(env: &Env, member: &Address, activity_type: u32, impact: u32) {
     let key = DataKey::MemberLog(member.clone());
@@ -83,7 +89,7 @@ pub fn add_activity(env: &Env, member: &Address, activity_type: u32, impact: u32
         user: member.clone(),
         activity_type,
         score_impact: impact,
-        timestamp: env.ledger().timestamp(),
+        timestamp: get_ledger_timestamp(env),
     });
     env.storage().persistent().set(&key, &activities);
     ttl::extend_persistent(env, &key);
