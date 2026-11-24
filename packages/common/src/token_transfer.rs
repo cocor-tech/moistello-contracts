@@ -83,3 +83,57 @@ pub fn transfer_to_contract(
 ) -> Result<(), TokenTransferError> {
     safe_transfer(env, token, from, &env.current_contract_address(), amount)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::StellarAssetClient;
+
+    #[test]
+    fn test_safe_transfer_invalid_amount() {
+        let env = Env::default();
+        let token = Address::generate(&env);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        assert_eq!(
+            safe_transfer(&env, &token, &from, &to, &0),
+            Err(TokenTransferError::TransferFailed)
+        );
+        assert_eq!(
+            safe_transfer(&env, &token, &from, &to, &-10),
+            Err(TokenTransferError::TransferFailed)
+        );
+    }
+
+    #[test]
+    fn test_safe_transfer_insufficient_balance() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract_v2(admin);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        assert_eq!(
+            safe_transfer(&env, &token.address(), &from, &to, &100),
+            Err(TokenTransferError::InsufficientBalance)
+        );
+    }
+
+    #[test]
+    fn test_safe_transfer_success() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract_v2(admin.clone());
+        let client = StellarAssetClient::new(&env, &token.address());
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        client.mint(&from, &500);
+        assert_eq!(safe_transfer(&env, &token.address(), &from, &to, &200), Ok(()));
+        assert_eq!(client.balance(&from), 300);
+        assert_eq!(client.balance(&to), 200);
+    }
+}
