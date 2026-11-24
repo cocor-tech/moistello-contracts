@@ -248,3 +248,17 @@ fn test_pause_blocks_get_score() {
     client.unpause_registry(&admin);
     assert!(client.try_get_score(&user).is_ok());
 }
+
+#[test]
+fn test_activity_timestamp_recorded() {
+    let env = Env::default();
+    let (client, _admin) = setup(&env);
+    let user = Address::generate(&env);
+
+    env.ledger().with_mut(|li| li.timestamp = 1700000000);
+    client.record_activity(&user, &ACTIVITY_JOIN, &100);
+
+    let activities = client.get_activities(&user);
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities.get(0).unwrap().timestamp, 1700000000);
+}
