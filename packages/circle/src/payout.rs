@@ -109,6 +109,20 @@ pub fn resolve_auction(
     Err(CircleError::NotMember)
 }
 
+/// Resolves a vote-based round payout by tallying votes from active circle members.
+///
+/// # Arguments
+/// * `env` - Soroban environment.
+/// * `circle` - The active circle instance containing configuration and payout bitmap.
+/// * `round` - The current payout round number.
+///
+/// # Storage Touched
+/// * Reads `DataKey::Votes` for cast member votes.
+/// * Reads `DataKey::Members` for active circle participant verification.
+///
+/// # Returns
+/// * `Ok(Address)` - The chosen recipient address that won the vote and met quorum.
+/// * `Err(CircleError)` - If quorum is not met (`VoteQuorumNotMet`), members uninitialized, or recipient already received payout.
 pub fn resolve_vote(env: &Env, circle: &Circle, round: u32) -> Result<Address, CircleError> {
     let votes: Vec<VoteEntry> = env
         .storage()
