@@ -4,18 +4,20 @@ Purpose: Atomic hash-time-locked token swap between two parties. An initiator lo
 
 ## Entry points
 
-- `__constructor(admin)` — initialize with admin address
-- `create_swap(initiator, responder, token_a, token_b, initiator_amount, responder_amount, hash_lock, time_lock)` — create a swap; returns u64 swap id
-- `accept_swap(id, responder, secret)` — responder accepts by revealing the secret preimage
-- `complete_swap(id, caller)` — complete the swap after secret is revealed
-- `cancel_swap(id, caller)` — cancel a swap (e.g. after time lock expiry)
+Comprehensive documentation for all entry points, including authorization requirements, arguments/units, storage touched, emitted events, and error scenarios, is documented directly in [`src/lib.rs`](src/lib.rs).
+
+- [`__constructor(admin)`](src/lib.rs) — Initialize contract with admin address and empty swap registry (auth: `admin`).
+- [`create_swap(initiator, responder, token_a, token_b, initiator_amount, responder_amount, hash_lock, time_lock)`](src/lib.rs) — Create a swap and escrow initiator tokens; returns `u64` swap id (auth: `initiator`).
+- [`accept_swap(id, responder, secret)`](src/lib.rs) — Responder accepts by depositing tokens and revealing the secret preimage (auth: `responder`).
+- [`complete_swap(id, caller)`](src/lib.rs) — Complete the swap after activation and distribute funds to counterparties (auth: `caller` = initiator or responder).
+- [`cancel_swap(id, caller)`](src/lib.rs) — Cancel a pending or active swap and refund deposited tokens (auth: `caller` = initiator or responder).
 
 Reads:
-- `get_swap(id)` — Result<SwapRequest> swap details
-- `get_swaps()` — Vec<SwapRequest> all swaps
+- [`get_swap(id)`](src/lib.rs) — `Result<SwapRequest, EscrowError>` query swap details.
+- [`get_swaps()`](src/lib.rs) — `Vec<SwapRequest>` list all swaps.
 
 Pause:
-- `pause(admin)` / `unpause(admin)` — emergency stop
+- [`pause(admin)`](src/lib.rs) / [`unpause(admin)`](src/lib.rs) — Emergency stop mechanism (auth: `admin`).
 
 ## Storage keys (DataKey)
 
