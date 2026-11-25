@@ -24,6 +24,9 @@ ignore = [
     "RUSTSEC-2026-0574", # heapless: FindMutView::pop after mutating could lead to use after free
     "RUSTSEC-2026-0579", # heapless: Deque from TryFrom implementation was wrong when full
     "RUSTSEC-2024-0436", # paste: no longer maintained (transitive dependency)
+    "RUSTSEC-2026-0577", # heapless: panicking Drop impl could lead to UB (transitive via stellar-strkey)
+    "RUSTSEC-2026-0575", # heapless: Spsc::peek used Relaxed ordering instead of Acquire (transitive via stellar-strkey)
+    "RUSTSEC-2026-0387", # crypto-bigint: timing variability in constant-time ops (transitive via elliptic-curve/k256)
 ]
 
 # ── Licenses ──────────────────────────────────────────────────────────────────
