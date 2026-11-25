@@ -400,3 +400,25 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), EscrowError> {
     }
     pause::unpause(env, admin).map_err(|_| EscrowError::ContractPaused)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_pause_uninitialized_fails() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let res = pause(&env, &admin);
+        assert_eq!(res, Err(EscrowError::NotInitialized));
+    }
+
+    #[test]
+    fn test_unpause_uninitialized_fails() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let res = unpause(&env, &admin);
+        assert_eq!(res, Err(EscrowError::NotInitialized));
+    }
+}

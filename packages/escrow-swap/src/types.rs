@@ -79,3 +79,25 @@ pub struct SwapCancelled {
     #[topic]
     pub id: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_escrow_swap_types_and_errors() {
+        assert_eq!(EscrowError::NotInitialized as u32, 1);
+        assert_eq!(EscrowError::AlreadyInitialized as u32, 2);
+        assert_eq!(EscrowError::Unauthorized as u32, 3);
+    }
+
+    #[test]
+    fn test_swap_status_enum() {
+        let pending = SwapStatus::Pending;
+        let accepted = SwapStatus::Accepted;
+        let completed = SwapStatus::Completed;
+        let cancelled = SwapStatus::Cancelled;
+        assert_ne!(pending, accepted);
+        assert_ne!(completed, cancelled);
+    }
+}
