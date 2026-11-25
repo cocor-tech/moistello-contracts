@@ -346,10 +346,19 @@ impl Circle {
     pub fn claim_streak_bonus(env: Env, member: Address) -> ContractResult {
         contract::claim_streak_bonus(&env, &member)
     }
-
     /// #478 — Organizer/admin treasury withdrawal, capped per transaction and per UTC day.
     pub fn withdraw_treasury(env: Env, caller: Address, amount: i128) -> ContractResult {
         contract::withdraw_treasury(&env, &caller, amount)
+    }
+
+    /// #357 — update mutable circle metadata (name, slug).
+    pub fn update_metadata(
+        env: Env,
+        caller: Address,
+        field: soroban_sdk::String,
+        value: soroban_sdk::String,
+    ) -> ContractResult {
+        contract::update_metadata(&env, &caller, field, value)
     }
 
     // =========================================================================
@@ -488,5 +497,10 @@ impl Circle {
     /// Returns the configured fee in basis points.
     pub fn get_fee_bps(env: Env) -> u32 {
         contract::get_fee_bps(&env)
+    }
+
+    /// #357 — Returns the circle description metadata, if set.
+    pub fn get_description(env: Env) -> Option<soroban_sdk::String> {
+        contract::get_description(&env)
     }
 }

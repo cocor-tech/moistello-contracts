@@ -19,6 +19,9 @@ mod test_gas_budget;
 mod test_arithmetic_review;
 
 #[cfg(test)]
+mod test_circle_pr501;
+
+#[cfg(test)]
 mod tests {
     use soroban_sdk::{Address, Env};
 

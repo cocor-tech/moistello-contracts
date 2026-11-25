@@ -223,6 +223,8 @@ pub enum DataKey {
     MemberContributed(Address, u32),
     /// #406: O(1) member status lookup avoiding full Vec<Member> deserialization.
     MemberStatus(Address),
+    /// #357: Mutable circle description metadata.
+    Description,
 }
 pub use common::types::ErrorEnvelope;
 #[contracterror]
@@ -294,6 +296,13 @@ pub enum CircleError {
     /// they are trying to contribute to, so they may not re-enter it.
     AlreadyStruck = 67,
     AlreadyInitialized = 68,
+    // #350: explicit over/underpayment errors
+    Overpayment = 69,
+    Underpayment = 70,
+    // #348: transfer failure
+    TransferFailed = 71,
+    // #357: immutable fields cannot be updated
+    MetadataImmutable = 72,
 }
 
 impl CircleError {
@@ -356,6 +365,10 @@ impl CircleError {
             CircleError::ReentrantCall => (66, "Reentrant call rejected"),
             CircleError::AlreadyStruck => (67, "Member already struck"),
             CircleError::AlreadyInitialized => (68, "Circle already initialized"),
+            CircleError::Overpayment => (69, "Amount exceeds expected contribution"),
+            CircleError::Underpayment => (70, "Amount is less than expected contribution"),
+            CircleError::TransferFailed => (71, "Token transfer failed"),
+            CircleError::MetadataImmutable => (72, "Field cannot be updated after circle creation"),
         };
         ErrorEnvelope::new(env, code, msg, details, request_id)
     }
@@ -414,6 +427,10 @@ impl CircleError {
             66 => Some(CircleError::ReentrantCall),
             67 => Some(CircleError::AlreadyStruck),
             68 => Some(CircleError::AlreadyInitialized),
+            69 => Some(CircleError::Overpayment),
+            70 => Some(CircleError::Underpayment),
+            71 => Some(CircleError::TransferFailed),
+            72 => Some(CircleError::MetadataImmutable),
             _ => None,
         }
     }
@@ -536,6 +553,33 @@ pub struct FactoryConfigured {
     pub treasury: Address,
     pub reputation_registry: Address,
     pub fee_bps: u32,
+}
+/// #348: emitted when a token transfer in trigger_payout fails so listeners
+/// can detect the inconsistent state and initiate recovery.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PayoutFailed {
+    pub recipient: Address,
+    pub round: u32,
+    pub amount: i128,
+    pub reason_code: u32,
+}
+/// #351: emitted when a circle completes and all active members receive a
+/// reputation graduation boost via the reputation registry.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CircleGraduated {
+    pub circle_id: Address,
+    pub member_count: u32,
+    pub total_payouts: i128,
+    pub boost_applied: bool,
+}
+/// #357: emitted when the organizer successfully updates mutable circle metadata.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MetadataUpdated {
+    pub updater: Address,
+    pub field: soroban_sdk::String,
 }
 #[contracttype]
 #[derive(Clone, Debug)]

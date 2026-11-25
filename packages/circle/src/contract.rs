@@ -558,8 +558,12 @@ pub fn contribute(
     if is_payout_scheduled(env, round) {
         return Err(CircleError::PayoutAlreadyScheduled);
     }
-    if amount != circle.contribution_amount {
-        return Err(CircleError::ContributionMismatch);
+    // #350: Distinguish overpayment from underpayment for a clear error message.
+    if amount > circle.contribution_amount {
+        return Err(CircleError::Overpayment);
+    }
+    if amount < circle.contribution_amount {
+        return Err(CircleError::Underpayment);
     }
     // #406: Fast O(1) member status check avoiding full Vec<Member> deserialization
     if let Some(status) = env
@@ -1055,6 +1059,7 @@ fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
         .persistent()
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
+    let prev_bitmap = circle.payout_bitmap;
     // Issue #216: mark the recipient's position as paid in payout_bitmap.
     // resolve_random/resolve_fixed/resolve_auction/resolve_vote all check
     // this bitmap to avoid re-selecting an already-paid position, but
@@ -1090,7 +1095,23 @@ fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
                         (net_u.saturating_mul(w) / total_weighted) as i128
                     };
                     if share > 0 {
-                        token_client.transfer(&circle.id, &m.address, &share);
+                        if !matches!(
+                            token_client.try_transfer(&circle.id, &m.address, &share),
+                            Ok(Ok(()))
+                        ) {
+                            circle.payout_bitmap = prev_bitmap;
+                            env.storage().instance().set(&DataKey::Circle, &circle);
+                            env.events().publish(
+                                (env.current_contract_address(), symbol_short!("pay_fail")),
+                                PayoutFailed {
+                                    recipient: m.address.clone(),
+                                    round,
+                                    amount: share,
+                                    reason_code: CircleError::TransferFailed as u32,
+                                },
+                            );
+                            return Err(CircleError::TransferFailed);
+                        }
                         distributed = math::safe_add(distributed, share)
                             .map_err(|_| CircleError::InvalidAmount)?;
                         payouts.push_back(PayoutRecipient {
@@ -1126,7 +1147,23 @@ fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
     }
     if distributed < net {
         let dust = math::safe_sub(net, distributed).map_err(|_| CircleError::InvalidAmount)?;
-        token_client.transfer(&circle.id, &recipient, &dust);
+        if !matches!(
+            token_client.try_transfer(&circle.id, &recipient, &dust),
+            Ok(Ok(()))
+        ) {
+            circle.payout_bitmap = prev_bitmap;
+            env.storage().instance().set(&DataKey::Circle, &circle);
+            env.events().publish(
+                (env.current_contract_address(), symbol_short!("pay_fail")),
+                PayoutFailed {
+                    recipient: recipient.clone(),
+                    round,
+                    amount: dust,
+                    reason_code: CircleError::TransferFailed as u32,
+                },
+            );
+            return Err(CircleError::TransferFailed);
+        }
         payouts.push_back(PayoutRecipient {
             recipient: recipient.clone(),
             round,
@@ -1195,6 +1232,7 @@ fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
                 total_payouts: circle.total_payouts,
             },
         );
+        let mut graduated = false;
         if circle.collateral_amount > 0 {
             for i in 0..members.len() {
                 let m = members.get(i).ok_or(CircleError::NotInitialized)?;
@@ -1208,12 +1246,47 @@ fn trigger_payout_internal(env: &Env, round: u32) -> Result<(), CircleError> {
             .persistent()
             .get(&DataKey::Members)
             .ok_or(CircleError::NotInitialized)?;
-        for i in 0..final_members.len() {
-            let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
-            if m.status == MEMBER_ACTIVE {
-                scoring::record_circle_completion(env, &m.address);
+        // #351: call reputation registry for boost; gracefully degrade if unavailable.
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::ReputationRegistry)
+        {
+            for i in 0..final_members.len() {
+                let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
+                if m.status == MEMBER_ACTIVE {
+                    scoring::record_circle_completion(env, &m.address);
+                    // Attempt cross-contract graduation boost — ignore error so an
+                    // unavailable registry never prevents the circle from completing.
+                    let args = soroban_sdk::vec![env, m.address.clone().into_val(env)];
+                    let res = env.try_invoke_contract::<u32, soroban_sdk::InvokeError>(
+                        &registry,
+                        &Symbol::new(env, "record_circle_completion"),
+                        args,
+                    );
+                    if matches!(res, Ok(Ok(_))) {
+                        graduated = true;
+                    }
+                }
+            }
+        } else {
+            for i in 0..final_members.len() {
+                let m = final_members.get(i).ok_or(CircleError::NotInitialized)?;
+                if m.status == MEMBER_ACTIVE {
+                    scoring::record_circle_completion(env, &m.address);
+                }
             }
         }
+        // #351: emit CircleGraduated event.
+        env.events().publish(
+            (env.current_contract_address(), symbol_short!("graduate")),
+            CircleGraduated {
+                circle_id: env.current_contract_address(),
+                member_count: circle.member_count,
+                total_payouts: circle.total_payouts,
+                boost_applied: graduated,
+            },
+        );
     }
     Ok(())
 }
@@ -3524,4 +3597,70 @@ pub fn withdraw_treasury(env: &Env, caller: &Address, amount: i128) -> Result<()
         },
     );
     Ok(())
+}
+
+/// #357 — Update mutable circle metadata (name, description/slug).
+///
+/// Immutable fields (token, contribution_amount, max_members, payout_type,
+/// total_rounds) are rejected with `CircleError::MetadataImmutable`.
+///
+/// # Authorization
+/// Requires authentication from the circle organizer or admin.
+pub fn update_metadata(
+    env: &Env,
+    caller: &Address,
+    field: soroban_sdk::String,
+    value: soroban_sdk::String,
+) -> Result<(), CircleError> {
+    pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
+    let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;
+    caller.require_auth();
+    let mut circle: Circle = env
+        .storage()
+        .instance()
+        .get(&DataKey::Circle)
+        .ok_or(CircleError::NotInitialized)?;
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CircleError::NotInitialized)?;
+    if caller != &circle.organizer && caller != &stored_admin {
+        return Err(CircleError::Unauthorized);
+    }
+    // Determine which field to update; reject immutable ones.
+    if field == soroban_sdk::String::from_str(env, "name") {
+        circle.name = value.clone();
+        env.storage().instance().set(&DataKey::Circle, &circle);
+    } else if field == soroban_sdk::String::from_str(env, "slug") {
+        circle.slug = value.clone();
+        env.storage().instance().set(&DataKey::Circle, &circle);
+    } else if field == soroban_sdk::String::from_str(env, "description") {
+        env.storage()
+            .instance()
+            .set(&DataKey::Description, &value);
+    } else if field == soroban_sdk::String::from_str(env, "token")
+        || field == soroban_sdk::String::from_str(env, "contribution_amount")
+        || field == soroban_sdk::String::from_str(env, "max_members")
+        || field == soroban_sdk::String::from_str(env, "payout_type")
+        || field == soroban_sdk::String::from_str(env, "total_rounds")
+    {
+        // Immutable fields — explicitly reject rather than silently ignoring.
+        return Err(CircleError::MetadataImmutable);
+    } else {
+        return Err(CircleError::InvalidAmount);
+    }
+    env.events().publish(
+        (env.current_contract_address(), symbol_short!("meta_upd")),
+        MetadataUpdated {
+            updater: caller.clone(),
+            field,
+        },
+    );
+    Ok(())
+}
+
+/// #357 — Returns the circle description metadata, if set.
+pub fn get_description(env: &Env) -> Option<soroban_sdk::String> {
+    env.storage().instance().get(&DataKey::Description)
 }
