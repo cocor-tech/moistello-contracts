@@ -82,6 +82,22 @@
 
 ---
 
+## RUSTSEC-2026-0576 - Heapless IndexMap::truncate Inconsistent State and Memory Corruption
+
+**Package**: heapless (transitive dependency)
+
+**Severity**: Unsound
+
+**Description**: `IndexMap::truncate` did not rebuild its index structure after removing entries. This left the map in an inconsistent state where the index referenced slots that no longer held valid data, allowing subsequent operations to corrupt memory.
+
+**Status**: Transitive dependency of soroban-sdk@26.0.0 (heapless@0.8.0). Cannot be directly upgraded without soroban-sdk releasing a patched version.
+
+**Mitigation**: Risk accepted with explicit advisory ignore in deny.toml. Monitor soroban-sdk releases for a heapless upgrade that includes the fix.
+
+**Reference**: https://rustsec.org/advisories/RUSTSEC-2026-0576
+
+---
+
 ## RUSTSEC-2026-0486 - Rustix xattr Functions Mark Unwritten Bytes as Initialized
 
 **Package**: rustix (transitive dependency)
